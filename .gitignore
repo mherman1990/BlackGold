@@ -1,0 +1,41 @@
+# Private operator context for Claude Code (never committed)
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+config/local/
+LIVE_AUTHORIZATION.yaml
+LIVE_AUTHORIZATION.*.yaml
+
+# Runtime data (never in git: SQLite, raw artifacts, ledgers, logs, backups)
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+artifacts/
+backups/
+logs/
+*.log
+
+# Node / TypeScript
+node_modules/
+dist/
+build/
+coverage/
+.tsbuildinfo
+*.tgz
+npm-debug.log*
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
