@@ -50,7 +50,7 @@ A script `scripts/check-identity.ts` must assert:
 3. Every `image:` in `blackgold-trading/docker-compose.yml` starts with `ghcr.io/mherman1990/blackgold:` and is not `latest`.
 4. `umbrel-app.yml` `version` equals root `package.json` `version` equals the image tag (less `v`) equals the top `CHANGELOG.md` heading.
 5. `APP_HOST` equals `blackgold-trading_core_1` and `APP_PORT` equals `umbrel-app.yml` `port`.
-6. No file in the repo contains the string `tiller` in an identifier position (case-insensitive), except `docs/CONTEXT_PROVENANCE.md`.
+6. No file in the repo contains the retired product name (case-insensitive), except `docs/CONTEXT_PROVENANCE.md` and `docs/DECISIONS.md`.
 7. No compose volume references a path outside `${APP_DATA_DIR}`.
 
 ## Collision audit

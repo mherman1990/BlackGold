@@ -1,0 +1,53 @@
+version: "3.7"
+
+# Black Gold Umbrel app. One image, two roles. All mutable state lives under ${APP_DATA_DIR}/data.
+# The image tag below must equal umbrel-app.yml `version` and package.json `version` (CI enforces it).
+# The @sha256 digest is filled in by the release process once the multi-arch manifest exists.
+
+services:
+  app_proxy:
+    environment:
+      APP_HOST: blackgold-trading_core_1
+      APP_PORT: 8479
+
+  core:
+    image: ghcr.io/mherman1990/blackgold:0.1.0
+    command: ["node", "packages/core/dist/main.js", "serve"]
+    user: "1000:1000"
+    init: true
+    restart: on-failure
+    stop_grace_period: 1m
+    environment:
+      BLACKGOLD_ROLE: core
+      BLACKGOLD_MODE: RESEARCH
+      BLACKGOLD_DATA_DIR: /data
+      BLACKGOLD_HTTP_PORT: "8479"
+      TZ: UTC
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
+    healthcheck:
+      test: ["CMD", "node", "packages/core/dist/main.js", "health"]
+      interval: 60s
+      timeout: 20s
+      retries: 3
+
+  gateway:
+    image: ghcr.io/mherman1990/blackgold:0.1.0
+    command: ["node", "packages/broker-gateway/dist/main.js", "serve"]
+    user: "1000:1000"
+    init: true
+    restart: on-failure
+    stop_grace_period: 1m
+    environment:
+      BLACKGOLD_ROLE: gateway
+      BLACKGOLD_DATA_DIR: /data
+      TZ: UTC
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
+    # No ports exposed and no app_proxy route. Core reaches the gateway only on the app-private network.
+    # Phase 0: the gateway holds no credential and offers only the synthetic broker.
+    healthcheck:
+      test: ["CMD", "node", "packages/broker-gateway/dist/main.js", "health"]
+      interval: 60s
+      timeout: 20s
+      retries: 3

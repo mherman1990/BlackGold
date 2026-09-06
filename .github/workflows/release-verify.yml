@@ -1,0 +1,43 @@
+name: release-verify
+
+# Manual post-publication verification. Confirms the published manifest carries both architectures,
+# that the compose file pins the same tag and digest, and that a disposable amd64 install starts healthy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver without v, e.g. 0.1.0"
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - name: inspect manifest
+        run: |
+          set -euo pipefail
+          REF="ghcr.io/mherman1990/blackgold:${{ inputs.version }}"
+          docker buildx imagetools inspect "$REF" | tee inspect.txt
+          grep -q "linux/amd64" inspect.txt
+          grep -q "linux/arm64" inspect.txt
+          DIGEST=$(docker buildx imagetools inspect "$REF" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          echo "digest=$DIGEST" | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -q "ghcr.io/mherman1990/blackgold:${{ inputs.version }}@$DIGEST" blackgold-trading/docker-compose.yml \
+            || { echo "compose does not pin ${{ inputs.version }}@$DIGEST"; exit 1; }
+      - name: disposable install smoke test
+        run: |
+          set -euo pipefail
+          mkdir -p appdata/data
+          docker run --rm -v "$PWD/appdata/data:/data" -e BLACKGOLD_DATA_DIR=/data \
+            "ghcr.io/mherman1990/blackgold:${{ inputs.version }}" packages/core/dist/main.js migrate
+          docker run --rm -v "$PWD/appdata/data:/data" -e BLACKGOLD_DATA_DIR=/data \
+            "ghcr.io/mherman1990/blackgold:${{ inputs.version }}" packages/core/dist/main.js health | tee health.json
+          node -e "const h=require('./health.json');if(!h.ok||h.liveCapable!==false)process.exit(1)"
+          ls -la appdata/data

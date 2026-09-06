@@ -1,10 +1,16 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
-const shared = fileURLToPath(new URL("./packages/shared/src/index.ts", import.meta.url));
+const src = (p: string): string => fileURLToPath(new URL(`./packages/${p}/src/index.ts`, import.meta.url));
 
 export default defineConfig({
-  resolve: { alias: { "@blackgold/shared": shared } },
+  resolve: {
+    alias: {
+      "@blackgold/shared": src("shared"),
+      "@blackgold/core": src("core"),
+      "@blackgold/broker-gateway": src("broker-gateway"),
+    },
+  },
   test: {
     projects: [
       { test: { name: "unit", include: ["packages/*/test/**/*.test.ts"], environment: "node" } },

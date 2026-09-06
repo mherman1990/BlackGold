@@ -1,0 +1,79 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "claude/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: lint, typecheck, test, policy, identity, secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run check:identity
+      - run: npm run check:secrets
+      - name: gitleaks (full history)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: manifest yaml parse
+        run: node -e "const y=require('yaml');const fs=require('fs');for(const f of ['umbrel-app-store.yml','blackgold-trading/umbrel-app.yml','blackgold-trading/docker-compose.yml']){y.parse(fs.readFileSync(f,'utf8'));console.log('ok',f)}"
+
+  image:
+    name: multi-arch image build (no push)
+    runs-on: ubuntu-latest
+    needs: checks
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: build linux/amd64 and linux/arm64
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: ghcr.io/mherman1990/blackgold:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: smoke test amd64 image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ghcr.io/mherman1990/blackgold:ci-amd64
+          cache-from: type=gha
+      - name: health commands exit 0 with no credentials and live disabled
+        run: |
+          set -euo pipefail
+          docker run --rm -e BLACKGOLD_DATA_DIR=/data ghcr.io/mherman1990/blackgold:ci-amd64 packages/core/dist/main.js health | tee core-health.json
+          docker run --rm -e BLACKGOLD_DATA_DIR=/data ghcr.io/mherman1990/blackgold:ci-amd64 packages/broker-gateway/dist/main.js health | tee gw-health.json
+          node -e "const c=require('./core-health.json');const g=require('./gw-health.json');if(c.liveCapable!==false||g.liveCapable!==false||g.credentialLoaded!==false){console.error('live capability or credential detected');process.exit(1)}"
+      - name: live mode must be refused by the image
+        run: |
+          set +e
+          docker run --rm -e BLACKGOLD_DATA_DIR=/data -e BLACKGOLD_MODE=LIVE_MANUAL ghcr.io/mherman1990/blackgold:ci-amd64 packages/core/dist/main.js health
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then echo "image accepted a live mode"; exit 1; fi
+          echo "live mode refused with exit $code"
