@@ -44,7 +44,19 @@ Repository documents are authoritative across sessions. Claude Code auto memory 
 
 ## Commands
 
-No toolchain exists yet. When Phase 0 lands, record the exact lint, typecheck, test, policy-test, and identity-consistency commands here and in `PLAN.md`. Until then, do not invent them.
+```
+npm ci                      # install (.npmrc sets legacy-peer-deps)
+npm run build               # tsc -b for shared, core, broker-gateway
+npm run lint                # eslint, includes dependency-boundary rules
+npm run typecheck           # tsc -b plus test tsconfigs
+npm run test                # vitest: unit + policy + temporal projects
+npm run test:policy         # CI safety gates only
+npm run check:identity      # store/app/image/version consistency (docs/IDENTITY.md)
+npm run check:secrets       # credential-shaped strings in tracked files
+npm run check               # everything above; must pass before any commit is proposed
+```
+
+CLIs: `node packages/core/dist/main.js <health|migrate|backup|verify-backup|seal|verify-chain|run-jobs|serve>` and `node packages/broker-gateway/dist/main.js <health|serve>` with `BLACKGOLD_DATA_DIR` set. Runbooks live in `docs/runbooks/`.
 
 ## Financial-critical review rules
 

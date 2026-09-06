@@ -6,13 +6,13 @@ One public repository, `mherman1990/BlackGold`, containing Black Gold source plu
 
 A private-source/public-store split was considered and is not recommended: it adds release coordination, and the container image is public and inspectable regardless. If Matt later requires private source, the store manifest moves to a minimal public `mherman1990/blackgold-store` repository and the release workflow gains a cross-repo manifest bump step. Decide before the first Umbrel install (D-03).
 
-## Current state (2026-09-06)
+## Current state (2026-09-06, evening)
 
-The remote exists and is empty. No `main` branch exists. This Discovery session was assigned the branch `claude/black-gold-trading-tool-n713ly`, which stands in for the `claude/phase-00-discovery` branch named in the source prompt. All Discovery content lives on that branch.
+`main` exists (created from the bootstrap commit e7fc3d9 with Matt's authorization). The Discovery Pack is PR #1 from `claude/black-gold-trading-tool-n713ly` into `main`. Phase 0 implementation is on `claude/phase-00-foundation`, stacked on the Discovery branch (D-26); its PR targets the Discovery branch and is retargeted to `main` when PR #1 merges. Matt still needs to set `main` as the default branch and apply branch protection in GitHub settings; no tool in the Claude Code session reaches that API.
 
-## Bootstrapping `main`
+## Bootstrapping `main` (done 2026-09-06)
 
-Claude Code does not push to `main`. The Discovery branch is structured so that Matt can create `main` from its first commit, which contains only `README.md` and `.gitignore`:
+Matt authorized Claude Code to create `main` from the Discovery branch's first commit, which contains only `README.md` and `.gitignore`. For the record, the equivalent manual sequence was:
 
 ```bash
 # On Matt's machine, after fetching

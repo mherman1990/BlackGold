@@ -1,12 +1,12 @@
 # Black Gold identity register
 
-Every persistent identifier Black Gold uses across GitHub, GHCR, umbrelOS, Docker Compose, and the filesystem. Once the first Umbrel install happens these become migration-sensitive invariants. Change requires a decision record in `docs/DECISIONS.md` and a migration plan before any manifest edit.
+Every persistent identifier Black Gold uses across GitHub, GHCR, umbrelOS, Docker Compose, and the filesystem. Accepted by Matt on 2026-09-06 (D-04). Once the first Umbrel install happens these become migration-sensitive invariants. Change requires a decision record in `docs/DECISIONS.md` and a migration plan before any manifest edit.
 
 ## Status legend
 
 - **Approved**: chosen by Matt (repository exists under this name; rebrand instructed 2026-09-06).
 - **Derived**: mechanically follows from an approved value and the Umbrel store rule.
-- **Provisional**: recommended default; Matt confirms before first Umbrel install (decision D-04).
+- **Accepted**: adopted by Matt on 2026-09-06 (decision D-04). Still subject to the port-collision check before the first Umbrel install.
 
 ## Identifiers
 
@@ -15,35 +15,35 @@ Every persistent identifier Black Gold uses across GitHub, GHCR, umbrelOS, Docke
 | Product / display name | Black Gold | Approved | README, `umbrel-app.yml` `name`, reports |
 | GitHub owner/repo | `mherman1990/BlackGold` | Approved | git remote, `umbrel-app.yml` `repo`/`support`/`submission`, CI |
 | Repository visibility | Public | Approved (as created) | GitHub settings; store URL must be public to add in umbrelOS |
-| Default branch | `main` (does not exist yet; see D-02) | Provisional | branch protection, CI triggers |
+| Default branch | `main` (created 2026-09-06 from e7fc3d9; Matt sets it default in GitHub settings) | Accepted | branch protection, CI triggers |
 | Discovery branch | `claude/black-gold-trading-tool-n713ly` | Approved (session-assigned) | this Discovery PR |
-| Phase branch pattern | `claude/phase-XX-short-name` | Provisional | `docs/REPOSITORY_AND_PR_WORKFLOW.md` |
-| Community App Store id | `blackgold` | Provisional | `umbrel-app-store.yml` `id` |
-| Community App Store name | Black Gold | Provisional | `umbrel-app-store.yml` `name` |
+| Phase branch pattern | `claude/phase-XX-short-name` | Accepted | `docs/REPOSITORY_AND_PR_WORKFLOW.md` |
+| Community App Store id | `blackgold` | Accepted | `umbrel-app-store.yml` `id` |
+| Community App Store name | Black Gold | Accepted | `umbrel-app-store.yml` `name` |
 | Umbrel app id / folder | `blackgold-trading` | Derived (store id + `-trading`) | `blackgold-trading/umbrel-app.yml` `id`, folder name, container names |
-| Umbrel app category | `Finance` | Provisional | `umbrel-app.yml` `category` |
-| Compose service names | `app_proxy`, `core`, `gateway` | Provisional | `blackgold-trading/docker-compose.yml` |
+| Umbrel app category | `finance` (lowercase, matching official app manifests) | Accepted | `umbrel-app.yml` `category` |
+| Compose service names | `app_proxy`, `core`, `gateway` | Accepted | `blackgold-trading/docker-compose.yml` |
 | Umbrel container names | `blackgold-trading_core_1`, `blackgold-trading_gateway_1` | Derived (`<app-id>_<service>_1`) | `APP_HOST` in `app_proxy` |
-| Internal HTTP port (core, read-only status UI) | `8479` | Provisional | `umbrel-app.yml` `port`, `APP_PORT` |
-| Internal gateway port | `8480` (bound to app network only, never exposed by app_proxy) | Provisional | compose |
-| GHCR image (single image, role by command) | `ghcr.io/mherman1990/blackgold` | Provisional | compose `image:`, release workflow |
-| Image tags | `vX.Y.Z` and `sha-<12 hex>`; digest pinned in compose when published | Provisional | compose, CI |
-| npm workspace packages | `@blackgold/core`, `@blackgold/broker-gateway`, `@blackgold/shared` | Provisional | `package.json` |
-| Process names | `blackgold-core`, `blackgold-broker-gateway` | Provisional | logs, health output |
+| Internal HTTP port (core, read-only status UI) | `8479` | Accepted | `umbrel-app.yml` `port`, `APP_PORT` |
+| Internal gateway port | none in Phase 0 (gateway exposes no listener; core-to-gateway transport is a Phase 5 decision) | Accepted | compose |
+| GHCR image (single image, role by command) | `ghcr.io/mherman1990/blackgold` | Accepted | compose `image:`, release workflow |
+| Image tags | `X.Y.Z` (matches package.json, no `v`) and `sha-<40 hex>`; compose pins `X.Y.Z@sha256:<digest>` once published | Accepted | compose, CI |
+| npm workspace packages | `@blackgold/core`, `@blackgold/broker-gateway`, `@blackgold/shared` | Accepted | `package.json` |
+| Process names | `blackgold-core`, `blackgold-broker-gateway` | Accepted | logs, health output |
 | App data root | `${APP_DATA_DIR}` (Umbrel) / `./appdata` (Windows fallback) | Derived | compose volumes |
-| SQLite database | `${APP_DATA_DIR}/data/blackgold.sqlite` | Provisional | config schema |
-| Raw artifact store | `${APP_DATA_DIR}/data/artifacts/` | Provisional | config schema |
-| Backups | `${APP_DATA_DIR}/backups/` (local) plus off-device encrypted copy (D-16) | Provisional | backup scripts |
-| Secrets | Umbrel app env from `exports.sh` / Docker secrets under `${APP_DATA_DIR}/secrets/` | Provisional | compose, runbooks |
-| Sleeve account role | `blackgold_sleeve` | Provisional | config schema, gateway allowlist |
-| Config env prefix | `BLACKGOLD_` | Provisional | all services |
-| Authorization artifact | `LIVE_AUTHORIZATION.yaml` (gitignored, owner-created) | Provisional | gateway, core |
-| Release tag pattern | `v[0-9]+.[0-9]+.[0-9]+` | Provisional | release workflow trigger |
-| Version authority | `package.json` at repo root | Provisional | version-consistency CI check |
+| SQLite database | `${APP_DATA_DIR}/data/blackgold.sqlite` | Accepted | config schema |
+| Raw artifact store | `${APP_DATA_DIR}/data/artifacts/` | Accepted | config schema |
+| Backups | `${APP_DATA_DIR}/backups/` (local) plus off-device encrypted copy (D-16) | Accepted | backup scripts |
+| Secrets | files under `${APP_DATA_DIR}/secrets/` mounted read-only into the gateway only (Phase 6); no `exports.sh` needed for a single app | Accepted | compose, runbooks |
+| Sleeve account role | `blackgold_sleeve` | Accepted | config schema, gateway allowlist |
+| Config env prefix | `BLACKGOLD_` | Accepted | all services |
+| Authorization artifact | `LIVE_AUTHORIZATION.yaml` (gitignored, owner-created) | Accepted | gateway, core |
+| Release tag pattern | `v[0-9]+.[0-9]+.[0-9]+` | Accepted | release workflow trigger |
+| Version authority | `package.json` at repo root | Accepted | version-consistency CI check |
 
 ## Cross-file consistency check (Phase 0 CI)
 
-A script `scripts/check-identity.ts` must assert:
+`scripts/check-identity.ts` (run by CI and by `test/policy/identity.test.ts`) asserts:
 
 1. `umbrel-app-store.yml` `id` equals `blackgold`.
 2. Exactly one app directory exists and its name equals `umbrel-app.yml` `id` equals `blackgold-trading`, which starts with `blackgold-`.
