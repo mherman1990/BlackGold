@@ -2,7 +2,7 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-09-07 by Claude Code (Phase 4: risk halt-state machine built, D-44, on `claude/phase-04-risk-halt-engine`).
+**Last updated:** 2026-09-07 by Claude Code (Phase 4: risk-limit/caps engine built, D-45, on `claude/phase-04-risk-limits`).
 
 ## Product state
 
@@ -65,7 +65,9 @@ Phase 4 (household-minimum, compliance, restricted list, portfolio construction,
 
 **Second Phase 4 PR — the risk halt-state machine (D-44, branch `claude/phase-04-risk-halt-engine`):** `packages/core/src/risk/halt.ts` (`evaluateHaltState`) is the deterministic risk safety core. It returns `NORMAL`, `HALT_NEW_RISK`, or `HOLD_ONLY` — never `EMERGENCY_FLATTEN_AUTHORIZED` — from sleeve NAV/HWM/session-start NAV, staleness/incident signals, and the `risk.yaml` thresholds: drawdown, daily loss, stale input, expired auth, unknown state, and severe incident all fail closed to `HALT_NEW_RISK` (or `HOLD_ONLY` at the deeper drawdown); automatic flatten never happens; escalation is automatic and relaxation needs an owner re-arm that an active fault still overrides. Sizing (`strategy/construct.ts`) and the risk-policy schema/defaults (`RiskConfigSchema`, `config/examples/risk.yaml`, D-15) already existed, so this closes the "risk engine with halt states" gap. **Matt's instruction to "resolve risk.yaml" was not performed by Claude Code:** approving the defaults is charter open decision OD-3, one of the acts no autonomy reaches — `risk.yaml` keeps `approvedBy: null` and OD-3 stays open. The engine is built and tested but consumes an unapproved policy, so nothing may register or run for real until Matt resolves OD-3.
 
-**Still to come in Phase 4:** exposure flags + ETF look-through, the restricted list + compliance engine, the risk-limit/caps engine (position/sector/cluster/gross/ADV with reason codes), and wiring the halt state into the decision/gateway loop (Phase 5) — each a further bounded PR, gated on `risk.yaml` approval (OD-3) and the sleeve account (D-12) where it depends on them.
+**Third Phase 4 PR — the risk-limit/caps engine (D-45, branch `claude/phase-04-risk-limits`):** `packages/core/src/risk/limits.ts` (`evaluateRiskLimits`) is the deterministic `RiskEngine` verdict — an independent re-check of a proposed target book against the `risk.yaml` caps and the charter, separate from construction, that admits or rejects with reason codes and never re-sizes. Checks: per-instrument weight, open-position count, gross/net exposure, cash floor, sector concentration, correlated-cluster weight and membership, and the long-only posture; fail-closed on an unclassified holding. Pure (T-05, under `risk/`). 11 tests. **Factor concentration is deferred on a real owner question** (the taxonomy's `market` tag is on every holding, so capping summed `market` weight would cap total exposure — which factor tags are cap-bearing is a policy decision); liquidity, order-level, and per-position-risk-budget limits need order/price/ADV data and are follow-ups.
+
+**Still to come in Phase 4:** exposure flags + ETF look-through, the restricted list + compliance engine, the deferred limit engines (factor concentration once the cap-bearing tags are decided; liquidity/order-level/per-position-risk), and wiring the halt state + limit verdict into the decision/gateway loop (Phase 5) — each a further bounded PR, gated on `risk.yaml` approval (OD-3) and the sleeve account (D-12) where it depends on them.
 
 ## Phase 2 exit criteria
 
