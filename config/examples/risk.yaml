@@ -1,0 +1,91 @@
+# Black Gold risk limits (docs/PRODUCT_SPEC.md section 8; defaults from docs/DECISIONS.md D-15).
+# Engineering defaults, not investment advice. Matt must approve this file before Phase 1 implementation.
+# Percentages and money are DECIMAL STRINGS ("0.05" = 5%) so no binary float enters a limit.
+# Schema: config/schema/risk.schema.json
+version: "0.1.0"
+approvedBy: null
+approvedAt: null
+
+sleeve:
+  maxPctOfLiquidInvestableAssets: "0.05"
+  cashFundedOnly: true
+
+allowedInstruments: [ETF, EQUITY]
+allowedDirections: [BUY, SELL] # long-only: SELL may only reduce an existing position
+allowedSessions: [REGULAR]
+allowedOrderTypes: [LIMIT, MARKET]
+allowedTimeInForce: [DAY, GTC]
+fractionalShares: false
+extendedHours: false
+leverage: false
+
+positionLimits:
+  maxSingleStockWeightPct: "0.05"
+  maxSingleEtfWeightPct: "0.20"
+  maxInitialRiskPerPositionPct: "0.0035"
+  maxOpenPositions: 10
+  maxNewPositionsPerSession: 3
+  dailyNewRiskPctNav: "0.01"
+
+concentration:
+  maxSectorWeightPct: "0.20"
+  maxThemeWeightPct: "0.20"
+  maxFactorWeightPct: "0.30"
+  maxCorrelatedClusterWeightPct: "0.30"
+  correlationClusterThreshold: "0.70"
+
+exposure:
+  maxGrossExposurePct: "1.00"
+  maxNetExposurePct: "1.00"
+  minCashPct: "0.02"
+
+volatility:
+  scalingRule: target_vol
+  targetAnnualizedVolPct: "0.10"
+  maxScaleFactor: "1.0"
+  lookbackDays: 63
+
+liquidity:
+  maxAdvParticipationPct: "0.01"
+  minAdvUsd: "5000000"
+  minPriceUsd: "5.00"
+  maxSpreadBps: "50"
+
+orderLimits:
+  maxOrderNotionalUsd: "1500"
+  maxOrderQuantity: "1000"
+  maxOrdersPerSession: 4
+  maxDailyTurnoverPctNav: "0.25"
+
+eventBlackouts:
+  earningsDaysBefore: 2
+  earningsDaysAfter: 1
+  blockNewRiskOnScheduledEvents: true
+
+pdt:
+  preventPatternDayTrading: true
+  maxDayTradesPerRollingFiveDays: 3
+
+priceRules:
+  maxQuoteAgeSeconds: 60
+  maxAbnormalMovePct: "0.20"
+  maxCrossSourceDeviationPct: "0.02"
+  requireTwoSources: true
+
+haltThresholds:
+  dailyLossPct: "0.02" # HALT_NEW_RISK
+  haltNewRiskDrawdownPct: "0.08" # HALT_NEW_RISK from high-water mark
+  holdOnlyDrawdownPct: "0.10" # HOLD_ONLY
+  manualRearmRequired: true
+  automaticFlatten: false # D-23: never a default
+
+staleness:
+  financialPictureMaxAgeDays: 120
+  marketDataMaxAgeMinutes: 30
+  modelConfigMaxAgeDays: 90
+  brokerAuthMaxAgeMinutes: 25
+  restrictedListMaxAgeDays: 120
+
+thesis:
+  expiryDays: 60
+  deterministicExitOnExpiry: true

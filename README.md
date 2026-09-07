@@ -6,7 +6,7 @@ The name is a play on Iowa's black soil and on oil. The product is not an LLM th
 
 ## Status
 
-Discovery. No application code exists yet. The Discovery Pack is complete and awaits owner approval before Phase 0 begins. Start with `docs/DISCOVERY_PACK.md`, then `STATE.md` and `HANDOFF.md`.
+Phase 0 (repository foundation and safe simulations) is implemented and tested; it awaits owner review and two hardware checks. No market data, research, model, or broker connectivity exists yet, and there is no live-trading code path. Start with `STATE.md`, then `HANDOFF.md` and `docs/DISCOVERY_PACK.md`.
 
 ## Fixed constraints
 
@@ -26,6 +26,10 @@ Discovery. No application code exists yet. The Discovery Pack is complete and aw
 | `docs/` | Product specification, decisions, protocols, threat model, capability registers |
 | `strategies/` | Draft Alpha Charters, one directory per strategy |
 | `.claude/rules/` | Path-scoped review rules for financial-critical code |
+| `packages/shared`, `packages/core`, `packages/broker-gateway` | Source. Core never imports the gateway; the gateway holds no credential in this phase |
+| `blackgold-trading/`, `umbrel-app-store.yml` | One-app Umbrel Community App Store |
+| `config/` | Schemas and fake-value examples |
+| `scripts/`, `test/policy/` | Identity and secret checks, backup/restore, CI policy gates |
 
 ## Not investment advice
 

@@ -1,0 +1,519 @@
+{
+  "$id": "https://blackgold.local/config/schema/risk.schema.json",
+  "title": "blackgold risk",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "version": {
+      "default": "0.1.0",
+      "type": "string",
+      "minLength": 1
+    },
+    "approvedBy": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "approvedAt": {
+      "default": null,
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sleeve": {
+      "default": {
+        "maxPctOfLiquidInvestableAssets": "0.05",
+        "cashFundedOnly": true
+      },
+      "type": "object",
+      "properties": {
+        "maxPctOfLiquidInvestableAssets": {
+          "default": "0.05",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "cashFundedOnly": {
+          "default": true,
+          "type": "boolean",
+          "const": true
+        }
+      }
+    },
+    "allowedInstruments": {
+      "default": [
+        "ETF",
+        "EQUITY"
+      ],
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "ETF",
+          "EQUITY"
+        ]
+      }
+    },
+    "allowedDirections": {
+      "default": [
+        "BUY",
+        "SELL"
+      ],
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "BUY",
+          "SELL"
+        ]
+      }
+    },
+    "allowedSessions": {
+      "default": [
+        "REGULAR"
+      ],
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "const": "REGULAR"
+      }
+    },
+    "allowedOrderTypes": {
+      "default": [
+        "LIMIT",
+        "MARKET"
+      ],
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "LIMIT",
+          "MARKET"
+        ]
+      }
+    },
+    "allowedTimeInForce": {
+      "default": [
+        "DAY",
+        "GTC"
+      ],
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "DAY",
+          "GTC"
+        ]
+      }
+    },
+    "fractionalShares": {
+      "default": false,
+      "type": "boolean",
+      "const": false
+    },
+    "extendedHours": {
+      "default": false,
+      "type": "boolean",
+      "const": false
+    },
+    "leverage": {
+      "default": false,
+      "type": "boolean",
+      "const": false
+    },
+    "positionLimits": {
+      "default": {
+        "maxSingleStockWeightPct": "0.05",
+        "maxSingleEtfWeightPct": "0.20",
+        "maxInitialRiskPerPositionPct": "0.0035",
+        "maxOpenPositions": 10,
+        "maxNewPositionsPerSession": 3,
+        "dailyNewRiskPctNav": "0.01"
+      },
+      "type": "object",
+      "properties": {
+        "maxSingleStockWeightPct": {
+          "default": "0.05",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "maxSingleEtfWeightPct": {
+          "default": "0.20",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "maxInitialRiskPerPositionPct": {
+          "default": "0.0035",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "maxOpenPositions": {
+          "default": 10,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "maxNewPositionsPerSession": {
+          "default": 3,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "dailyNewRiskPctNav": {
+          "default": "0.01",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        }
+      }
+    },
+    "concentration": {
+      "default": {
+        "maxSectorWeightPct": "0.20",
+        "maxThemeWeightPct": "0.20",
+        "maxFactorWeightPct": "0.30",
+        "maxCorrelatedClusterWeightPct": "0.30",
+        "correlationClusterThreshold": "0.70"
+      },
+      "type": "object",
+      "properties": {
+        "maxSectorWeightPct": {
+          "default": "0.20",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "maxThemeWeightPct": {
+          "default": "0.20",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "maxFactorWeightPct": {
+          "default": "0.30",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "maxCorrelatedClusterWeightPct": {
+          "default": "0.30",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "correlationClusterThreshold": {
+          "default": "0.70",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        }
+      }
+    },
+    "exposure": {
+      "default": {
+        "maxGrossExposurePct": "1.00",
+        "maxNetExposurePct": "1.00",
+        "minCashPct": "0.02"
+      },
+      "type": "object",
+      "properties": {
+        "maxGrossExposurePct": {
+          "default": "1.00",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "maxNetExposurePct": {
+          "default": "1.00",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "minCashPct": {
+          "default": "0.02",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        }
+      }
+    },
+    "volatility": {
+      "default": {
+        "scalingRule": "target_vol",
+        "targetAnnualizedVolPct": "0.10",
+        "maxScaleFactor": "1.0",
+        "lookbackDays": 63
+      },
+      "type": "object",
+      "properties": {
+        "scalingRule": {
+          "default": "target_vol",
+          "type": "string",
+          "enum": [
+            "none",
+            "target_vol"
+          ]
+        },
+        "targetAnnualizedVolPct": {
+          "default": "0.10",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "maxScaleFactor": {
+          "default": "1.0",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "lookbackDays": {
+          "default": 63,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "liquidity": {
+      "default": {
+        "maxAdvParticipationPct": "0.01",
+        "minAdvUsd": "5000000",
+        "minPriceUsd": "5.00",
+        "maxSpreadBps": "50"
+      },
+      "type": "object",
+      "properties": {
+        "maxAdvParticipationPct": {
+          "default": "0.01",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "minAdvUsd": {
+          "default": "5000000",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "minPriceUsd": {
+          "default": "5.00",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "maxSpreadBps": {
+          "default": "50",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        }
+      }
+    },
+    "orderLimits": {
+      "default": {
+        "maxOrderNotionalUsd": "1500",
+        "maxOrderQuantity": "1000",
+        "maxOrdersPerSession": 4,
+        "maxDailyTurnoverPctNav": "0.25"
+      },
+      "type": "object",
+      "properties": {
+        "maxOrderNotionalUsd": {
+          "default": "1500",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "maxOrderQuantity": {
+          "default": "1000",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "maxOrdersPerSession": {
+          "default": 4,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "maxDailyTurnoverPctNav": {
+          "default": "0.25",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        }
+      }
+    },
+    "eventBlackouts": {
+      "default": {
+        "earningsDaysBefore": 2,
+        "earningsDaysAfter": 1,
+        "blockNewRiskOnScheduledEvents": true
+      },
+      "type": "object",
+      "properties": {
+        "earningsDaysBefore": {
+          "default": 2,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "earningsDaysAfter": {
+          "default": 1,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "blockNewRiskOnScheduledEvents": {
+          "default": true,
+          "type": "boolean"
+        }
+      }
+    },
+    "pdt": {
+      "default": {
+        "preventPatternDayTrading": true,
+        "maxDayTradesPerRollingFiveDays": 3
+      },
+      "type": "object",
+      "properties": {
+        "preventPatternDayTrading": {
+          "default": true,
+          "type": "boolean",
+          "const": true
+        },
+        "maxDayTradesPerRollingFiveDays": {
+          "default": 3,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "priceRules": {
+      "default": {
+        "maxQuoteAgeSeconds": 60,
+        "maxAbnormalMovePct": "0.20",
+        "maxCrossSourceDeviationPct": "0.02",
+        "requireTwoSources": true
+      },
+      "type": "object",
+      "properties": {
+        "maxQuoteAgeSeconds": {
+          "default": 60,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "maxAbnormalMovePct": {
+          "default": "0.20",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "maxCrossSourceDeviationPct": {
+          "default": "0.02",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "requireTwoSources": {
+          "default": true,
+          "type": "boolean"
+        }
+      }
+    },
+    "haltThresholds": {
+      "default": {
+        "dailyLossPct": "0.02",
+        "haltNewRiskDrawdownPct": "0.08",
+        "holdOnlyDrawdownPct": "0.10",
+        "manualRearmRequired": true,
+        "automaticFlatten": false
+      },
+      "type": "object",
+      "properties": {
+        "dailyLossPct": {
+          "default": "0.02",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "haltNewRiskDrawdownPct": {
+          "default": "0.08",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "holdOnlyDrawdownPct": {
+          "default": "0.10",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "manualRearmRequired": {
+          "default": true,
+          "type": "boolean",
+          "const": true
+        },
+        "automaticFlatten": {
+          "default": false,
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "staleness": {
+      "default": {
+        "financialPictureMaxAgeDays": 120,
+        "marketDataMaxAgeMinutes": 30,
+        "modelConfigMaxAgeDays": 90,
+        "brokerAuthMaxAgeMinutes": 25,
+        "restrictedListMaxAgeDays": 120
+      },
+      "type": "object",
+      "properties": {
+        "financialPictureMaxAgeDays": {
+          "default": 120,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "marketDataMaxAgeMinutes": {
+          "default": 30,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "modelConfigMaxAgeDays": {
+          "default": 90,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "brokerAuthMaxAgeMinutes": {
+          "default": 25,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "restrictedListMaxAgeDays": {
+          "default": 120,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "thesis": {
+      "default": {
+        "expiryDays": 60,
+        "deterministicExitOnExpiry": true
+      },
+      "type": "object",
+      "properties": {
+        "expiryDays": {
+          "default": 60,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "deterministicExitOnExpiry": {
+          "default": true,
+          "type": "boolean",
+          "const": true
+        }
+      }
+    }
+  }
+}

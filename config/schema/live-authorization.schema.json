@@ -1,0 +1,322 @@
+{
+  "$id": "https://blackgold.local/config/schema/live-authorization.schema.json",
+  "title": "blackgold live-authorization",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "authorization_id": {
+      "type": "string",
+      "pattern": "^AUTH-\\d{4}-\\d{4}$"
+    },
+    "issued_at_utc": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "starts_at_utc": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "expires_at_utc": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "sleeve": {
+      "type": "object",
+      "properties": {
+        "account_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{4,64}$"
+        },
+        "broker": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "account_hash",
+        "broker"
+      ]
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "LIVE_MANUAL",
+        "LIVE_LIMITED"
+      ]
+    },
+    "approval_mode": {
+      "type": "string",
+      "enum": [
+        "per_order",
+        "version_level"
+      ]
+    },
+    "allowed": {
+      "type": "object",
+      "properties": {
+        "charter_versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "strategy_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "charter_version": {
+                "type": "string",
+                "minLength": 1
+              },
+              "charter_hash": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{4,64}$"
+              }
+            },
+            "required": [
+              "strategy_id",
+              "charter_version",
+              "charter_hash"
+            ]
+          }
+        },
+        "strategy_versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "strategy_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rules_version": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "portfolio_version": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "strategy_id",
+              "rules_version",
+              "portfolio_version"
+            ]
+          }
+        },
+        "arms_in_production": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "B0_PASSIVE",
+              "B1_DETERMINISTIC",
+              "C1_LLM_OVERLAY",
+              "D1_LLM_ONLY_SHADOW"
+            ]
+          }
+        },
+        "instruments": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z.\\-]{1,10}$"
+          }
+        },
+        "directions": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "BUY_TO_OPEN",
+              "SELL_TO_CLOSE"
+            ]
+          }
+        },
+        "sessions": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "const": "REGULAR"
+          }
+        },
+        "order_types": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "LIMIT_DAY",
+              "LIMIT_GTC",
+              "MARKET_DAY"
+            ]
+          }
+        }
+      },
+      "required": [
+        "charter_versions",
+        "strategy_versions",
+        "arms_in_production",
+        "instruments",
+        "directions",
+        "sessions",
+        "order_types"
+      ]
+    },
+    "caps": {
+      "type": "object",
+      "properties": {
+        "max_sleeve_nav_usd": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "string",
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            }
+          ]
+        },
+        "max_gross_exposure_pct_nav": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            {
+              "type": "string",
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            }
+          ]
+        },
+        "max_position_pct_nav": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            {
+              "type": "string",
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            }
+          ]
+        },
+        "max_order_notional_usd": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "string",
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            }
+          ]
+        },
+        "max_orders_per_session_day": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_cumulative_loss_usd": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "string",
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            }
+          ]
+        }
+      },
+      "required": [
+        "max_sleeve_nav_usd",
+        "max_gross_exposure_pct_nav",
+        "max_position_pct_nav",
+        "max_order_notional_usd",
+        "max_orders_per_session_day",
+        "max_cumulative_loss_usd"
+      ]
+    },
+    "hashes": {
+      "type": "object",
+      "properties": {
+        "risk_yaml": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{4,64}$"
+        },
+        "compliance_policy": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{4,64}$"
+        },
+        "executable_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_config": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{4,64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "risk_yaml",
+        "compliance_policy",
+        "executable_version",
+        "model_config"
+      ]
+    },
+    "signature": {
+      "type": "object",
+      "properties": {
+        "key_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "key_id",
+        "value"
+      ]
+    }
+  },
+  "required": [
+    "authorization_id",
+    "issued_at_utc",
+    "starts_at_utc",
+    "expires_at_utc",
+    "sleeve",
+    "mode",
+    "approval_mode",
+    "allowed",
+    "caps",
+    "hashes",
+    "signature"
+  ]
+}

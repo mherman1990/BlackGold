@@ -1,0 +1,6 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": { "composite": false, "declaration": false, "declarationMap": false, "noEmit": true, "rootDir": "..", "types": ["node"], "rewriteRelativeImportExtensions": false, "allowImportingTsExtensions": true },
+  "include": ["./**/*.ts"],
+  "references": [{ "path": ".." }]
+}

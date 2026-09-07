@@ -1,0 +1,44 @@
+# LIVE_AUTHORIZATION artifact shape (docs/AUTOMATION_AND_LIVE_GATES.md section 5). ALL VALUES ARE FAKE.
+# This build contains no live path and no verifier: the schema exists so the artifact format is fixed early.
+# A real artifact is gitignored (LIVE_AUTHORIZATION.yaml) and signed with an owner key held outside the container.
+# Schema: config/schema/live-authorization.schema.json
+authorization_id: AUTH-2027-0002
+issued_at_utc: "2027-03-02T14:00:00Z"
+starts_at_utc: "2027-03-03T13:30:00Z"
+expires_at_utc: "2027-04-03T20:00:00Z"
+
+sleeve:
+  account_hash: "sha256:7d4e00000000000000000000000000000000000000000000000000000000fa4e"
+  broker: fake-broker
+
+mode: LIVE_MANUAL
+approval_mode: per_order
+
+allowed:
+  charter_versions:
+    - { strategy_id: etf_trend_volctl, charter_version: "1.2.0", charter_hash: "sha256:9c1f00000000000000000000000000000000000000000000000000000000fa4e" }
+  strategy_versions:
+    - { strategy_id: etf_trend_volctl, rules_version: 2, portfolio_version: 1 }
+  arms_in_production: [B1_DETERMINISTIC]
+  instruments: [VTI, VXUS, IEF, SHV]
+  directions: [BUY_TO_OPEN, SELL_TO_CLOSE]
+  sessions: [REGULAR]
+  order_types: [LIMIT_DAY]
+
+caps:
+  max_sleeve_nav_usd: 5000
+  max_gross_exposure_pct_nav: 100
+  max_position_pct_nav: 35
+  max_order_notional_usd: 1500
+  max_orders_per_session_day: 4
+  max_cumulative_loss_usd: 400
+
+hashes:
+  risk_yaml: "sha256:2b9100000000000000000000000000000000000000000000000000000000fa4e"
+  compliance_policy: "sha256:c4a700000000000000000000000000000000000000000000000000000000fa4e"
+  executable_version: sha-1f0e9d3c7a2b
+  model_config: null
+
+signature:
+  key_id: owner-2027-fake
+  value: FAKE_DETACHED_SIGNATURE_NOT_VALID

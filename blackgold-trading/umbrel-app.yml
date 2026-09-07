@@ -1,0 +1,29 @@
+manifestVersion: 1
+id: blackgold-trading
+category: finance
+name: Black Gold
+version: "0.1.0"
+tagline: Evidence-first research and controlled execution for one ring-fenced sleeve
+description: >-
+  Black Gold researches, shadows, paper trades, and (only after explicit owner
+  authorization in a much later release) executes a narrowly approved systematic
+  strategy for a single ring-fenced brokerage account. Deterministic code owns
+  every number and every hard boundary. Live trading is absent by construction
+  in this release. Not investment advice.
+releaseNotes: >-
+  0.1.0 is the Phase 0 foundation: configuration schemas, SQLite ledger with
+  hash-chained events and daily seals, exchange calendar, deterministic
+  scheduler, synthetic broker with fault injection, health endpoint, and the
+  release pipeline. No data ingestion, research, or broker connectivity yet.
+developer: Matt Herman
+website: https://github.com/mherman1990/BlackGold
+dependencies: []
+repo: https://github.com/mherman1990/BlackGold
+support: https://github.com/mherman1990/BlackGold/issues
+port: 8479
+gallery: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+submitter: Matt Herman
+submission: https://github.com/mherman1990/BlackGold
