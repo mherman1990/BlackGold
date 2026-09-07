@@ -160,9 +160,10 @@ export class PointInTimeRepository {
     // Collapse: revisable rows (vintageAt set) to one per (entity, effectiveAt) with the greatest admissible
     // vintage; non-revisable rows to one per (entity, effectiveAt, locator) where the latest row wins, so a
     // correction supersedes the original once the correction itself is available.
+    // Collapse first, then exclude: a later row that flags its predecessor's artifact as missing must hide
+    // the predecessor rather than be skipped in its favour.
     const chosen = new Map<string, StoredObservation<T>>();
     for (const row of candidates) {
-      if (excludesFromDecisions(row.qualityFlags)) continue;
       const key =
         row.vintageAt === undefined
           ? `${row.entityId ?? ""}|${row.effectiveAt ?? ""}|${row.sourceLocator}`
@@ -175,7 +176,7 @@ export class PointInTimeRepository {
       const cmp = compareVintage(row, prev);
       if (cmp > 0 || (cmp === 0 && row.id > prev.id)) chosen.set(key, row);
     }
-    const rows = [...chosen.values()].sort((a, b) => a.id - b.id);
+    const rows = [...chosen.values()].filter((row) => !excludesFromDecisions(row.qualityFlags)).sort((a, b) => a.id - b.id);
     const labels: string[] = [];
     if (delay === 0 && defaultProcessingDelayMs(q.sourceId, this.delayOverrides) > 0) labels.push("OPTIMISTIC_DELAY");
     return { rows, labels, processingDelayMs: delay };

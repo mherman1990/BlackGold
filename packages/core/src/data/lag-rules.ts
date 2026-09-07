@@ -23,7 +23,11 @@ export function secDissemination(acceptanceAt: UtcInstant, calendar: ExchangeCal
   return { availableAt: zonedToUtc(next, 6, 0, NY), flags: ["AFTER_HOURS_ACCEPTANCE"] };
 }
 
-/** Form 4 deadline: end of the second business day after the transaction date (17:30 ET filing cutoff). */
+/**
+ * Form 4 deadline: the second business day after the transaction date. Section 16 forms (3, 4, 5) accepted
+ * by 22:00 ET receive that day's filing date, so the deadline instant is 22:00 ET, even though dissemination
+ * of anything accepted after 17:30 ET still happens the next business day at 06:00 ET.
+ */
 export function form4Deadline(transactionDate: IsoDate, calendar: ExchangeCalendar): UtcInstant {
   let d = transactionDate;
   let count = 0;
@@ -31,7 +35,7 @@ export function form4Deadline(transactionDate: IsoDate, calendar: ExchangeCalend
     d = addDays(d, 1);
     if (calendar.isSession(d)) count++;
   }
-  return zonedToUtc(d, 17, 30, NY);
+  return zonedToUtc(d, 22, 0, NY);
 }
 
 export function form4Flags(transactionDate: IsoDate, acceptanceAt: UtcInstant, calendar: ExchangeCalendar): LagResult {
