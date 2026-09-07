@@ -2,7 +2,7 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-09-07 by Claude Code (Phase 4 started, D-43: the deterministic factor classifier, on `claude/phase-04-factor-classifier`).
+**Last updated:** 2026-09-07 by Claude Code (Phase 4: risk halt-state machine built, D-44, on `claude/phase-04-risk-halt-engine`).
 
 ## Product state
 
@@ -61,7 +61,11 @@ The **real Anthropic adapter is now built** in a follow-up PR (D-42, branch `cla
 
 Phase 4 (household-minimum, compliance, restricted list, portfolio construction, sizing, risk engine) was authorized by Matt (D-43) and is being built as a sequence of bounded PRs, unblocked pieces first, because several deliverables depend on `risk.yaml` approval and the sleeve account (D-12).
 
-**First Phase 4 PR — the deterministic factor classifier (branch `claude/phase-04-factor-classifier`):** a `factors` block in the charter schema (`taxonomy` + per-symbol `assignments`, hash-covered) is the code-side authority the Analyst's `factorsTouched` is checked against; `packages/core/src/strategy/factors.ts` classifies a candidate and the `research analyst` CLI now derives the factor set from the charter and refuses an unclassified candidate (unknown classification blocks new risk), replacing the `--factors` flag. The etf-trend-vol charter carries a **conservative starting map that is Matt's to review/edit before signing** — the factor values are not owner-approved, and editing them is his act, like signing. **Still to come in Phase 4:** exposure flags + ETF look-through, the restricted list + compliance engine, the deterministic portfolio constructor + sizing, and the risk engine with halt states — each a further bounded PR, gated on `risk.yaml` approval and the sleeve account where it depends on them.
+**First Phase 4 PR — the deterministic factor classifier (branch `claude/phase-04-factor-classifier`):** a `factors` block in the charter schema (`taxonomy` + per-symbol `assignments`, hash-covered) is the code-side authority the Analyst's `factorsTouched` is checked against; `packages/core/src/strategy/factors.ts` classifies a candidate and the `research analyst` CLI now derives the factor set from the charter and refuses an unclassified candidate (unknown classification blocks new risk), replacing the `--factors` flag. The etf-trend-vol charter carries a **conservative starting map that is Matt's to review/edit before signing** — the factor values are not owner-approved, and editing them is his act, like signing.
+
+**Second Phase 4 PR — the risk halt-state machine (D-44, branch `claude/phase-04-risk-halt-engine`):** `packages/core/src/risk/halt.ts` (`evaluateHaltState`) is the deterministic risk safety core. It returns `NORMAL`, `HALT_NEW_RISK`, or `HOLD_ONLY` — never `EMERGENCY_FLATTEN_AUTHORIZED` — from sleeve NAV/HWM/session-start NAV, staleness/incident signals, and the `risk.yaml` thresholds: drawdown, daily loss, stale input, expired auth, unknown state, and severe incident all fail closed to `HALT_NEW_RISK` (or `HOLD_ONLY` at the deeper drawdown); automatic flatten never happens; escalation is automatic and relaxation needs an owner re-arm that an active fault still overrides. Sizing (`strategy/construct.ts`) and the risk-policy schema/defaults (`RiskConfigSchema`, `config/examples/risk.yaml`, D-15) already existed, so this closes the "risk engine with halt states" gap. **Matt's instruction to "resolve risk.yaml" was not performed by Claude Code:** approving the defaults is charter open decision OD-3, one of the acts no autonomy reaches — `risk.yaml` keeps `approvedBy: null` and OD-3 stays open. The engine is built and tested but consumes an unapproved policy, so nothing may register or run for real until Matt resolves OD-3.
+
+**Still to come in Phase 4:** exposure flags + ETF look-through, the restricted list + compliance engine, the risk-limit/caps engine (position/sector/cluster/gross/ADV with reason codes), and wiring the halt state into the decision/gateway loop (Phase 5) — each a further bounded PR, gated on `risk.yaml` approval (OD-3) and the sleeve account (D-12) where it depends on them.
 
 ## Phase 2 exit criteria
 
