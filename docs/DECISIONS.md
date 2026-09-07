@@ -550,6 +550,32 @@ decision or gateway loop (Phase 5). No live path, broker credential, or order fo
 
 ---
 
+## D-45 The risk-limit (caps) engine, and the deferred factor-concentration question
+
+**Status:** Built 2026-09-07 under the Phase 4 authorization (D-43); Matt directed "take the caps/limit engine
+next."
+
+**What was built.** `packages/core/src/risk/limits.ts` (`evaluateRiskLimits`), the deterministic `RiskEngine`
+verdict from `docs/PRODUCT_SPEC.md` section 8: an independent re-check of a proposed target book against the
+`risk.yaml` caps and the charter, separate from construction (the spec keeps candidate score, portfolio
+target, and risk verdict as distinct objects, and an equivalent guard re-runs in the gateway). It admits or
+rejects and names every breach with a reason code; it never re-sizes. Pure - only weights, policy, and the
+frozen charter; no model, broker, or network (T-05, under `risk/`). Fail closed: a holding the charter does
+not classify has an unknown sector and is rejected. Checks: per-instrument weight, open-position count,
+gross/net exposure, the cash floor, sector concentration, correlated-cluster weight and membership, and the
+long-only (no negative weight) posture. 11 tests.
+
+**Deferred, and one of them is a real question for the owner.** Liquidity limits (ADV participation, spread,
+price), order-level limits (notional, quantity, turnover), and the per-position initial-risk budget need order,
+price, or ADV data this check does not take, and are follow-up engines. **Factor concentration is deferred on a
+genuine design question:** `risk.yaml` carries `maxFactorWeightPct`, but the charter's factor taxonomy includes
+`market`, which is on every holding - capping the summed `market` weight would cap total invested exposure,
+which is wrong. Which factor tags are concentration-bearing (the style/tilt tags) versus broad-market beta is a
+policy decision that belongs to the owner and probably to the charter's factor block; until it is made, the
+factor cap is not enforced rather than enforced incorrectly.
+
+---
+
 ## Rejected
 
 - **R-01** Postgres/Kafka/Kubernetes/vector DB: no measured need; violates the one-owner maintainability constraint.
