@@ -1,8 +1,10 @@
 # Machine-readable companion to ALPHA_CHARTER.md. The prose charter is the specification a human reads;
 # this file is the only form the code executes.
 #
-# STATUS: DRAFT. Every value below is transcribed from a PROPOSED default in the prose charter. Nothing here
-# is approved. `assertRegistrable` (packages/core/src/strategy/charter.ts) refuses to freeze an experiment on
+# STATUS: DRAFT, with all four open decisions now resolved by the owner (D-39) and the XLE condition settled.
+# What remains unsigned is the approval block itself: state, approved_by, approval_date, code_commit and
+# approval_ref. That is the owner's act and Claude Code may not perform it - see "What standing authorization
+# never covers" in CLAUDE.md. Resolved decisions are NOT an approved charter. `assertRegistrable` (packages/core/src/strategy/charter.ts) refuses to freeze an experiment on
 # this file while approval.state is DRAFT, any open decision is unresolved, or any conditional universe member
 # is undecided. Signing the block below changes the charter hash, which is the point: the approved charter is
 # a different artifact from this draft.
@@ -25,16 +27,36 @@ approval:
   open_decisions:
     - id: OD-1
       question: "Compliance policy on diversified-ETF look-through (decides XLE, flags XLI and XLP)."
-      resolution: null
+      resolution: >-
+        Look-through applies to diversified ETFs. XLE is NOT admitted: it holds refiners with direct RFS and
+        45Z exposure, which is a restricted theme for this operator. The risk universe is therefore 12 ETFs.
+        XLI and XLP remain look-through flagged and are admitted, their restricted-theme exposure being
+        incidental rather than definitional. Chosen as the reversible-in-the-safe-direction option: wrongly
+        holding XLE is a professional conflict question, wrongly excluding it costs marginal diversification.
+        Interim pending the counsel review that D-14 still records as outstanding; counsel may widen this but
+        may not narrow it without a new charter version. Owner decision, 2026-09-07 (D-39).
     - id: OD-2
       question: "Live cash instrument: BIL, SGOV, or plain cash."
-      resolution: null
+      resolution: >-
+        BIL, as the frozen universe already assumes. Deep liquidity and a negligible spread matter more here
+        than SGOV's ~5bp expense advantage, and holding a T-bill ETF rather than plain cash keeps short-rate
+        carry on idle sleeve cash. No universe change required. Owner decision, 2026-09-07 (D-39).
     - id: OD-3
-      question: "Approval of the risk.yaml defaults cited here: 20% ETF cap, 2% minimum cash, 0.5% ADV participation, 10% volatility target."
-      resolution: null
+      question: "Approval of the risk.yaml defaults cited here: 20% ETF cap, 2% minimum cash, 1% ADV participation, 10% volatility target."
+      resolution: >-
+        Approved as they stand in config/examples/risk.yaml: maxSingleEtfWeightPct 0.20, minCashPct 0.02,
+        maxAdvParticipationPct 0.01, targetAnnualizedVolPct 0.10. Note the question's own text previously said
+        "0.5% ADV participation" while the file said 1%; the owner resolved that in favour of the file, and
+        the question text above is corrected to match. Owner decision, 2026-09-07 (D-39).
     - id: OD-4
       question: "Approval of the free market-data source after the capability probe (D-24, CR-09)."
-      resolution: null
+      resolution: >-
+        Approved: Alpaca free tier, IEX feed, daily bars. The capability probe required by D-24 was run live
+        on 2026-09-07 - 340 bars for SPY and VTI, prices stored as decimal strings, availableAt one hour after
+        each close, DST-correct session times, zero OHLC violations. The CR-09 limitation stands and is
+        accepted: IEX is not the consolidated SIP tape, so reported volume is a fraction of consolidated and
+        ADV estimates read low, which makes the 1% ADV cap bind earlier than it would on full-tape volume.
+        That is conservative for execution. Owner decision, 2026-09-07 (D-39).
 
 universe:
   universe_id: etf_trend_vol_v0
@@ -45,7 +67,7 @@ universe:
   conditional:
     - symbol: XLE
       condition: "Holds refiners with RFS/45Z exposure (restricted theme). Admitted only if the compliance policy adopts a diversified-ETF look-through rule that admits it; otherwise the risk universe is 12 ETFs."
-      admitted: null
+      admitted: false
   look_through_flagged: [XLI, XLP]
   survivorship_free: true
   survivorship_note: >-

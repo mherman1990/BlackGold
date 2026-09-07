@@ -74,16 +74,35 @@ describe("charter.yaml", () => {
 });
 
 describe("registrability gate", () => {
-  it("refuses the tracked draft charter", () => {
+  it("refuses the tracked draft charter, and now only because it is unsigned", () => {
+    // The owner resolved all four open decisions and settled the XLE condition on 2026-09-07 (D-39), so this
+    // test no longer asserts OD-1 and XLE among the reasons - they are gone, which is the point.
+    //
+    // What remains is the approval block, and asserting it exactly is deliberate. If the tracked charter ever
+    // becomes registrable, this test fails and forces that to be a visible, reviewed change rather than
+    // something that slips in - which matters because signing the approval block is the one act CLAUDE.md
+    // puts beyond any grant of autonomy. When the owner does sign, updating this test is part of that act.
     const c = loaded();
     expect(isRegistrable(c)).toBe(false);
-    const reasons = registrabilityReasons(c);
-    expect(reasons).toContain("approval.state is DRAFT; only APPROVED may be registered");
-    expect(reasons.some((r) => r.includes("OD-1"))).toBe(true);
-    expect(reasons.some((r) => r.includes("XLE"))).toBe(true);
+    expect(registrabilityReasons(c)).toEqual([
+      "approval.state is DRAFT; only APPROVED may be registered",
+      "approval.approved_by is unsigned",
+      "approval.approval_date is empty",
+      "approval.code_commit is empty",
+      "approval.approval_ref is empty: the written owner decision must be citable",
+    ]);
     expect(() => {
       assertRegistrable(c);
     }).toThrow(CharterNotRegistrableError);
+  });
+
+  it("admits 12 risk ETFs with XLE excluded, per OD-1", () => {
+    // The universe the charter actually executes on, asserted against the resolved condition rather than
+    // trusted. XLE holding refiners with RFS/45Z exposure is why it is out; a silent re-admission would be a
+    // compliance problem, not a config change.
+    const c = loaded();
+    expect(admittedRiskEtfs(c)).toEqual(["VTI", "QQQ", "IWM", "VTV", "VUG", "XLK", "XLF", "XLV", "XLI", "XLP", "XLU", "XLY"]);
+    expect(admittedRiskEtfs(c)).not.toContain("XLE");
   });
 
   it("accepts a fully signed charter with every open decision resolved", () => {
