@@ -7,7 +7,7 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 494 tests, identity check, and secret scan must pass before you change anything.
+4. `npm ci && npm run check`. All of lint, typecheck, 513 tests, identity check, and secret scan must pass before you change anything.
 
 ## 2. Repository guard
 
@@ -15,21 +15,30 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 ## 3. Current position (2026-09-07)
 
-- Discovery, Phase 0 and Phase 1 are merged to `main` at `8006268`.
-- Phase 2 machinery is merged to `main` at `f7fffee`. It took two PRs: PR #5 merged into `claude/phase-01-research-kernel` twelve seconds after PR #4 had merged that branch forward, so it never reached `main`, and PR #6 carried the same tree there (D-36). When resuming, verify rather than assume: `git merge-base --is-ancestor origin/claude/black-gold-continued-rxiesj origin/main`.
+- Everything through Phase 2, plus release prep (PR #8) and the Phase 0 seal completion (PR #9), is merged to `main` at `03bf580`.
+- Phase 2 machinery took two PRs to land: PR #5 merged into `claude/phase-01-research-kernel` twelve seconds after PR #4 had merged that branch forward, so it never reached `main`, and PR #6 carried the same tree there (D-36). When resuming, verify rather than assume: `git merge-base --is-ancestor <branch> origin/main`, and check `git diff origin/main <branch>` is empty.
 - **No experiment is registered, no result has been computed, and the holdout has never been opened.** The charter is `DRAFT` and no market data has been ingested. Both are blockers, and either alone is sufficient.
 - `main` exists but is not the default branch and has no protection. Matt does that in GitHub settings.
 - No image has been published. No Umbrel install exists. No credential exists.
+- **The release chain is blocked on one command, and not on judgement.** `release.yml` fires only on a pushed `v[0-9]+.[0-9]+.[0-9]+` tag, and this session's git credential cannot create tag refs or delete refs: `git push origin v0.1.0` and `git push origin --delete <branch>` both return HTTP 403 from GitHub, while ordinary branch pushes to the same repo succeed and the agent proxy reports healthy. D-37 grants the authority; the credential does not carry it. Do not burn a session retrying this - confirm it once and say so.
+- **PR #9's integrity changes had no external review.** Codex was out of usage budget for its code review on every commit and for a re-requested security review; the only completed security pass ran on `d9d8054`, three commits behind what merged. The corruption path PR #9 fixes was found by Claude Code reviewing Claude Code. Treat `packages/core/src/ledger/ledger.ts` and the `seal_ledger` job as reviewed once, by an interested party.
 
 ## 4. What Matt does next
 
-1. GitHub -> Settings -> Branches: set `main` as default; add a ruleset for `main` requiring a PR, one approval, status checks (`checks`, `image` from `ci.yml`), no force pushes; restrict `v*` tags to the owner.
-2. Delete the merged `claude/phase-00-foundation`, `claude/black-gold-trading-tool-n713ly` and `claude/phase-01-research-kernel` branches; leaving them around is what makes the mis-merge below easy to repeat.
-3. Run the two hardware checks in `docs/PHASE0_REQUIREMENTS_MATRIX.md`: pull or build the image on the Pi and on the Windows Docker host, run `health` for both roles, and run `scripts/pi-benchmark.sh` on the Pi. Record results in the matrix.
-4. Answer the standing open facts: D-12 (sleeve account), D-16 (backup destination), D-04 port check on the Pi.
-5. Provide the credentials the first live ingest needs: `BLACKGOLD_SEC_USER_AGENT_CONTACT` (an email), `BLACKGOLD_FRED_API_KEY`, `BLACKGOLD_ALPACA_KEY_ID` and `BLACKGOLD_ALPACA_SECRET_KEY` (paper keys work for data). They go into the Umbrel app environment or a local `.env`, never into git.
-6. **Confirm or overrule D-32** (book-slot priority between the entry rule and the hysteresis hold rule). The prose charter is genuinely ambiguous; the code resolves it in favour of the incumbent and explains why. Whichever way it goes, section 8 of `ALPHA_CHARTER.md` should say so in one sentence before anything is frozen.
-7. **Resolve the four open decisions inside `strategies/etf-trend-vol/charter.yaml`** (compliance look-through, live cash instrument, `risk.yaml` defaults, market-data source), decide XLE, and sign the approval block. `node packages/core/dist/main.js charter show --path strategies/etf-trend-vol/charter.yaml` lists exactly what is missing and refuses until all of it is filled in.
+1. GitHub -> Settings -> Branches: set `main` as default; add a ruleset for `main` requiring a PR, one approval, status checks (`checks`, `image` from `ci.yml`), no force pushes.
+
+   **Decide about `v*` tags rather than inheriting the current accident.** This item used to say "restrict `v*` tags to the owner", which directly contradicts D-37's grant of tag creation to Claude Code - and today the effect is already in force, not by a ruleset but because the session credential is refused tag refs at all. Two coherent options, and the tension should be resolved on purpose:
+   - *Owner-only tags.* Keep the restriction, and amend D-37 to drop tag creation. Every release then waits on Matt by design. Defensible: publishing an image is the one step in the chain that is outward-facing.
+   - *Claude Code may tag.* Grant tag-ref permission and keep D-37 as written. The release workflow's own guard already enforces what matters - the tag must match `package.json` and be reachable from `main` - so an accidental or premature tag cannot publish anything, and a bad tag is deletable.
+
+   Either is fine; having D-37 say one thing and the credential enforce the other is not, because it makes autonomy look broken when it is only misconfigured.
+2. **Push the `v0.1.0` tag**: `git fetch origin main && git tag v0.1.0 03bf580 && git push origin v0.1.0`. Or grant Claude Code tag-ref permission and it will do this and the rest of the chain. Nothing installable exists until this happens, and every remaining release step is downstream of it.
+3. Delete `claude/phase-00-foundation`, `claude/black-gold-trading-tool-n713ly` and `claude/phase-01-research-kernel`. Verified safe: each carries zero non-merge commits absent from `main`, and their only commits beyond it are orphan merge commits from the D-36 incident. Leaving them around is what makes the mis-merge easy to repeat.
+4. Run the two hardware checks in `docs/PHASE0_REQUIREMENTS_MATRIX.md`: pull or build the image on the Pi and on the Windows Docker host, run `health` for both roles, and run `scripts/pi-benchmark.sh` on the Pi. Record results in the matrix.
+5. Answer the standing open facts: D-12 (sleeve account), D-16 (backup destination), D-04 port check on the Pi.
+6. Provide the credentials the first live ingest needs: `BLACKGOLD_SEC_USER_AGENT_CONTACT` (an email), `BLACKGOLD_FRED_API_KEY`, `BLACKGOLD_ALPACA_KEY_ID` and `BLACKGOLD_ALPACA_SECRET_KEY` (paper keys work for data). They go into the Umbrel app environment or a local `.env`, never into git.
+7. **Confirm or overrule D-32** (book-slot priority between the entry rule and the hysteresis hold rule). The prose charter is genuinely ambiguous; the code resolves it in favour of the incumbent and explains why. Whichever way it goes, section 8 of `ALPHA_CHARTER.md` should say so in one sentence before anything is frozen.
+8. **Resolve the four open decisions inside `strategies/etf-trend-vol/charter.yaml`** (compliance look-through, live cash instrument, `risk.yaml` defaults, market-data source), decide XLE, and sign the approval block. `node packages/core/dist/main.js charter show --path strategies/etf-trend-vol/charter.yaml` lists exactly what is missing and refuses until all of it is filled in.
 
 ## 5. When the charter is approved and data is ingested
 
