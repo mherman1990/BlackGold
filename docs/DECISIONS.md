@@ -561,9 +561,13 @@ verdict from `docs/PRODUCT_SPEC.md` section 8: an independent re-check of a prop
 target, and risk verdict as distinct objects, and an equivalent guard re-runs in the gateway). It admits or
 rejects and names every breach with a reason code; it never re-sizes. Pure - only weights, policy, and the
 frozen charter; no model, broker, or network (T-05, under `risk/`). Fail closed: a holding the charter does
-not classify has an unknown sector and is rejected. Checks: per-instrument weight, open-position count,
-gross/net exposure, the cash floor, sector concentration, correlated-cluster weight and membership, and the
-long-only (no negative weight) posture. 11 tests.
+not classify has an unknown sector and is rejected. Checks: admission (a held instrument must be an admitted
+risk ETF - classification is not admission, so an unadmitted conditional member like XLE is rejected),
+per-instrument weight, open-position count (the stricter of the risk.yaml and charter caps), gross/net
+exposure, the cash floor, sector concentration, correlated-cluster weight and membership, and the long-only
+(no negative weight) posture. 12 tests. The Codex code review on PR #30 caught two fail-closed gaps, both fixed
+before merge: enforce the stricter charter `max_positions` (not only the looser `risk.yaml` cap), and reject a
+held instrument outside `admittedRiskEtfs` even when the charter classifies it.
 
 **Deferred, and one of them is a real question for the owner.** Liquidity limits (ADV participation, spread,
 price), order-level limits (notional, quantity, turnover), and the per-position initial-risk budget need order,
