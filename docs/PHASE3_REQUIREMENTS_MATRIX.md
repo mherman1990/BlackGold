@@ -75,6 +75,11 @@ Two of the "remaining" items above are now built and `tested`:
 - **Analyst wiring** — the `research analyst` CLI command builds a point-in-time packet for a candidate,
   constructs the `AnthropicAdapter` from `ANTHROPIC_API_KEY` (read only in `config/load.ts`, kept off
   `AppConfig`), and prints the redacted outcome; fail-closed without a key.
+- **Operator visibility** — the read-only status page surfaces the archived-call count
+  (`EvidenceStatus.modelCalls` from the `model_calls` table), shown in both the no-experiment and normal
+  branches so the operator can see at a glance that runtime-LLM assessments were archived. The note stays
+  within the page's threat-model constraints: a count and the record shape only — no packet content, secret,
+  dollar total, or account reference. Tests: `status-page.test.ts` ("reports archived runtime-LLM calls").
 
 Still open, by design: the one **live** CR-12/CR-13 verification run on the Pi (needs a key), and **C1/D1
 backtest wiring** — deferred to Phase 5 because a real C1/D1 run is prospective and a historical wiring yields
