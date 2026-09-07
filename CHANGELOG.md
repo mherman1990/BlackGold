@@ -2,6 +2,60 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.1
+
+First release you can actually look at, and three correctness fixes found by pointing the ingest adapters at
+the real APIs for the first time.
+
+**What changed**
+
+- **A read-only HTML status page** at `/`, replacing the plain-text dump. Shows mode and live-absence, ledger
+  events and chain integrity, the last daily seal with an age flag, unsealed days, scheduled jobs with missed
+  and failed counts, data coverage per source with staleness flags, research-evidence state, and disk and WAL
+  use. Self-contained: no script, no outbound request, no external font or image. `/health` is unchanged JSON
+  and `/status.txt` keeps the old plain-text view for `curl`.
+- **FRED ingest works at all.** FRED refuses any request covering more than 2000 vintage dates and DGS10 has
+  5,103, so no long-history daily series could previously be ingested. Requests are now windowed by real
+  vintage dates with shared boundaries, which also avoids the silent failure: FRED clips a row's
+  `realtime_start` to the requested window, so naive chunking invents vintage dates later than the truth
+  (CR-28, CR-29).
+- **SEC ingest works at all.** EDGAR's `reportDate` is the scheduled shareholder *meeting* date on a proxy
+  statement, so it can be in the future. Using it as `observedAt` claimed a fact effective before it was
+  knowable and the temporal-inversion guard refused the whole run, for any issuer that files a proxy.
+  `observedAt` now falls back to the filing date, flagged `FORWARD_DATED_REPORT`, with the raw `reportDate`
+  kept in the value (CR-30).
+- **A diagnosable data-directory error.** An unwritable `/data` previously failed with SQLite's bare "unable
+  to open database file". It now names the directory, the uid the process runs as, and the `chown` to run,
+  and says the fix belongs on the host side of the mount.
+- `release.yml` accepts a `workflow_dispatch` version and creates the release tag itself after checks pass
+  (D-38). `release-verify.yml` no longer asserts behaviour a published image cannot have, and now checks that
+  a refused run leaves no partially initialised database behind.
+
+**Why it matters**
+
+Two of the four ingest adapters failed on their very first real request despite passing their fixture suites.
+Nothing downstream of ingestion could have been trusted before this release, and the status page is the
+difference between operating the appliance and guessing at it.
+
+**Required actions**
+
+None beyond updating the app. No configuration changes, no new environment variables.
+
+**Risk impact**
+
+None to capital. Live trading remains absent by construction; no broker credential or order path exists in
+this image. The research-integrity risk removed is real: fabricated FRED vintage dates would have made
+point-in-time macro reads appear honest while being wrong about when values became knowable.
+
+**Migration**
+
+None. No schema change. `FORWARD_DATED_REPORT` is a new quality code and additive.
+
+**Rollback**
+
+Reinstall 0.1.0. Data written by 0.1.1 remains readable: no stored shape changed. Note that FRED and SEC
+ingest do not work on 0.1.0, which is why this release exists.
+
 ## 0.1.0
 
 Phase 0 foundation. Not yet released to GHCR or installed on any Umbrel device.

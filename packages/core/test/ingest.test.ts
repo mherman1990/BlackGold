@@ -12,6 +12,7 @@ import { openCoreDb } from "../src/db/open.ts";
 import { MissingSourceCredentialError } from "../src/errors.ts";
 import { Ledger } from "../src/ledger/ledger.ts";
 import { parseIngestArgs, runIngest, UsageError, type IngestRequest } from "../src/ingest/run.ts";
+import { CORE_VERSION } from "../src/version.ts";
 
 const FIX = new URL("../../../test/fixtures/", import.meta.url);
 const read = (p: string): Uint8Array => new Uint8Array(readFileSync(new URL(p, FIX)));
@@ -111,7 +112,10 @@ describe("ingest run", () => {
     // The transport saw the credentials; nothing stored did.
     expect(h.requests.some((r) => r.url.includes(FRED_KEY))).toBe(true);
     expect(h.requests.some((r) => r.headers["APCA-API-SECRET-KEY"] === ALPACA_SECRET)).toBe(true);
-    expect(h.requests.every((r) => r.headers["user-agent"] === `BlackGold/0.1.0 (${CONTACT})`)).toBe(true);
+    // Derived from CORE_VERSION, not a literal: runIngest builds this header from package.json, so a
+    // hardcoded version turns every release into a failing test for no reason. (The other suites pass a
+    // userAgent string *into* the client, which is arbitrary test data and correctly stays literal.)
+    expect(h.requests.every((r) => r.headers["user-agent"] === `BlackGold/${CORE_VERSION} (${CONTACT})`)).toBe(true);
     const stored = allStoredText(h.db);
     for (const secret of [FRED_KEY, ALPACA_ID, ALPACA_SECRET]) expect(stored).not.toContain(secret);
     expect(JSON.stringify(reports)).not.toContain(FRED_KEY);
