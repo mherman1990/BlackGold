@@ -16,7 +16,7 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 ## 3. Current position (2026-09-07)
 
 - Discovery, Phase 0 and Phase 1 are merged to `main` at `8006268`.
-- Phase 2 machinery is complete on `claude/black-gold-continued-rxiesj`. PR #5 merged it into `claude/phase-01-research-kernel` twelve seconds after PR #4 had merged that branch forward, so `main` has Phase 1 but not Phase 2. A fresh PR carries the identical tree to `main` (D-36). Check before assuming: `git merge-base --is-ancestor <phase-2-head> origin/main`.
+- Phase 2 machinery is merged to `main` at `f7fffee`. It took two PRs: PR #5 merged into `claude/phase-01-research-kernel` twelve seconds after PR #4 had merged that branch forward, so it never reached `main`, and PR #6 carried the same tree there (D-36). When resuming, verify rather than assume: `git merge-base --is-ancestor origin/claude/black-gold-continued-rxiesj origin/main`.
 - **No experiment is registered, no result has been computed, and the holdout has never been opened.** The charter is `DRAFT` and no market data has been ingested. Both are blockers, and either alone is sufficient.
 - `main` exists but is not the default branch and has no protection. Matt does that in GitHub settings.
 - No image has been published. No Umbrel install exists. No credential exists.
@@ -24,7 +24,7 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 ## 4. What Matt does next
 
 1. GitHub -> Settings -> Branches: set `main` as default; add a ruleset for `main` requiring a PR, one approval, status checks (`checks`, `image` from `ci.yml`), no force pushes; restrict `v*` tags to the owner.
-2. Merge the Phase 2 PR into `main`. Then delete the merged `claude/phase-00-foundation`, `claude/black-gold-trading-tool-n713ly` and `claude/phase-01-research-kernel` branches; leaving them around is what makes the mis-merge below easy to repeat.
+2. Delete the merged `claude/phase-00-foundation`, `claude/black-gold-trading-tool-n713ly` and `claude/phase-01-research-kernel` branches; leaving them around is what makes the mis-merge below easy to repeat.
 3. Run the two hardware checks in `docs/PHASE0_REQUIREMENTS_MATRIX.md`: pull or build the image on the Pi and on the Windows Docker host, run `health` for both roles, and run `scripts/pi-benchmark.sh` on the Pi. Record results in the matrix.
 4. Answer the standing open facts: D-12 (sleeve account), D-16 (backup destination), D-04 port check on the Pi.
 5. Provide the credentials the first live ingest needs: `BLACKGOLD_SEC_USER_AGENT_CONTACT` (an email), `BLACKGOLD_FRED_API_KEY`, `BLACKGOLD_ALPACA_KEY_ID` and `BLACKGOLD_ALPACA_SECRET_KEY` (paper keys work for data). They go into the Umbrel app environment or a local `.env`, never into git.

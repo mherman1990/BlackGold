@@ -2,13 +2,13 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-09-07 by Claude Code (Phase 2 implementation session).
+**Last updated:** 2026-09-07 by Claude Code (Phase 2 implementation session, after PR #6 merged).
 
 ## Product state
 
 | Item | Value |
 |---|---|
-| Phase | Discovery, Phase 0 and Phase 1 merged to `main` at `8006268` on 2026-09-07 (PR #1, #2, #4). Phase 2 machinery merged by PR #5 into `claude/phase-01-research-kernel` twelve seconds after that branch had itself been merged forward, so **`main` carries Phase 1 but not Phase 2**; a fresh PR carries the identical reviewed tree to `main` (D-36). Phase 2 **machinery** complete in code and tests; **no Phase 2 result exists** and none may exist until the charter is approved and data is ingested (D-35) |
+| Phase | Discovery, Phase 0, Phase 1 and Phase 2 all merged to `main` at `f7fffee` on 2026-09-07 (PR #1, #2, #4, #6). Phase 2 **machinery** is complete in code and tests; **no Phase 2 result exists** and none may exist until the charter is approved and data is ingested (D-35) |
 | Application code | `packages/shared`, `packages/core` (Phase 0 foundation, Phase 1 data/market/universe/research, Phase 2 strategy/research), `packages/broker-gateway` |
 | Tests | 494 passing across 45 files: unit 439, policy 29, temporal 26. `npm run check` green locally |
 | Live trading | Absent by construction. Config loader and gateway both refuse `LIVE_MANUAL` and `LIVE_LIMITED`; CI asserts the image refuses them too |
@@ -25,11 +25,11 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 | Item | Value |
 |---|---|
 | Remote | `https://github.com/mherman1990/BlackGold` (public) |
-| `main` | At `8006268`: Discovery, Phase 0 and Phase 1. Matt must still set `main` as the default branch and apply protection in GitHub settings |
+| `main` | At `f7fffee`: Discovery, Phase 0, Phase 1 and Phase 2. Matt must still set `main` as the default branch and apply protection in GitHub settings |
 | Phase 1 PR | [PR #4](https://github.com/mherman1990/BlackGold/pull/4) merged to `main` 2026-09-07 12:56:35Z |
-| Phase 2 PR | [PR #5](https://github.com/mherman1990/BlackGold/pull/5) merged 12:56:48Z into `claude/phase-01-research-kernel`, which PR #4 had already merged forward. CI was green on its head `cc6d9b4`. Superseded by a fresh PR to `main` whose tree is identical to `cc6d9b4` (verified by an empty `git diff`); the merge commit brings `main` in without rewriting history |
-| Phase 2 branch | `claude/black-gold-continued-rxiesj`, now containing `origin/main` |
-| Stale branches | `claude/phase-00-foundation`, `claude/black-gold-trading-tool-n713ly` and `claude/phase-01-research-kernel` are all merged into `main` and safe to delete once the Phase 2 PR lands |
+| Phase 2 PRs | [PR #5](https://github.com/mherman1990/BlackGold/pull/5) merged 12:56:48Z into `claude/phase-01-research-kernel`, which PR #4 had already merged forward, so it never reached `main` (D-36). [PR #6](https://github.com/mherman1990/BlackGold/pull/6) carried the same tree to `main` and merged 13:24Z |
+| Phase 2 branch | `claude/black-gold-continued-rxiesj`, merged and level with `main`. Restart it from `origin/main` for any follow-up work |
+| Stale branches | `claude/phase-00-foundation`, `claude/black-gold-trading-tool-n713ly` and `claude/phase-01-research-kernel` are all merged into `main` and safe for Matt to delete. Leaving them is what made the D-36 mis-merge easy to repeat |
 | Branch protection | Not configured (needs Matt in GitHub UI) |
 | CI | `.github/workflows/ci.yml` green on PR #2, PR #3 and PR #4 (checks plus multi-arch image) |
 
@@ -59,6 +59,13 @@ Verified: 17. Partial: 4. UNVERIFIED: 3 (all Schwab rows, Alpaca duplicate clien
 
 ## Next authorized action
 
-Merge the Phase 2 PR to `main`, so `main` stops being one phase behind the reviewed work. After that the next step is Matt's, not code's: approve and freeze the charter (which resolves D-32 and the four open decisions) and provide the data credentials. Only then can a registered experiment produce a Phase 2 result. See `HANDOFF.md`.
+None for code. Everything through Phase 2 is on `main` and green. The next steps are Matt's:
 
-**Merge order matters in this repository.** Twice now a phase PR has been merged into a base branch that had already been merged forward, leaving `main` a phase behind (PR #3 for Phase 1, PR #5 for Phase 2). A stacked PR must be retargeted to `main` *before* it is merged, or merged before its base goes in. D-36 records the rule.
+1. **Confirm or overrule D-32** (book-slot priority between the entry rule and the hysteresis hold rule). The code resolves it provisionally; the prose charter should state it either way before anything is frozen.
+2. **Resolve the four open decisions inside `strategies/etf-trend-vol/charter.yaml`**, decide XLE, and sign the approval block. `charter show --path strategies/etf-trend-vol/charter.yaml` prints exactly what is missing and refuses until all of it is filled in.
+3. **Provide the data credentials** so an ingest can run: `BLACKGOLD_SEC_USER_AGENT_CONTACT`, `BLACKGOLD_FRED_API_KEY`, `BLACKGOLD_ALPACA_KEY_ID`, `BLACKGOLD_ALPACA_SECRET_KEY`.
+4. Set `main` as the default branch and apply protection; delete the three merged phase branches.
+
+Phase 3 requires explicit authorization and is not started. Only after 1 to 3 can a registered experiment produce a Phase 2 result; `HANDOFF.md` section 5 is the ordered procedure for that, marking which steps are reversible and which one is not.
+
+**Merge order matters in this repository.** Twice a phase PR was merged into a base branch that had already been merged forward, leaving `main` a phase behind (PR #3 for Phase 1, PR #5 for Phase 2). A stacked PR must be retargeted to `main` *before* it is merged, or merged before its base goes in. D-36 records the rule.
