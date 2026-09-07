@@ -37,6 +37,10 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-29 | Market data: fetch raw Alpaca IEX daily bars and compute all adjustments in Black Gold code; corporate actions for the ETF universe vendored as observations until an issuer/vendor feed is verified | Accepted 2026-09-07 (engineering) | Phase 2 |
 | D-30 | Data provenance defaults adopted: processing delays (15 min EDGAR/market, 60 min macro, 24 h batch), storage budgets (spec section 9), 13F research-context only, AVAILABLE_AT_ESTIMATED defaults | Accepted 2026-09-07 (covered by the 2026-09-06 blanket acceptance of recommended defaults) | - |
 | D-31 | CFTC COT availability uses a by-rule U.S. federal holiday calendar (CR-27), not the NYSE calendar; entity map is bitemporal (`knownFrom`/`closeKnownFrom`); migration `0006_entity_symbols` amended in place because it had never run outside test databases | Accepted 2026-09-07 (engineering, from PR #3 review) | - |
+| D-32 | Book-slot conflict between the charter's entry rule and its hysteresis hold rule resolves in favour of the incumbent; the correlated-cluster cap stays strictly rank-ordered | Accepted 2026-09-07 (engineering, provisional) | **Owner confirmation required before the charter is frozen** |
+| D-33 | An entity priced behind the rest of the cross-section at a decision is excluded from that decision entirely (`STALE_ANCHOR`), rather than ranked on its last good bar | Accepted 2026-09-07 (engineering) | - |
+| D-34 | `charter.yaml` is the only form the code executes, and `assertRegistrable` refuses to freeze an experiment on an unsigned charter, an unresolved open decision, or an undecided conditional universe member | Accepted 2026-09-07 (engineering) | - |
+| D-35 | Phase 2 authorized by Matt's "keep building out" (2026-09-07); built as machinery plus fixture tests only. No registered experiment, no historical result, and no holdout access, because the charter is DRAFT and no source data has been ingested | Accepted 2026-09-07 | Owner approves the charter, then the same code produces the evidence |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -222,6 +226,40 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 4. Promotion evidence is refused when any recorded trial carries a blocking label, not only when the registration did.
 5. Configured processing delays reach every repository the runtime builds (`processingDelayOverridesMs`), and the CLI exposes them as `BLACKGOLD_PROCESSING_DELAYS`.
 6. The artifact budget is a per-write hard cap inside the store. COT requests page through Socrata `$offset`.
+
+## D-32 Book-slot priority between the entry rule and the hysteresis hold rule
+
+**Status:** Accepted 2026-09-07 (engineering, provisional). **Owner confirmation required before `etf-trend-vol` is frozen.**
+
+**The ambiguity.** `strategies/etf-trend-vol/ALPHA_CHARTER.md` section 8 says to enter any ETF ranked 1 to 5 that is not held, and to keep a held ETF while it stays eligible and ranked 1 to 7. With five eligible newcomers and a held name at rank 6, those two rules name six ETFs for a five-slot book. Section 9 step 1 says only "at most 5" and does not say which rule yields.
+
+**Why it matters.** Resolving it by rank alone makes the hysteresis band dead code: whenever five names are eligible, ranks 1 to 5 exist and fill the book before any rank-6 or rank-7 incumbent is reached, so the wider hold band could never retain anything. That contradicts the band's stated purpose and the charter's own turnover expectation (section 21: 15 to 40 entries or exits per year).
+
+**Decision.** An eligible incumbent inside the hold band keeps its slot; the lowest-ranked newcomer is the one left out. The correlated-cluster cap is treated differently and stays strictly rank-ordered, because section 9 step 4 is explicit that "the lowest-ranked extra members are skipped" - so an incumbent does not hold a cluster slot against a higher-ranked name, only a book slot. Implemented as four ordered passes in `packages/core/src/strategy/candidates.ts` and pinned by `packages/core/test/strategy-candidates.test.ts`.
+
+**What the owner should confirm.** Whether incumbent priority is the intended reading. If it is, section 8 of the prose charter should say so before the charter is frozen. If it is not, the alternative is a narrower hold band (hold rank equal to entry rank), which removes the hysteresis rather than reversing the priority.
+
+## D-33 An entity priced behind the cross-section is excluded from the decision
+
+**Status:** Accepted 2026-09-07 (engineering).
+
+**Decision.** Every feature at a decision is computed at one anchor session: the newest session for which any universe member has an available bar. A member whose newest available bar predates that anchor is marked `STALE_ANCHOR` and every one of its features is left undefined, so the candidate engine rejects it on `NO_FEATURES`.
+
+**Why.** A shared publication lag moves the whole cross-section back one session together, which is honest and harmless. A single broken feed is different: ranking one member's week-old price against its peers' current prices is a silent comparison across dates. The conservative choice excludes the member, not the decision, so one bad feed cannot stop the sleeve; this follows the standing rule that unknown or stale state fails closed for new risk.
+
+## D-34 The charter is executable, and approval is a code-enforced gate
+
+**Status:** Accepted 2026-09-07 (engineering).
+
+**Decision.** Each strategy gets a machine-readable `charter.yaml` alongside its prose charter, and that file is the only form the code executes. Every window, rank, cap, cost, boundary and threshold comes from it, so a parameter cannot be changed by editing code: it is a charter edit, which changes the charter hash, which makes it a different experiment. `assertRegistrable` refuses to freeze an experiment while the approval block is unsigned, any declared open decision is unresolved, or any conditional universe member is undecided. An undecided conditional member is excluded from the universe (so `etf-trend-vol` currently runs 12 risk ETFs, not 13: XLE stays out until the compliance look-through rule is decided). A permanent CI gate asserts these properties for every tracked charter.
+
+## D-35 Phase 2 authorization and scope
+
+**Status:** Accepted 2026-09-07.
+
+**Decision.** Phase 2 was authorized by Matt's instruction to keep building (2026-09-07) and was built as machinery plus fixture tests only: the charter loader and approval gate, feature engine, candidate engine, portfolio construction, leakage audit, coverage report, walk-forward splitter, statistics, attribution, backtest runner, robustness harness, and result report.
+
+**What was deliberately not done.** No experiment was registered, no historical result was computed, and the holdout was not opened. Two independent reasons: the charter is `DRAFT` with four unresolved open decisions, and no market data has been ingested from any source (no credentials exist yet). Registering an experiment on unapproved numbers, or viewing a result before the charter is frozen, would consume information that cannot be given back - the viewed-results rule in `docs/EXPERIMENT_PROTOCOL.md` section 3 makes it irreversible. The machinery is therefore complete and tested, and the same code produces the evidence once the charter is approved and data is ingested.
 
 ---
 

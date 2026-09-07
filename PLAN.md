@@ -30,11 +30,13 @@ Exit only when: a future-dated or revised observation cannot enter a past decisi
 
 ## Phase 2 - First approved deterministic Alpha Charter
 
-**Branch:** `claude/phase-02-etf-trend-vol` (if D-10 approves it). **Depends on:** Phase 1; charter approved and frozen (`charter.yaml` hash recorded).
+**Branch:** `claude/black-gold-continued-rxiesj`, stacked on the Phase 1 branch under D-35 (authorized 2026-09-07), because Phase 1 is not yet on `main`. **Depends on:** Phase 1; charter approved and frozen (`charter.yaml` hash recorded).
 
 Deliver: candidate engine for the approved charter only; leakage audit; coverage report; walk-forward results; holdout protocol (unopened); robustness, cost, delay, and parameter tests; benchmark attribution; a written "reasons it may not work" section.
 
 Exit: predeclared research tests complete and reported. Then stop. Matt accepts, rejects, or revises via a new strategy version. Engineering completion is not investment evidence.
+
+**Status 2026-09-07:** the machinery is delivered and tested; no result exists. The charter is `DRAFT` with four unresolved open decisions, and no market data has been ingested, so nothing may be registered or computed yet. `docs/PHASE2_REQUIREMENTS_MATRIX.md` states which rows this blocks and why viewing a result early would be irreversible.
 
 ## Phase 3 - Bounded runtime-LLM overlay
 

@@ -56,7 +56,7 @@ npm run check:secrets       # credential-shaped strings in tracked files
 npm run check               # everything above; must pass before any commit is proposed
 ```
 
-CLIs: `node packages/core/dist/main.js <health|migrate|backup|verify-backup|seal|verify-chain|run-jobs|serve|ingest|pit|snapshot|artifacts>` and `node packages/broker-gateway/dist/main.js <health|serve>` with `BLACKGOLD_DATA_DIR` set. `ingest` needs `BLACKGOLD_SEC_USER_AGENT_CONTACT` and per-source keys from the environment; it fetches only allowlisted hosts through `packages/core/src/data/http.ts`. Runbooks live in `docs/runbooks/`.
+CLIs: `node packages/core/dist/main.js <health|migrate|backup|verify-backup|seal|verify-chain|run-jobs|serve|ingest|pit|snapshot|artifacts|charter|research>` and `node packages/broker-gateway/dist/main.js <health|serve>` with `BLACKGOLD_DATA_DIR` set. `ingest` needs `BLACKGOLD_SEC_USER_AGENT_CONTACT` and per-source keys from the environment; it fetches only allowlisted hosts through `packages/core/src/data/http.ts`. `charter show|plan` and `research coverage` take `--path <charter.yaml>` and read only the local store. Runbooks live in `docs/runbooks/`.
 
 ## Financial-critical review rules
 
