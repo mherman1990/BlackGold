@@ -13,15 +13,17 @@ config/local/
 LIVE_AUTHORIZATION.yaml
 LIVE_AUTHORIZATION.*.yaml
 
-# Runtime data (never in git: SQLite, raw artifacts, ledgers, logs, backups)
-data/
+# Runtime data (never in git: SQLite, raw artifacts, ledgers, logs, backups). Root-anchored so source
+# directories named data/ (packages/core/src/data) and the Umbrel bind-mount placeholder stay tracked.
+/data/
+/appdata/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
 *.db
-artifacts/
-backups/
-logs/
+/artifacts/
+/backups/
+/logs/
 *.log
 
 # Node / TypeScript
