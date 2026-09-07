@@ -17,6 +17,13 @@ describe("no secrets or sensitive data in the repository", () => {
     }
   });
 
+  it("every fake-value config example is tracked (an ignore rule must not swallow documentation)", () => {
+    const files = execFileSync("git", ["ls-files", "config/examples"], { cwd: ROOT, encoding: "utf8" }).split("\n");
+    for (const name of ["app.env.example", "risk.yaml", "financial-picture.yaml", "restricted-list.yaml", "LIVE_AUTHORIZATION.example.yaml"]) {
+      expect(files, name).toContain(`config/examples/${name}`);
+    }
+  });
+
   it("no runtime database, backup, or env file is tracked", () => {
     const files = execFileSync("git", ["ls-files"], { cwd: ROOT, encoding: "utf8" }).split("\n");
     const bad = files.filter((f) => /\.(sqlite|sqlite-wal|sqlite-shm|db)$/.test(f) || /^\.env(\..*)?$/.test(f) || /LIVE_AUTHORIZATION\.ya?ml$/.test(f));

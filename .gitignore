@@ -39,3 +39,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# The fake-value example is documentation and must be tracked; real artifacts above stay ignored.
+!config/examples/LIVE_AUTHORIZATION.example.yaml
