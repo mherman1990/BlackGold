@@ -44,8 +44,41 @@ const appPort = Number(app["port"]);
 const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version: string };
 if (pkg.version !== appVersion) fail(`umbrel-app.yml version ${appVersion} != package.json ${pkg.version}`);
 for (const p of ["shared", "core", "broker-gateway"]) {
-  const wp = JSON.parse(readFileSync(join(ROOT, "packages", p, "package.json"), "utf8")) as { version: string };
+  const wp = JSON.parse(readFileSync(join(ROOT, "packages", p, "package.json"), "utf8")) as {
+    version: string;
+    dependencies?: Record<string, string>;
+  };
   if (wp.version !== pkg.version) fail(`packages/${p} version ${wp.version} != ${pkg.version}`);
+  // Workspace packages pin each other by exact version, so a bump that misses one of these pins makes
+  // `npm ci` try to fetch an unpublished package from the public registry and fail with a 404. That is
+  // invisible to `npm run check`, which reuses the installed node_modules, so it only surfaces in CI - which
+  // is exactly the kind of "rely on a human to find every version location" this script exists to prevent.
+  for (const [dep, range] of Object.entries(wp.dependencies ?? {})) {
+    if (!dep.startsWith("@blackgold/")) continue;
+    if (range !== pkg.version) {
+      fail(`packages/${p} depends on ${dep}@${range} but the workspace is at ${pkg.version}; npm ci will 404`);
+    }
+  }
+}
+
+// 3b. The lockfile must agree, for the same reason: `npm ci` installs from it exactly.
+const lock = JSON.parse(readFileSync(join(ROOT, "package-lock.json"), "utf8")) as {
+  version?: string;
+  packages?: Record<string, { version?: string; dependencies?: Record<string, string> }>;
+};
+if (lock.version !== undefined && lock.version !== pkg.version) {
+  fail(`package-lock.json root version ${lock.version} != package.json ${pkg.version}`);
+}
+for (const [key, entry] of Object.entries(lock.packages ?? {})) {
+  if (key !== "" && !key.startsWith("packages/")) continue;
+  if (entry.version !== undefined && entry.version !== pkg.version) {
+    fail(`package-lock.json ${key || "<root>"} version ${entry.version} != ${pkg.version}; run npm install`);
+  }
+  for (const [dep, range] of Object.entries(entry.dependencies ?? {})) {
+    if (dep.startsWith("@blackgold/") && range !== pkg.version) {
+      fail(`package-lock.json ${key || "<root>"} depends on ${dep}@${range} != ${pkg.version}; run npm install`);
+    }
+  }
 }
 
 // 4. CHANGELOG top heading
