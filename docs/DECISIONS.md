@@ -33,6 +33,9 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-25 | Alpaca paper is the Phase 5 paper broker | Accepted 2026-09-06 | Phase 5 |
 | D-26 | Phase 0 implementation proceeds as a stacked PR on the Discovery branch | Accepted 2026-09-06 | - |
 | D-27 | SQLite binding is `node:sqlite`; online backup via `VACUUM INTO` | Accepted 2026-09-06 | - |
+| D-28 | Phase 1 authorized by Matt's "keep going" (2026-09-07); implemented as a stacked PR on the Phase 0 branch | Accepted 2026-09-07 | - |
+| D-29 | Market data: fetch raw Alpaca IEX daily bars and compute all adjustments in Black Gold code; corporate actions for the ETF universe vendored as observations until an issuer/vendor feed is verified | Accepted 2026-09-07 (engineering) | Phase 2 |
+| D-30 | Data provenance defaults adopted: processing delays (15 min EDGAR/market, 60 min macro, 24 h batch), storage budgets (spec section 9), 13F research-context only, AVAILABLE_AT_ESTIMATED defaults | Accepted 2026-09-07 (covered by the 2026-09-06 blanket acceptance of recommended defaults) | - |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -188,6 +191,23 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 
 **Status:** Accepted 2026-09-06 (engineering).
 **Decision:** Use the Node.js built-in `node:sqlite` module. It needs no native compilation, which removes the main ARM64 build risk. Online backup uses `VACUUM INTO`, which is WAL-safe. Node 22 marks the module experimental; Node 24 (the container runtime) is the target. Re-evaluate only if a measured defect appears.
+
+## D-28 Phase 1 authorization and stacking
+
+**Status:** Accepted 2026-09-07.
+**Context:** After Phase 0 was delivered as PR #2, Matt replied "keep going". Everything else outstanding was Matt's own (GitHub settings, merges, hardware checks), so the instruction was read as authorization to start Phase 1, the point-in-time research kernel.
+**Decision:** Phase 1 proceeds on `claude/phase-01-research-kernel`, stacked on `claude/phase-00-foundation` (same pattern as D-26). Its PR targets the Phase 0 branch and is retargeted to `main` as the stack merges. If Matt did not intend this, the branch can be closed without effect on Phase 0.
+
+## D-29 Market data and corporate actions for the research kernel
+
+**Status:** Accepted 2026-09-07 (engineering).
+**Verified:** Alpaca `GET /v2/stocks/bars` with `feed=iex`, `adjustment=raw`, `timeframe=1Day`, key-header auth, and paging (CR-24). Free-tier entitlement semantics are not yet measured with a real key.
+**Decision:** The adapter fetches raw, unadjusted IEX daily bars labelled `alpaca.iex.bars.1d` and never labels them consolidated. Splits, dividends, and other actions are separate observations; Black Gold computes its own total-return series from raw closes plus the action ledger, so adjustments are reproducible and versioned. For the frozen ETF universe the action ledger is seeded from issuer distribution records vendored as observations with their own `availableAt`; an automated corporate-actions feed is a Phase 2 verification item.
+
+## D-30 Data provenance engineering defaults
+
+**Status:** Accepted 2026-09-07 under the blanket acceptance of recommended defaults.
+**Decision:** The five open items in `docs/DATA_PROVENANCE_SPEC.md` section 12 take their proposed values: processing delays of 15 minutes for EDGAR and market data, 60 minutes for macro releases, and 24 hours for batch-routed work; the storage budgets and 15 percent / 30 GB free-space floor in section 9; 13F remains research context through Phase 2; no paid survivorship-free equity dataset is evaluated until the ETF track has run; publication-time estimates are calibrated during Phase 5 shadow operation.
 
 ---
 
