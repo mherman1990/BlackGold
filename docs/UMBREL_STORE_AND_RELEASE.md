@@ -68,7 +68,7 @@ services:
       APP_PORT: 8479
   core:
     image: ghcr.io/mherman1990/blackgold:0.1.0@sha256:<digest>
-    command: ["node", "dist/core/main.js"]
+    command: ["packages/core/dist/main.js", "serve"]   # ENTRYPOINT is node
     user: "1000:1000"
     init: true
     restart: on-failure
@@ -81,7 +81,7 @@ services:
     healthcheck: { test: ["CMD", "node", "dist/core/health.js"], interval: 60s }
   gateway:
     image: ghcr.io/mherman1990/blackgold:0.1.0@sha256:<digest>
-    command: ["node", "dist/gateway/main.js"]
+    command: ["packages/broker-gateway/dist/main.js", "serve"]
     user: "1000:1000"
     init: true
     restart: on-failure

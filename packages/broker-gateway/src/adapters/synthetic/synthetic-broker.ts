@@ -230,12 +230,13 @@ export class SyntheticBroker implements BrokerTradingAdapter {
     o.filledQty = o.filledQty.plus(qty);
     o.avgFillPrice = prevNotional.plus(price.times(qty)).div(o.filledQty);
     o.lastEventAt = this.clock();
+    const truth = { qty, price, cumulativeQty: o.filledQty, avgPrice: o.avgFillPrice };
     if (o.filledQty.gte(o.quantity)) {
       o.state = "FILLED";
-      return this.event(o.clientOrderId, { kind: "fill", qty, price });
+      return this.event(o.clientOrderId, { kind: "fill", ...truth });
     }
     o.state = "PARTIALLY_FILLED";
-    return this.event(o.clientOrderId, { kind: "partial_fill", qty, price });
+    return this.event(o.clientOrderId, { kind: "partial_fill", ...truth });
   }
 
   private event(clientOrderId: string, body: EventBody): BrokerEvent {

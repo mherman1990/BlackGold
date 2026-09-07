@@ -20,6 +20,23 @@ describe("identity and release policy", () => {
     expect(compose).toMatch(new RegExp(`ghcr.io/mherman1990/blackgold:${app.version.replaceAll(".", "\\.")}`));
   });
 
+  it("compose commands do not repeat the Dockerfile ENTRYPOINT executable", () => {
+    const dockerfile = readFileSync(`${ROOT}/Dockerfile`, "utf8");
+    const entry = /^ENTRYPOINT\s+\[\s*"([^"]+)"/m.exec(dockerfile)?.[1];
+    expect(entry).toBe("node");
+    const compose = parse(readFileSync(`${ROOT}/blackgold-trading/docker-compose.yml`, "utf8")) as {
+      services: Record<string, { command?: string[]; healthcheck?: { test?: string[] } }>;
+    };
+    for (const [name, svc] of Object.entries(compose.services)) {
+      if (svc.command) {
+        expect(svc.command[0], `${name}.command`).not.toBe(entry);
+        expect(svc.command[0], `${name}.command`).toMatch(/\.js$/);
+      }
+      // Healthchecks bypass ENTRYPOINT, so they must name the executable explicitly.
+      if (svc.healthcheck?.test) expect(svc.healthcheck.test.slice(0, 2), `${name}.healthcheck`).toEqual(["CMD", "node"]);
+    }
+  });
+
   it("release workflow runs only on semver tags and never on pull requests", () => {
     const wf = parse(readFileSync(`${ROOT}/.github/workflows/release.yml`, "utf8")) as {
       on: { push?: { tags?: string[]; branches?: unknown }; pull_request?: unknown; workflow_dispatch?: unknown };

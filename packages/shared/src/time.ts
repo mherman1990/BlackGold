@@ -21,8 +21,11 @@ export function nowUtc(clock: () => number = Date.now): UtcInstant {
 }
 
 export function isoDate(value: string): IsoDate {
-  if (!DATE_RE.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
-    throw new TypeError(`Not an ISO date: ${value}`);
+  // Date.parse normalizes impossible days (2026-02-31 becomes March 3), so require an exact round trip.
+  if (!DATE_RE.test(value)) throw new TypeError(`Not an ISO date: ${value}`);
+  const ms = Date.parse(`${value}T00:00:00Z`);
+  if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== value) {
+    throw new TypeError(`Not a real calendar date: ${value}`);
   }
   return value as IsoDate;
 }

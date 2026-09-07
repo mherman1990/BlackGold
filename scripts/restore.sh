@@ -4,8 +4,11 @@
 set -euo pipefail
 BACKUP="${1:?backup file required}"
 DATA_DIR="${2:-${BLACKGOLD_DATA_DIR:-./data}}"
-DB="$DATA_DIR/blackgold.sqlite"
+# Honour a configured database path; otherwise use the default under DATA_DIR. Export it so every
+# core command below (verify-backup, verify-chain) operates on the same file that is being restored.
+DB="${BLACKGOLD_DB_PATH:-$DATA_DIR/blackgold.sqlite}"
 export BLACKGOLD_DATA_DIR="$DATA_DIR"
+export BLACKGOLD_DB_PATH="$DB"
 
 echo "verifying $BACKUP"
 node "$(dirname "$0")/../packages/core/dist/main.js" verify-backup "$BACKUP"

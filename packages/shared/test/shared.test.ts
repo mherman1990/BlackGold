@@ -44,6 +44,9 @@ describe("time", () => {
     expect(utc("2026-09-06T14:00:00Z")).toBe("2026-09-06T14:00:00.000Z");
     expect(() => utc("2026-09-06T14:00:00-05:00")).toThrow();
     expect(() => isoDate("2026-13-01")).toThrow();
+    expect(() => isoDate("2026-02-31")).toThrow(/real calendar date/);
+    expect(() => isoDate("2026-02-29")).toThrow(/real calendar date/);
+    expect(isoDate("2028-02-29")).toBe("2028-02-29");
   });
   it("parses the durations we use", () => {
     expect(durationMs("PT90M")).toBe(90 * 60_000);

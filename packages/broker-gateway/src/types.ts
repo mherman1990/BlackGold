@@ -89,8 +89,12 @@ type EventBase = { eventId: string; clientOrderId: string; at: UtcInstant };
 export type BrokerEvent =
   | (EventBase & { kind: "ack"; brokerOrderId: string })
   | (EventBase & { kind: "reject"; reason: string })
-  | (EventBase & { kind: "partial_fill"; qty: Dec; price: Dec })
-  | (EventBase & { kind: "fill"; qty: Dec; price: Dec })
+  /**
+   * Fill events carry the broker's CUMULATIVE truth (`cumulativeQty`, `avgPrice`) alongside this event's delta
+   * (`qty`, `price`). The store applies the cumulative values, so out-of-order delivery cannot corrupt totals.
+   */
+  | (EventBase & { kind: "partial_fill"; qty: Dec; price: Dec; cumulativeQty: Dec; avgPrice: Dec })
+  | (EventBase & { kind: "fill"; qty: Dec; price: Dec; cumulativeQty: Dec; avgPrice: Dec })
   | (EventBase & { kind: "cancel_ack" })
   | (EventBase & { kind: "protection_ack"; coveredQty: Dec })
   | (EventBase & { kind: "protection_reject"; reason: string })

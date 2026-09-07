@@ -289,16 +289,18 @@ export class OrderStore {
     switch (event.kind) {
       case "ack":
         if (from === "ACKNOWLEDGED") return noop("already_acknowledged", { brokerOrderId: event.brokerOrderId });
+        // An ack that arrives after fills (out-of-order delivery) is stale, not a reconciliation problem.
+        if (from !== "SUBMITTING" && from !== "UNKNOWN") return noop("stale_ack", { brokerOrderId: event.brokerOrderId });
         return attempt("ACKNOWLEDGED", { brokerOrderId: event.brokerOrderId });
       case "reject":
         return attempt("REJECTED");
       case "partial_fill": {
-        const fill = accumulate(current, event.qty, event.price);
-        return attempt("PARTIALLY_FILLED", fill);
+        if (isStaleFill(current, event.cumulativeQty)) return noop("stale_fill_event");
+        return attempt("PARTIALLY_FILLED", fillPatch(event));
       }
       case "fill": {
-        const fill = accumulate(current, event.qty, event.price);
-        const filled = attempt("FILLED", fill);
+        if (isStaleFill(current, event.cumulativeQty)) return noop("stale_fill_event");
+        const filled = attempt("FILLED", fillPatch(event));
         if (!filled.applied) return filled;
         // A filled entry with requested protection is not done: it awaits broker confirmation of coverage.
         const intent = this.intent(id);
@@ -362,12 +364,14 @@ export class OrderStore {
   }
 }
 
-function accumulate(current: BrokerOrderSnapshot, qty: Dec, price: Dec): StatePatch {
-  const prevQty = current.filledQty;
-  const newQty = prevQty.plus(qty);
-  const prevNotional = (current.avgFillPrice ?? ZERO).times(prevQty);
-  const avg = newQty.isZero() ? ZERO : prevNotional.plus(price.times(qty)).div(newQty);
-  return { filledQty: newQty, avgFillPrice: avg };
+/** Broker truth wins: the persisted totals come from the event's cumulative fields, never from summing deltas. */
+function fillPatch(event: { cumulativeQty: Dec; avgPrice: Dec }): StatePatch {
+  return { filledQty: event.cumulativeQty, avgFillPrice: event.avgPrice };
+}
+
+/** A fill event whose cumulative quantity does not exceed what we already hold arrived late or twice. */
+function isStaleFill(current: BrokerOrderSnapshot, cumulativeQty: Dec): boolean {
+  return current.filledQty.gt(ZERO) && cumulativeQty.lte(current.filledQty);
 }
 
 function rowToSnapshot(row: Row): BrokerOrderSnapshot {

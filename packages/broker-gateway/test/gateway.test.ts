@@ -307,17 +307,29 @@ describe("Gateway idempotency and ordering", () => {
     expect(snap?.filledQty.eq(dec(100))).toBe(true);
   });
 
-  it("out-of-order events never throw; the unexplained ones are flagged for reconciliation", async () => {
+  it("out-of-order events never throw and never corrupt totals: broker-cumulative truth wins", async () => {
     const rig = makeRig();
     const intent = makeIntent();
     rig.broker.plan(intent.clientOrderId, { onSubmit: "ack", fills: fills30_70, outOfOrder: true });
     await rig.gateway.submit(intent, T0);
-    const results = pump(rig); // fill(70), partial_fill(30), ack
+    const results = pump(rig); // fill(70, cumulative 100), partial_fill(30, cumulative 30), ack
     expect(results.map((x) => x.applied)).toEqual([true, false, false]);
-    expect(results[1]?.reason).toBe("reconciliation_needed:illegal_for_state");
-    const reasons = rig.store.history(intent.clientOrderId).map((t) => t.reason);
-    expect(reasons.filter((r) => r.startsWith("reconciliation_needed:"))).toHaveLength(2);
-    expect(rig.store.snapshot(intent.clientOrderId)?.state).toBe("FILLED");
+    expect(results[1]?.reason).toBe("noop:stale_fill_event");
+    expect(results[2]?.reason).toBe("noop:stale_ack");
+    const snap = rig.store.snapshot(intent.clientOrderId);
+    expect(snap?.state).toBe("FILLED");
+    expect(snap?.filledQty.eq(dec(100))).toBe(true);
+    // (30 * 450.00 + 70 * 450.10) / 100 = 450.07
+    expect(snap?.avgFillPrice?.toFixed(2)).toBe("450.07");
+    // Same plan delivered in order yields identical persisted totals.
+    const ordered = makeRig();
+    const intent2 = makeIntent({ intentId: "intent_ordered" });
+    ordered.broker.plan(intent2.clientOrderId, { onSubmit: "ack", fills: fills30_70 });
+    await ordered.gateway.submit(intent2, T0);
+    pump(ordered);
+    const snap2 = ordered.store.snapshot(intent2.clientOrderId);
+    expect(snap2?.filledQty.eq(dec(100))).toBe(true);
+    expect(snap2?.avgFillPrice?.toFixed(2)).toBe("450.07");
   });
 
   it("restart: a new Gateway over the same database file sees the same state and open orders", async () => {

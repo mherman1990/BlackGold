@@ -163,7 +163,7 @@ describe("OrderStore.applyBrokerEvent", () => {
     const intent = makeIntent();
     store.persistIntent(intent);
     ack(store, intent.clientOrderId);
-    const fill = ev(intent.clientOrderId, { kind: "partial_fill", qty: dec(30), price: dec("450") }, "evt_dup");
+    const fill = ev(intent.clientOrderId, { kind: "partial_fill", qty: dec(30), price: dec("450"), cumulativeQty: dec(30), avgPrice: dec("450") }, "evt_dup");
     const first = store.applyBrokerEvent(fill);
     const before = store.history(intent.clientOrderId).length;
     const second = store.applyBrokerEvent({ ...fill });
@@ -180,7 +180,7 @@ describe("OrderStore.applyBrokerEvent", () => {
     ack(store, intent.clientOrderId);
     store.transition(intent.clientOrderId, "CANCEL_PENDING", "cancel_requested");
     expect(store.applyBrokerEvent(ev(intent.clientOrderId, { kind: "cancel_ack" })).state).toBe("CANCELED");
-    const late = store.applyBrokerEvent(ev(intent.clientOrderId, { kind: "fill", qty: dec(100), price: dec("450") }));
+    const late = store.applyBrokerEvent(ev(intent.clientOrderId, { kind: "fill", qty: dec(100), price: dec("450"), cumulativeQty: dec(100), avgPrice: dec("450") }));
     expect(late.applied).toBe(false);
     expect(late.state).toBe("CANCELED");
     expect(late.reason).toBe("reconciliation_needed:terminal_state");
@@ -205,8 +205,8 @@ describe("OrderStore.applyBrokerEvent", () => {
     const intent = makeIntent();
     store.persistIntent(intent);
     ack(store, intent.clientOrderId);
-    store.applyBrokerEvent(ev(intent.clientOrderId, { kind: "partial_fill", qty: dec(30), price: dec("450.00") }));
-    store.applyBrokerEvent(ev(intent.clientOrderId, { kind: "fill", qty: dec(70), price: dec("451.00") }));
+    store.applyBrokerEvent(ev(intent.clientOrderId, { kind: "partial_fill", qty: dec(30), price: dec("450.00"), cumulativeQty: dec(30), avgPrice: dec("450.00") }));
+    store.applyBrokerEvent(ev(intent.clientOrderId, { kind: "fill", qty: dec(70), price: dec("451.00"), cumulativeQty: dec(100), avgPrice: dec("450.70") }));
     const snap = store.snapshot(intent.clientOrderId);
     expect(snap?.state).toBe("FILLED");
     expect(snap?.filledQty.eq(dec(100))).toBe(true);

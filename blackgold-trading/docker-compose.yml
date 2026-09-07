@@ -12,7 +12,8 @@ services:
 
   core:
     image: ghcr.io/mherman1990/blackgold:0.1.0
-    command: ["node", "packages/core/dist/main.js", "serve"]
+    # The image ENTRYPOINT is `node`; the command supplies only the script and arguments.
+    command: ["packages/core/dist/main.js", "serve"]
     user: "1000:1000"
     init: true
     restart: on-failure
@@ -33,7 +34,7 @@ services:
 
   gateway:
     image: ghcr.io/mherman1990/blackgold:0.1.0
-    command: ["node", "packages/broker-gateway/dist/main.js", "serve"]
+    command: ["packages/broker-gateway/dist/main.js", "serve"]
     user: "1000:1000"
     init: true
     restart: on-failure
