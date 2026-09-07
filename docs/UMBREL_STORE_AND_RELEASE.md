@@ -128,7 +128,16 @@ Everything mutable lives under `${APP_DATA_DIR}`: `data/blackgold.sqlite` (+WAL)
    - **Dispatch** with the bare version, e.g. `0.1.0`. The workflow resolves `main`'s head, verifies the version against `package.json` at that commit, runs `npm run check`, creates the `v<version>` tag, then publishes. This is the path Claude Code uses, because GitHub refuses its credential a tag ref.
    - **Or push the tag by hand**: `git tag v<version> <commit-on-main> && git push origin v<version>`. Unchanged behaviour.
 5. `release.yml` green; digest recorded in the run summary.
-6. **First release of a new package only: make the GHCR package public.** github.com/users/mherman1990/packages/container/blackgold/settings -> Change visibility -> Public. A new GHCR package is private by default and umbrelOS pulls anonymously, so a private package fails the install with `unauthorized` - which looks like a different fault from the missing-image `manifest unknown` but is the same step not done. See "GHCR visibility" above for why public is the deliberate choice.
+6. **Confirm the package is anonymously pullable**, because umbrelOS pulls with no credentials:
+
+   ```
+   T=$(curl -sS "https://ghcr.io/token?scope=repository%3Amherman1990%2Fblackgold%3Apull&service=ghcr.io" | jq -r .token)
+   curl -sSI -H "Authorization: Bearer $T" \
+     -H "Accept: application/vnd.oci.image.index.v1+json" \
+     https://ghcr.io/v2/mherman1990/blackgold/manifests/<version>
+   ```
+
+   Expect HTTP 200 and a `docker-content-digest` header. Verified anonymous on 0.1.0: a package first published by Actions from a **public** repository inherits public visibility, so no manual visibility flip was needed. Do not assume that holds if the repository ever goes private - re-run this check, and if it returns 401 set the package back to public at github.com/users/mherman1990/packages/container/blackgold/settings. A private package fails the Umbrel install with `unauthorized`, which looks like a different fault from the missing-image `manifest unknown` but is the same step not done.
 7. `release-verify.yml` confirms `linux/arm64` and `linux/amd64` present and Pi can pull (`docker pull` on Pi).
 8. Compose in the store directory pinned to tag and digest in a follow-up PR if the digest was not known in advance; identity check green.
 9. Disposable-environment clean install, upgrade from previous version with existing data, health check, and rollback to previous tag all pass.
