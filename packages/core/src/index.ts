@@ -16,6 +16,8 @@ export * from "./notify/stub.ts";
 export * from "./notify/ntfy.ts";
 export * from "./health/health.ts";
 export * from "./serve.ts";
+export * from "./status/model.ts";
+export * from "./status/render.ts";
 export * from "./data/quality.ts";
 export * from "./data/pit/types.ts";
 export * from "./data/pit/repository.ts";
