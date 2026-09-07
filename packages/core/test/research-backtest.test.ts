@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { Dec, ONE, ZERO } from "@blackgold/shared";
 import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
@@ -7,17 +7,6 @@ import { auditReads } from "../src/research/leakage.ts";
 import { defaultProcessingDelayMs } from "../src/data/pit/repository.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
 
-/**
- * A backtest over 17 weekly decisions re-reads its feature window at every decision instant, which is the
- * honest cost of point-in-time reads and is deliberately not cached in production (see runBacktest). Several
- * tests here run two full backtests to compare them. Vitest's 5-second default was never a realistic budget
- * for that: the slowest test measured 4.2s locally and timed out at 5.0s on a slower CI runner, so the same
- * commit passed and failed depending on which machine picked it up.
- *
- * 30 seconds is the declared budget. It is roughly seven times the slowest observed test, so runner speed
- * cannot decide the outcome, while a genuine hang still fails rather than running forever.
- */
-vi.setConfig({ testTimeout: 30_000 });
 
 /**
  * A charter with short feature windows so a fixture of a few hundred sessions exercises the same code the

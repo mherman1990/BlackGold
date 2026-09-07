@@ -24,8 +24,15 @@ const PATHS: PricePath[] = [
   { entityId: "BIL", start: N("91"), perSession: N("1.00008"), volumeShares: 900_000n },
 ];
 
+/**
+ * The default market is built once and shared; an overridden one (gaps, stale bars) is built per call.
+ * Reads only, so sharing cannot couple the tests — see strategy-features.test.ts for the same reasoning.
+ */
+let sharedMarket: ReturnType<typeof buildMarket> | undefined;
 function market(over: Partial<Parameters<typeof buildMarket>[0]> = {}) {
-  return buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-06-30"), ...over });
+  if (Object.keys(over).length > 0) return buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-06-30"), ...over });
+  sharedMarket ??= buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-06-30") });
+  return sharedMarket;
 }
 
 const delayOf = (sourceId: string): number => defaultProcessingDelayMs(sourceId);

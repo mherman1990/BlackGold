@@ -29,8 +29,16 @@ const RISERS: PricePath[] = [
   { entityId: "BIL", start: N("91"), perSession: N("1.00008"), volumeShares: 900_000n },
 ];
 
+/**
+ * One fixture market for the whole file. `computeFeatures` only reads the store, so sharing it cannot couple
+ * these tests, and rebuilding it per test re-inserted ~500 observations each time — which is what made this
+ * suite slow enough to time out on a CI runner. Tests that need a *different* market (a feed with a hole,
+ * a stale bar) still call `buildMarket` directly.
+ */
+let sharedMarket: ReturnType<typeof buildMarket> | undefined;
 function market() {
-  return buildMarket({ paths: RISERS, from: D("2026-01-02"), to: D("2026-06-30") });
+  sharedMarket ??= buildMarket({ paths: RISERS, from: D("2026-01-02"), to: D("2026-06-30") });
+  return sharedMarket;
 }
 
 describe("computeFeatures", () => {

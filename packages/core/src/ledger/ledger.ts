@@ -7,6 +7,8 @@ import {
   utc,
   verifyEventChain,
   addDays,
+  dateOfInstantInZone,
+  isoDate,
   type ChainVerdict,
   type Db,
   type IsoDate,
@@ -30,6 +32,47 @@ export class SealMismatchError extends Error {
   }
 }
 
+/**
+ * An append whose `at` falls on a date that is already sealed.
+ *
+ * Refused rather than accepted, because accepting it is unrecoverable: the day's root would no longer match
+ * its seal, `verifySeals()` would fail for the rest of the database's life, and there is no repair path -
+ * `ledger_seals` carries no-UPDATE and no-DELETE triggers and `sealDaily` throws on a changed root. Failing
+ * the write loses one event and keeps the integrity record intact; allowing it keeps the event and destroys
+ * the record. The realistic cause is a caller that captured a timestamp, did hours of work, and appended with
+ * the stale value - `runIngest` did exactly that until its events were moved to a completion stamp - so the
+ * error names the date and the kind to make the offending call site obvious.
+ */
+export class SealedDateAppendError extends Error {
+  constructor(date: IsoDate, kind: string) {
+    super(
+      `Refusing to append a "${kind}" event dated ${date}: that day is already sealed. ` +
+        `A ledger event must be stamped when it happens, not with a timestamp captured earlier.`,
+    );
+    this.name = "SealedDateAppendError";
+  }
+}
+
+/**
+ * Days left open before the seal job will touch them, beyond the current day.
+ *
+ * Sealing a day is irreversible: `ledger_seals` carries no-UPDATE and no-DELETE triggers, and any event that
+ * later lands on a sealed date is refused (`SealedDateAppendError`). So the seal must not run so close behind
+ * the clock that it races a job still in flight. A caller that captures a timestamp and appends with it after
+ * a long piece of work is the realistic case; `runIngest` stamped `ingest.completed` with an instant captured
+ * before hours of rate-limited fetching until that was fixed at the source, and the next such caller will not
+ * arrive announced.
+ *
+ * One full grace day means an event whose timestamp is up to two days stale still lands safely. Raising this
+ * only delays tamper-evidence; lowering it to zero reintroduces the race the append guard then has to catch.
+ */
+export const SEAL_GRACE_DAYS = 1;
+
+/** Newest UTC date the seal job may seal at `now`: yesterday, less the grace window. */
+export function sealThroughDate(now: UtcInstant): IsoDate {
+  return addDays(dateOfInstantInZone(now, "UTC"), -(1 + SEAL_GRACE_DAYS));
+}
+
 type EventRow = { seq: number; at: string; kind: string; payload: string; prev_hash: string; hash: string };
 type SealRow = { date: string; first_seq: number | null; last_seq: number | null; root_hash: string; sealed_at: string };
 
@@ -51,6 +94,10 @@ export class Ledger {
     if (kind.length === 0) throw new TypeError("ledger event kind must be non-empty");
     const atNormalized = utc(at);
     return this.db.transaction(() => {
+      // Fail closed on a backdated append into a sealed day: it would break that day's root permanently and
+      // no repair path exists. See SealedDateAppendError.
+      const atDate = isoDate(atNormalized.slice(0, 10));
+      if (this.seal(atDate)) throw new SealedDateAppendError(atDate, kind);
       const last = this.db.prepare("SELECT seq, hash FROM ledger_events ORDER BY seq DESC LIMIT 1").get() as
         | { seq: number; hash: string }
         | undefined;
@@ -91,6 +138,30 @@ export class Ledger {
       )
       .all(`${date}T00:00:00.000Z`, `${addDays(date, 1)}T00:00:00.000Z`) as EventRow[];
     return rows.map(rowToEvent);
+  }
+
+  /**
+   * Distinct UTC dates that carry at least one event, ascending.
+   *
+   * Read-only. Exists so a caller can find the days that still need sealing without scanning every event:
+   * a day with no events has an empty root and nothing to protect, so only these dates matter.
+   */
+  eventDates(): IsoDate[] {
+    const rows = this.db.prepare("SELECT DISTINCT substr(at, 1, 10) AS d FROM ledger_events ORDER BY d").all() as { d: string }[];
+    return rows.map((r) => isoDate(r.d));
+  }
+
+  /**
+   * Every UTC date at or before `throughDate` that has events but no seal, ascending.
+   *
+   * This is what makes catch-up sealing possible. The scheduler records a run it could not perform as
+   * `missed` rather than running it late, so a Pi that was powered off for three days would otherwise leave
+   * those days permanently unsealed. Sealing the whole unsealed backlog on the next successful run closes
+   * that hole, and is safe because `sealDaily` is idempotent.
+   */
+  unsealedDates(throughDate: IsoDate): IsoDate[] {
+    const sealed = new Set(this.seals().map((s) => s.date));
+    return this.eventDates().filter((d) => d <= throughDate && !sealed.has(d));
   }
 
   /** Root hash for a UTC date: sha256 of the concatenated event hashes (sha256 of "" when the day is empty). */

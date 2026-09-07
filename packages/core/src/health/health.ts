@@ -2,7 +2,7 @@ import { statSync, statfsSync } from "node:fs";
 import { integrityCheck, isLiveMode, type ChainVerdict, type Db, type IsoDate, type Mode, type UtcInstant } from "@blackgold/shared";
 import type { AppConfig } from "../config/schema.ts";
 import type { ExchangeCalendar } from "../calendar/types.ts";
-import { Ledger, type LedgerSeal } from "../ledger/ledger.ts";
+import { Ledger, sealThroughDate, type LedgerSeal } from "../ledger/ledger.ts";
 import { CORE_VERSION } from "../version.ts";
 
 export type HealthCheck = { component: string; ok: boolean; detail: string };
@@ -18,6 +18,8 @@ export type HealthReport = {
   ledgerChain: ChainVerdict;
   ledgerEvents: number;
   lastSeal: LedgerSeal | null;
+  /** UTC days with events, older than the seal grace window, that carry no seal. Empty when sealing is current. */
+  unsealedDays: IsoDate[];
   nextSession: IsoDate;
   walSizeBytes: number;
   freeDiskBytes: number;
@@ -43,6 +45,25 @@ export function runHealth(config: AppConfig, db: Db, calendar: ExchangeCalendar,
   const seals = ledger.verifySeals();
   checks.push({ component: "ledger_seals", ok: seals.ok, detail: seals.ok ? "all seals match" : `mismatch: ${seals.mismatches.join(",")}` });
   const lastSeal = ledger.latestSeal() ?? null;
+
+  // Whether sealing is keeping up. Without this, a seal job failing every night leaves unsealed days piling
+  // up while the report still says everything is fine - the same silent hole the scheduled seal closed, one
+  // level up.
+  //
+  // Reported, not fatal. `ok: false` here would fail the container healthcheck and restart the app, and a
+  // day that cannot be sealed (a genuine mismatch) would then restart it forever, which is worse than a
+  // visible backlog. CLAUDE.md's fail-closed rule is about not taking new risk in an unknown state, and this
+  // build takes none; when sealing gates real trading it must block new risk in the risk engine, which is
+  // where that decision belongs, not in a process healthcheck.
+  const unsealed = ledger.unsealedDates(sealThroughDate(now));
+  checks.push({
+    component: "ledger_seal_backlog",
+    ok: true,
+    detail:
+      unsealed.length === 0
+        ? "no unsealed days older than the grace window"
+        : `${unsealed.length} unsealed day(s) past the grace window: ${unsealed.slice(0, 5).join(",")}${unsealed.length > 5 ? ",..." : ""}`,
+  });
 
   const nextSession = calendar.nextSession(now);
   checks.push({ component: "calendar", ok: true, detail: `next ${calendar.exchange} session ${nextSession}` });
@@ -73,6 +94,7 @@ export function runHealth(config: AppConfig, db: Db, calendar: ExchangeCalendar,
     ledgerChain,
     ledgerEvents,
     lastSeal,
+    unsealedDays: unsealed,
     nextSession,
     walSizeBytes,
     freeDiskBytes,

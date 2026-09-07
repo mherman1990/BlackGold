@@ -155,6 +155,28 @@ describe("ingest run", () => {
     expect(h.requests).toHaveLength(2);
   });
 
+  it("stamps the ledger event when the run finished, not when it started", async () => {
+    // A ledger event records when the thing happened. Stamping `ingest.completed` with the instant captured
+    // before hours of rate-limited fetching both misreports the audit record and can land the event on a day
+    // the seal job has already closed, which `SealedDateAppendError` then has to refuse. The run's start is
+    // still recoverable from the payload.
+    const h = harness();
+    // A clock that advances a day per read stands in for a long fetch. Every consumer inside runIngest reads
+    // it, so the exact gap is not the assertion - the ordering is.
+    let reads = 0;
+    const advancing = (): number => Date.parse("2026-12-01T12:00:00Z") + 86_400_000 * reads++;
+    const report = await runIngest({ db: h.db, config: h.config, calendar, clock: advancing, fetchImpl: h.fetchImpl }, SEC_REQUEST);
+
+    const events = new Ledger(h.db).events().filter((e) => e.kind === "ingest.completed");
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event?.at).not.toBe(report.ingestedAt);
+    expect(Date.parse(String(event?.at))).toBeGreaterThan(Date.parse(report.ingestedAt));
+    // The start instant is preserved in the payload, so nothing is lost by moving the stamp.
+    expect(event?.payload).toMatchObject({ source: "sec-submissions", startedAt: report.ingestedAt });
+    h.db.close();
+  });
+
   it("refuses when the artifact store exceeds its budget and records the refusal", async () => {
     const h = harness();
     const deps = { db: h.db, config: h.config, calendar, clock, fetchImpl: h.fetchImpl };

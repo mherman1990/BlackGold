@@ -51,7 +51,7 @@ The Phase 2 layer is machinery, not evidence. No experiment is registered, no re
 
 **Required actions**
 
-Installing this release gives you a read-only plain-text status and health page on port 8479 and nothing else. There is no reporting view yet, and nothing to configure: with no charter approved and no credentials supplied, the app runs its scheduler and reports its own health.
+Installing this release gives you a read-only plain-text status and health page on port 8479 and nothing else. There is no reporting view yet, and nothing to configure: with no charter approved and no credentials supplied, the app runs its scheduler, seals each completed UTC day of its ledger, and reports its own health. Sealing catches up automatically, so powering the Pi off for a few days leaves no permanent gap in the integrity record.
 
 If you are installing to close the two outstanding Phase 0 exit criteria (`docs/PHASE0_REQUIREMENTS_MATRIX.md`):
 

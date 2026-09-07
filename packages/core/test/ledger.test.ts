@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isoDate, utc } from "@blackgold/shared";
-import { Ledger, SealMismatchError, openCoreDb } from "../src/index.ts";
+import { Ledger, SealedDateAppendError, SealMismatchError, openCoreDb } from "../src/index.ts";
 
 function newDb() {
   const dir = mkdtempSync(join(tmpdir(), "bg-ledger-"));
@@ -57,8 +57,54 @@ describe("Ledger", () => {
     const again = ledger.sealDaily(day, AT);
     expect(again.rootHash).toBe(first.rootHash);
     expect(ledger.verifySeals()).toEqual({ ok: true, mismatches: [] });
-    // A later event on an already sealed day changes the day's root: sealing again must fail loudly.
-    ledger.append("test", { i: 2 }, utc("2026-09-08T20:00:00Z"));
+    // An append onto an already sealed day is now refused outright, so the corruption this test used to
+    // demonstrate is unreachable through the API. Changing a sealed day still has to be caught, but the
+    // realistic route is an edit made around the API, which the next test covers.
+    expect(() => ledger.append("test", { i: 2 }, utc("2026-09-08T20:00:00Z"))).toThrow(SealedDateAppendError);
+    expect(ledger.verifySeals()).toEqual({ ok: true, mismatches: [] });
+    db.close();
+  });
+
+  it("refuses an append dated inside a sealed day, naming the day and the kind", () => {
+    const db = newDb();
+    const ledger = new Ledger(db);
+    ledger.append("test", { i: 1 }, AT);
+    ledger.sealDaily(isoDate("2026-09-08"), AT);
+
+    // The realistic cause: a caller that captured a timestamp, did slow work, and appended with the stale
+    // value. Allowing it would break the day's root permanently, with no repair path.
+    expect(() => ledger.append("ingest.completed", { pages: 9 }, utc("2026-09-08T23:59:59Z"))).toThrow(SealedDateAppendError);
+    expect(() => ledger.append("ingest.completed", { pages: 9 }, utc("2026-09-08T23:59:59Z"))).toThrow(/2026-09-08/);
+    expect(() => ledger.append("ingest.completed", { pages: 9 }, utc("2026-09-08T23:59:59Z"))).toThrow(/ingest\.completed/);
+
+    // An unsealed day is unaffected, and the refusal left no partial row behind.
+    const before = ledger.count();
+    ledger.append("test", { i: 2 }, utc("2026-09-09T10:00:00Z"));
+    expect(ledger.count()).toBe(before + 1);
+    expect(ledger.verifyChain().ok).toBe(true);
+    expect(ledger.verifySeals()).toEqual({ ok: true, mismatches: [] });
+    db.close();
+  });
+
+  it("still raises SealMismatchError when a sealed day is edited around the API", () => {
+    const db = newDb();
+    const ledger = new Ledger(db);
+    const day = isoDate("2026-09-08");
+    ledger.append("test", { i: 1 }, AT);
+    ledger.sealDaily(day, AT);
+
+    // The actual threat model: an attacker with database access, not a caller using append(). Inserting a
+    // row directly bypasses the append guard and changes the set of event hashes on that day, which is what
+    // the daily root is computed from. (Editing only a payload would leave the root intact and be caught by
+    // verifyChain instead, which recomputes hashes from payloads - the two checks cover different edits.)
+    db.exec(
+      "INSERT INTO ledger_events (seq, at, kind, payload, prev_hash, hash) VALUES " +
+        "(99, '2026-09-08T20:00:00.000Z', 'smuggled', '{}', '" +
+        "0".repeat(64) +
+        "', '" +
+        "f".repeat(64) +
+        "')",
+    );
     expect(() => ledger.sealDaily(day, AT)).toThrow(SealMismatchError);
     expect(ledger.verifySeals().ok).toBe(false);
     db.close();
