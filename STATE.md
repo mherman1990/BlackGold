@@ -27,7 +27,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 | PR #1 | Discovery Pack: `claude/black-gold-trading-tool-n713ly` into `main`. Open, awaiting Matt |
 | Phase 0 branch | `claude/phase-00-foundation`, stacked on the Discovery branch (D-26) |
 | Phase 0 PR | PR #2 against the Discovery branch: CI green, Codex findings fixed and resolved, mergeable. Retarget to `main` after PR #1 merges |
-| Phase 1 branch / PR | `claude/phase-01-research-kernel`, PR #3 against the Phase 0 branch; retarget as the stack merges |
+| Phase 1 branch / PR | `claude/phase-01-research-kernel`, [PR #3](https://github.com/mherman1990/BlackGold/pull/3) against the Phase 0 branch; retarget as the stack merges |
 | Branch protection | Not configured (needs Matt in GitHub UI) |
 | CI | `.github/workflows/ci.yml` green on PR #2 (checks + multi-arch image) |
 
