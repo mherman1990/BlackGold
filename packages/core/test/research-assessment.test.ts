@@ -77,7 +77,7 @@ describe("ResearchAssessment schema and validation", () => {
 
   it("rejects a missing required field", () => {
     const withoutThesis: Record<string, unknown> = { ...goodAssessment() };
-    delete withoutThesis.thesis;
+    delete withoutThesis["thesis"];
     const result = validateAssessment(withoutThesis, context());
     expect(result).toMatchObject({ ok: false, code: "SCHEMA_INVALID" });
   });
