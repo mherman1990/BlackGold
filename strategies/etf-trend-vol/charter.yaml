@@ -1,0 +1,207 @@
+# Machine-readable companion to ALPHA_CHARTER.md. The prose charter is the specification a human reads;
+# this file is the only form the code executes.
+#
+# STATUS: DRAFT. Every value below is transcribed from a PROPOSED default in the prose charter. Nothing here
+# is approved. `assertRegistrable` (packages/core/src/strategy/charter.ts) refuses to freeze an experiment on
+# this file while approval.state is DRAFT, any open decision is unresolved, or any conditional universe member
+# is undecided. Signing the block below changes the charter hash, which is the point: the approved charter is
+# a different artifact from this draft.
+
+strategy_id: etf-trend-vol
+charter_version: 0.1.0-draft
+prose_charter: strategies/etf-trend-vol/ALPHA_CHARTER.md
+runtime_llm_in_signal: false
+arms: [B0_PASSIVE, B1_DETERMINISTIC]
+
+approval:
+  state: DRAFT
+  approved_by: null
+  approval_date: null
+  code_commit: null
+  approval_ref: null
+  decision_refs: [D-08, D-09, D-10, D-15, D-19, D-24]
+  conditions: []
+  # ALPHA_CHARTER.md section 24. Each needs a written resolution before registration.
+  open_decisions:
+    - id: OD-1
+      question: "Compliance policy on diversified-ETF look-through (decides XLE, flags XLI and XLP)."
+      resolution: null
+    - id: OD-2
+      question: "Live cash instrument: BIL, SGOV, or plain cash."
+      resolution: null
+    - id: OD-3
+      question: "Approval of the risk.yaml defaults cited here: 20% ETF cap, 2% minimum cash, 0.5% ADV participation, 10% volatility target."
+      resolution: null
+    - id: OD-4
+      question: "Approval of the free market-data source after the capability probe (D-24, CR-09)."
+      resolution: null
+
+universe:
+  universe_id: etf_trend_vol_v0
+  frozen: true
+  # ALPHA_CHARTER.md section 2.1. Ordered as the prose table is, not by rank.
+  risk_etfs: [VTI, QQQ, IWM, VTV, VUG, XLK, XLF, XLV, XLI, XLP, XLU, XLY, XLE]
+  cash_etf: BIL
+  conditional:
+    - symbol: XLE
+      condition: "Holds refiners with RFS/45Z exposure (restricted theme). Admitted only if the compliance policy adopts a diversified-ETF look-through rule that admits it; otherwise the risk universe is 12 ETFs."
+      admitted: null
+  look_through_flagged: [XLI, XLP]
+  survivorship_free: true
+  survivorship_note: >-
+    All members were chosen in 2026 and all survived: mild selection bias, disclosed rather than eliminated.
+    Every risk ETF is among the largest and oldest in its category and would have been an obvious choice at
+    any point since 2007; nothing launched after 2007 is included.
+
+posture:
+  long_only: true
+  unlevered: true
+  regular_session_only: true
+  max_gross_exposure: "0.98"
+
+# ALPHA_CHARTER.md section 6.1.
+features:
+  momentum_lookback_sessions: 252
+  momentum_skip_sessions: 21
+  trend_sma_sessions: 200
+  volatility_sessions: 63
+  adv_sessions: 20
+  min_adv_usd: "50000000"
+
+# ALPHA_CHARTER.md section 8.
+rules:
+  cadence: WEEKLY_LAST_SESSION
+  decision_offset_minutes: 60
+  execution_delay_bars: 1
+  fill_reference: NEXT_SESSION_OPEN
+  entry_rank: 5
+  hold_rank: 7
+  max_positions: 5
+  max_new_positions_per_decision: 5
+  rebalance_band_pct_points: "2.0"
+
+# ALPHA_CHARTER.md section 9.
+sizing:
+  weighting: INVERSE_VOLATILITY
+  max_weight_per_etf: "0.20"
+  min_cash_weight: "0.02"
+  annual_volatility_target: "0.10"
+  clusters:
+    - id: A
+      members: [VTI, QQQ, VUG, XLK, XLY]
+      max_members: 3
+  whole_shares_only: true
+
+# ALPHA_CHARTER.md section 12. Half spreads are per symbol in bps; `default` covers anything unlisted.
+costs:
+  base:
+    commission_bps: "0"
+    half_spread_bps:
+      default: "2"
+      VTI: "1"
+      QQQ: "1"
+      BIL: "1"
+    slippage_bps: "5"
+    market_impact_bps: "0"
+    delay_bars: 1
+  adverse:
+    commission_bps: "0"
+    half_spread_bps:
+      default: "4"
+      VTI: "2"
+      QQQ: "2"
+      BIL: "2"
+    slippage_bps: "10"
+    market_impact_bps: "0"
+    delay_bars: 2
+  stress:
+    commission_bps: "0"
+    half_spread_bps:
+      default: "8"
+      VTI: "4"
+      QQQ: "4"
+      BIL: "4"
+    slippage_bps: "20"
+    market_impact_bps: "2"
+    delay_bars: 3
+  stress_multipliers: ["1.0", "2.0", "4.0"]
+  delay_sensitivity_bars: [0, 1, 2, 5]
+  missing_data_rates: ["0.00", "0.02", "0.05"]
+  max_participation_of_adv: "0.005"
+
+# ALPHA_CHARTER.md section 14.1. The holdout is sealed and stays closed in Phase 2.
+boundaries:
+  registered_history_start: 2007-06-01
+  design: { start: 2007-06-01, end: 2018-12-31 }
+  holdout: { start: 2019-01-01, end: 2024-12-31 }
+  recent: { start: 2025-01-01, end: 2026-09-06 }
+  walk_forward:
+    window_years: 3
+    step_months: 12
+    purge_days: 21
+    embargo_days: 5
+
+# ALPHA_CHARTER.md section 11.
+benchmarks:
+  primary: VTI
+  cash: BIL
+  exposure_matched: true
+  volatility_controlled_primary: true
+  equal_weight_risk_etfs: true
+  secondary: [SPY]
+
+# ALPHA_CHARTER.md sections 13 and 16.
+pass_fail:
+  primary_metric: net_sharpe_difference_vs_primary_benchmark
+  primary_threshold: "0.10"
+  bootstrap_block_sessions: 21
+  bootstrap_confidence: "0.90"
+  max_drawdown_ratio: "0.75"
+  min_grid_sign_agreement: "0.75"
+  minimum_independent_decisions: 150
+  falsifiers:
+    - id: F1
+      condition: "Primary metric point estimate below the threshold, or the bootstrap interval includes zero."
+    - id: F2
+      condition: "Maximum drawdown not at or below max_drawdown_ratio times the primary benchmark's maximum drawdown."
+    - id: F3
+      condition: "Sign of the primary metric flips under adverse costs or one extra session of execution delay."
+    - id: F4
+      condition: "Removing the single best 12-month window flips the sign (single-episode dependence)."
+    - id: F5
+      condition: "Fewer than min_grid_sign_agreement of sensitivity-grid members agree in sign."
+    - id: F6
+      condition: "Prospective: after 36 months the rolling paired excess return versus the primary benchmark is below the 10th percentile of the historical block-bootstrap distribution. Triggers PAUSE and review, never silent tuning."
+
+# ALPHA_CHARTER.md section 15. 2 x 2 x 1 x 3 x 3 x 2 = 72 members; the registered point is one of them.
+sensitivity_grid:
+  momentum:
+    - { lookback_sessions: 126, skip_sessions: 21 }
+    - { lookback_sessions: 252, skip_sessions: 21 }
+  trend_sma_sessions: [150, 200]
+  volatility_sessions: [63]
+  ranks:
+    - { entry: 4, hold: 6 }
+    - { entry: 5, hold: 7 }
+    - { entry: 6, hold: 8 }
+  annual_volatility_target: ["0.08", "0.10", "0.12"]
+  rebalance_band_pct_points: ["1.0", "2.0"]
+
+tax_scenarios: [pre_tax, taxable_short_long_split, tax_deferred]
+
+# ALPHA_CHARTER.md section 23, carried verbatim into every result report.
+reasons_it_may_not_work:
+  - "Trend and momentum on U.S. equity ETFs have been weaker since 2009 than before; the design period may flatter the rule."
+  - "2020 shows the cost of the trend flag: exit into the March low, re-enter in June. A rule that survives 2008 can still lose to VTI over a decade."
+  - "Volatility targeting lowers CAGR in long calm bull markets; the Sharpe gain may not translate into wealth gain, and taxes on short-term gains erode it further."
+  - "Weekly rebalancing at a small account produces many small trades whose fixed frictions may exceed assumptions."
+  - "The universe is mostly one asset class. Most published trend-following success comes from multi-asset diversification, which this charter deliberately excludes in version 0.1."
+  - "Beating the volatility-controlled primary benchmark is a high bar. If the whole benefit is volatility control, the honest conclusion is hold VTI and scale it, which is a simpler charter."
+  - "The result may be real and still too small to matter after tax at sleeve scale."
+
+component_versions:
+  features: 1
+  strategy_rules: 1
+  portfolio_construction: 1
+  risk_policy: 0
+  cost_model: 1

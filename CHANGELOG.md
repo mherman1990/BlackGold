@@ -29,9 +29,25 @@ Phase 1 (research kernel, same unreleased version):
 - Sixteen temporal fixtures from the data provenance specification.
 - Review corrections: COT release timing on a by-rule U.S. federal holiday calendar verified against the published 2026 schedule; Socrata paging for COT; artifact verification quarantines referencing observations and records an incident; the artifact budget is enforced on every write; configured processing delays reach every point-in-time read (`BLACKGOLD_PROCESSING_DELAYS`); promotion evidence is refused when any trial carries a blocking label; the entity map is bitemporal so a later sync cannot leak into an earlier decision.
 
+Phase 2 (first deterministic Alpha Charter, machinery only, same unreleased version):
+
+- `strategies/etf-trend-vol/charter.yaml`: the machine-readable companion to the prose charter, and the only form the code executes. Every window, rank, cap, cost, boundary and threshold is read from it, so a parameter cannot be changed by editing code.
+- Approval gate: an experiment cannot be frozen while the charter's approval block is unsigned, a declared open decision is unresolved, or a conditional universe member is undecided. An undecided conditional member is excluded from the universe, so the charter currently runs 12 risk ETFs rather than 13. A permanent CI gate keeps this true for every tracked charter.
+- Feature engine reading only through `asOf`: 12-1 momentum, trend against a moving average, annualized volatility and covariance in decimal arithmetic, average dollar volume from raw bars. All features at one cross-sectional anchor; a member priced behind that anchor is excluded rather than ranked on a stale price.
+- Candidate engine implementing the charter's rule table with hysteresis, the correlated-cluster cap, and a logged deciding rule for every accepted and rejected candidate.
+- Deterministic portfolio construction: inverse-volatility weights, per-ETF cap redistributed to a fixpoint, cluster cap, volatility-target scaling that can only shrink, cash floor, whole-share flooring, and a rebalance band.
+- Leakage auditor: an independent second check of the decision-time rule over every read a run made, plus checks the store cannot make (a future effective session, a decision loop running backwards, an undeclared processing delay).
+- Coverage report measured through `asOf` with a citable report id; walk-forward splits with purge and embargo; a holdout that refuses to yield its window without a stated open.
+- Statistics: seeded stationary block bootstrap, deflated Sharpe that refuses to report when its assumptions fail, concentration analysis, and a preregistered regime classifier.
+- Attribution: cash-timing versus selection against the exposure-matched benchmark, and an OLS factor regression that reports "not performed" rather than approximating when the data are inadequate.
+- Backtest runner with sealed weekly decision records and two independent arms, a robustness harness enumerating the charter's 72-member grid and every cost, delay and missing-data tier, and a result report carrying the protocol's minimum result set plus the charter's own reasons it may not work.
+- New CLI: `charter show`, `charter plan`, `research coverage`.
+
 **Why it matters**
 
 Everything later phases rely on for safety is testable now, before any market data, model, or broker exists.
+
+The Phase 2 layer is machinery, not evidence. No experiment is registered, no result has been computed, and the holdout has never been opened, because the charter is a draft and no market data has been ingested. That is the intended state: viewing a result before the charter is frozen would permanently spend a clean first look at the design period, and the code refuses to freeze an experiment on numbers the owner has not approved.
 
 **Required actions**
 

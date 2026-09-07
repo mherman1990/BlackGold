@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { mkdirSync } from "node:fs";
-import { isoDate, nowUtc, dateOfInstantInZone, addDays, type Db, type IsoDate } from "@blackgold/shared";
+import { isoDate, nowUtc, dateOfInstantInZone, addDays, utc, type Db, type IsoDate } from "@blackgold/shared";
 import { loadAppConfig, type AppConfig } from "./config/load.ts";
 import { processingDelayOverridesMs } from "./config/schema.ts";
 import { verifyArtifacts } from "./data/artifacts/verify.ts";
@@ -15,6 +15,10 @@ import { CORE_PACKAGE_NAME, CORE_VERSION } from "./version.ts";
 import { ArtifactStore } from "./data/artifacts/store.ts";
 import { PointInTimeRepository } from "./data/pit/repository.ts";
 import { INGEST_USAGE, parseIngestArgs, parseOptions, runIngest, UsageError } from "./ingest/run.ts";
+import { admittedRiskEtfs, charterUniverseMembers, loadCharterFile, registrabilityReasons } from "./strategy/charter.ts";
+import { splitPlan } from "./research/walkforward.ts";
+import { enumerateGrid, enumerateTiers } from "./research/robustness.ts";
+import { buildCoverageReport } from "./research/coverage.ts";
 
 /**
  * blackgold-core CLI. Operational commands plus Phase 1 public-source ingestion. No broker, no model, no live path.
@@ -41,6 +45,12 @@ Phase 1 research kernel (public sources only; requires BLACKGOLD_SEC_USER_AGENT_
   pit latest --source <id> [--entity <id>]  Newest availableAt and the newest row for a source
   snapshot create --dataset <name> --description <text>
   artifacts verify [--sample N]             Verify stored artifacts; failures quarantine referencing rows (default sample 100)
+
+Phase 2 research (deterministic charters only; computes nothing that a DRAFT charter may cite as evidence):
+  charter show --path <charter.yaml>        Parse, hash, and report whether the charter may be registered
+  charter plan --path <charter.yaml>        Evaluation plan: design, walk-forward and recent splits, sealed holdout, grid and tiers
+  research coverage --path <charter.yaml> --from <date> --to <date>
+                                            Point-in-time coverage report for the charter universe
 
 Configuration comes from BLACKGOLD_* environment variables (see config/schema/README.md).`;
 
@@ -176,6 +186,71 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
         verifyArtifacts({ store: new ArtifactStore(config.artifactsDir, db), repo: pitRepository(db, config), ledger: new Ledger(db) }, { sample }),
       );
       return { exitCode: result.failed.length === 0 ? 0 : 1, output: result };
+    }
+    case "charter": {
+      const [sub, ...rest] = args;
+      const o = parseOptions(rest, { path: { type: "string" } });
+      const path = o["path"];
+      if (typeof path !== "string") throw new UsageError("charter requires --path <charter.yaml>");
+      const loaded = loadCharterFile(path);
+      if (sub === "show") {
+        const reasons = registrabilityReasons(loaded.charter);
+        return {
+          exitCode: 0,
+          output: {
+            strategyId: loaded.charter.strategy_id,
+            charterVersion: loaded.charter.charter_version,
+            charterHash: loaded.charterHash,
+            approvalState: loaded.charter.approval.state,
+            registrable: reasons.length === 0,
+            reasons,
+            admittedRiskEtfs: admittedRiskEtfs(loaded.charter),
+            universeMembers: charterUniverseMembers(loaded.charter),
+          },
+        };
+      }
+      if (sub === "plan") {
+        const plan = splitPlan(loaded.charter);
+        const grid = enumerateGrid(loaded.charter);
+        return {
+          exitCode: 0,
+          output: {
+            charterHash: loaded.charterHash,
+            planHash: plan.planHash,
+            splits: plan.splits.map((sp) => ({ id: sp.id, kind: sp.kind, evaluation: sp.evaluation })),
+            holdout: plan.holdout,
+            trialCount: grid.trialCount,
+            registeredGridIndex: grid.registeredIndex,
+            sensitivityTiers: enumerateTiers(loaded.charter).map((t) => t.id),
+            registrable: registrabilityReasons(loaded.charter).length === 0,
+          },
+        };
+      }
+      throw new UsageError("charter requires a subcommand: show | plan");
+    }
+    case "research": {
+      const [sub, ...rest] = args;
+      if (sub !== "coverage") throw new UsageError("research requires the subcommand: coverage");
+      const o = parseOptions(rest, { path: { type: "string" }, from: { type: "string" }, to: { type: "string" } });
+      const path = o["path"];
+      const from = o["from"];
+      const to = o["to"];
+      if (typeof path !== "string" || typeof from !== "string" || typeof to !== "string") {
+        throw new UsageError("research coverage requires --path, --from and --to");
+      }
+      const loaded = loadCharterFile(path);
+      const decisionAt = calendar.sessionClose(calendar.previousSession(utc(`${isoDate(to)}T23:59:59Z`)));
+      const report = withDb(config, (db) =>
+        buildCoverageReport({
+          pit: pitRepository(db, config),
+          calendar,
+          entities: charterUniverseMembers(loaded.charter),
+          from: isoDate(from),
+          to: isoDate(to),
+          decisionAt,
+        }),
+      );
+      return { exitCode: report.uncovered.length === 0 ? 0 : 1, output: report };
     }
     case "serve": {
       mkdirSync(config.dataDir, { recursive: true });
