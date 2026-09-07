@@ -62,9 +62,13 @@ export type ResearchAssessment = z.infer<typeof ResearchAssessmentSchema>;
  * `model.schema_hash`. Derived from the emitted JSON Schema so any change to the accepted shape changes the
  * hash, which makes it a new strategy version (docs/PRODUCT_SPEC.md model-operations table).
  */
+/** The output schema as JSON Schema (draft 2020-12), for a provider's structured-output request. */
+export function researchAssessmentJsonSchema(): Record<string, unknown> {
+  return z.toJSONSchema(ResearchAssessmentSchema, { io: "input", target: "draft-2020-12" });
+}
+
 export function assessmentSchemaHash(): string {
-  const json = z.toJSONSchema(ResearchAssessmentSchema, { io: "input", target: "draft-2020-12" });
-  return `sha256:${hashJson(json)}`;
+  return `sha256:${hashJson(researchAssessmentJsonSchema())}`;
 }
 
 export type AssessmentContext = {
