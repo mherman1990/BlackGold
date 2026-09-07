@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { utc, type UtcInstant } from "@blackgold/shared";
+import { utc } from "@blackgold/shared";
 import type { AsOfQuery, AsOfResult, ReadOnlyPointInTime, StoredObservation } from "../src/data/pit/types.ts";
 import {
   assertPacketSerializable,
@@ -46,7 +46,7 @@ function baseInput(pit: ReadOnlyPointInTime, decisionAt: string) {
     candidateId: "XLK",
     strategyId: "etf-trend-vol",
     strategyVersion: "etf-trend-vol@1",
-    decisionAt: utc(decisionAt) as UtcInstant,
+    decisionAt: utc(decisionAt),
     pit,
     sources: [{ sourceId: "sec.submissions" }],
     excerpt: (o: StoredObservation) => String(o.value),
@@ -99,7 +99,9 @@ describe("sealed evidence packet", () => {
       exposureFlags: [{ flag: "sleeve holds $1,250,000 in tech" }],
       restrictions: [],
     };
-    expect(() => assertPacketSerializable(packet)).toThrow(PacketRedactionError);
+    expect(() => {
+      assertPacketSerializable(packet);
+    }).toThrow(PacketRedactionError);
     expect(() => sealPacket(packet)).toThrow(PacketRedactionError);
   });
 
@@ -107,7 +109,9 @@ describe("sealed evidence packet", () => {
     const pit = fakePit([obs(1, "2026-01-05T21:00:00.000Z", "Q3 revenue was $1,234,567,000")]);
     const packet = buildEvidencePacket(baseInput(pit, "2026-01-10T00:00:00.000Z"));
     expect(packet.facts[0]?.excerpt).toContain("$1,234,567,000");
-    expect(() => assertPacketSerializable(packet)).not.toThrow();
+    expect(() => {
+      assertPacketSerializable(packet);
+    }).not.toThrow();
   });
 
   it("rejects a secret pattern anywhere, including inside an excerpt", () => {

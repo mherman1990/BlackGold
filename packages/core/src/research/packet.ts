@@ -85,7 +85,14 @@ const SECRET_PATTERNS: readonly { re: RegExp; reason: string }[] = [
 
 /** The packet minus untrusted excerpt free-text: the only place a household dollar or account could leak. */
 function structuredText(packet: EvidencePacket): string {
-  const factsWithoutExcerpts = packet.facts.map(({ excerpt: _excerpt, ...rest }) => rest);
+  const factsWithoutExcerpts = packet.facts.map((f) => ({
+    citationId: f.citationId,
+    observationRowId: f.observationRowId,
+    sourceId: f.sourceId,
+    sourceLocator: f.sourceLocator,
+    availableAt: f.availableAt,
+    rawContentHash: f.rawContentHash,
+  }));
   return canonicalJson({ ...packet, facts: factsWithoutExcerpts });
 }
 

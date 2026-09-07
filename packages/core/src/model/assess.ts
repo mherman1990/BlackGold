@@ -122,7 +122,9 @@ type RaceOutcome<T> = { timedOut: false; value: T } | { timedOut: true };
 async function withDeadline<T>(promise: Promise<T>, ms: number): Promise<RaceOutcome<T>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<RaceOutcome<T>>((resolve) => {
-    timer = setTimeout(() => resolve({ timedOut: true }), ms);
+    timer = setTimeout(() => {
+      resolve({ timedOut: true });
+    }, ms);
   });
   try {
     return await Promise.race([promise.then((value): RaceOutcome<T> => ({ timedOut: false, value })), timeout]);
