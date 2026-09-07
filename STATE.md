@@ -2,18 +2,18 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-09-07 by Claude Code (after PR #9 merged: Phase 0 completion and release prep).
+**Last updated:** 2026-09-07 by Claude Code (after PR #25 merged: Phase 3 completion — call archiving, budget persistence, analyst wiring, status-page visibility).
 
 ## Product state
 
 | Item | Value |
 |---|---|
-| Phase | Discovery, Phase 0, Phase 1 and Phase 2 all merged to `main` at `03bf580` on 2026-09-07 (PR #1, #2, #4, #6, #8, #9). Phase 2 **machinery** is complete in code and tests; **no Phase 2 result exists** and none may exist until the charter is approved and data is ingested (D-35) |
+| Phase | Discovery, Phase 0, Phase 1 and Phase 2 all merged to `main` at `03bf580` on 2026-09-07 (PR #1, #2, #4, #6, #8, #9). **Phase 3 machinery** (runtime-LLM analyst overlay) merged 2026-09-07 (PR #22, #23, #25; `main` at `9238e94`). Phase 2 and Phase 3 are both **machinery** complete in code and tests; **no Phase 2 result and no LLM/live call exists**, and no result may exist until the charter is approved and data is ingested (D-35) |
 | Application code | `packages/shared`, `packages/core` (Phase 0 foundation, Phase 1 data/market/universe/research, Phase 2 strategy/research), `packages/broker-gateway` |
-| Tests | 513 passing across 46 files. `npm run check` green locally and in CI on `8ce1de5` |
+| Tests | 622 passing across 58 files. `npm run check` green locally and in CI on `ce4c41c` (PR #25 head) |
 | Live trading | Absent by construction. Config loader and gateway both refuse `LIVE_MANUAL` and `LIVE_LIMITED`; CI asserts the image refuses them too |
 | Broker credentials | None exist anywhere in this project. Only the synthetic broker adapter exists |
-| Runtime LLM | Not integrated (Phase 3). The `etf-trend-vol` charter declares no LLM in the signal and only two arms |
+| Runtime LLM | **Phase 3 machinery merged to `main`** (PR #22, #23, #25): provider-agnostic analyst pipeline + safety surface, the Anthropic adapter behind the single egress module, call archiving/budget persistence, the `research analyst` CLI, and status-page visibility. **No live call has been made** — no key is on the Pi and the one CR-12/CR-13 verification run is still pending. The `etf-trend-vol` charter declares no LLM in the signal and only two arms, so nothing wires the analyst into a decision |
 | Data ingestion | **All four adapters live-verified 2026-09-07.** FRED (16,880 obs / 5,103 vintages), SEC EDGAR (1,590 obs), CFTC COT (34 obs), Alpaca IEX bars (340 obs / 170 sessions). **Two of the four failed on their first real request** - FRED on CR-28 and CR-29, SEC on CR-30 - all fixed and tested. CFTC and Alpaca passed first time. No production ingest schedule is wired yet (Phase 5) |
 | First Alpha Charter | `strategies/etf-trend-vol/charter.yaml` exists and is executable, but is `DRAFT`: unsigned, four open decisions unresolved, XLE undecided. `assertRegistrable` refuses it and a CI gate keeps that true |
 | Registered experiments | None. No experiment has been registered, no result computed, no holdout opened |
@@ -49,13 +49,13 @@ Matt is building the household / personal-finance / capital-allocation layer as 
 
 ## Phase 3 status (2026-09-07)
 
-Phase 3 (bounded runtime-LLM analyst overlay) was authorized by Matt (D-41) and is **in progress on `claude/phase-03-analyst`** ([PR #22](https://github.com/mherman1990/BlackGold/pull/22)). The **provider-agnostic pipeline and its full safety surface are built and tested** with a deterministic stub adapter (no credentials, no network): `ResearchAssessment` schema + validator, sealed evidence packet + serialization guard, `ModelAdapter` + `runAssessment` orchestration (budgets, deadline, retries, circuit breaker, no silent fallback, abstention), B0/B1/C1/D1 overlay primitives with contamination labels, the model capability manifest + fail-closed resolver, the adversarial corpus, the T-05 no-LLM-in-sizing CI gate, and the locked ablation plan (`docs/PHASE3_ABLATION_PLAN.md`). ~55 new tests; `npm run check` green.
+Phase 3 (bounded runtime-LLM analyst overlay) was authorized by Matt (D-41) and is **merged to `main`** ([PR #22](https://github.com/mherman1990/BlackGold/pull/22)). The **provider-agnostic pipeline and its full safety surface are built and tested** with a deterministic stub adapter (no credentials, no network): `ResearchAssessment` schema + validator, sealed evidence packet + serialization guard, `ModelAdapter` + `runAssessment` orchestration (budgets, deadline, retries, circuit breaker, no silent fallback, abstention), B0/B1/C1/D1 overlay primitives with contamination labels, the model capability manifest + fail-closed resolver, the adversarial corpus, the T-05 no-LLM-in-sizing CI gate, and the locked ablation plan (`docs/PHASE3_ABLATION_PLAN.md`). ~55 new tests; `npm run check` green.
 
 The **real Anthropic adapter is now built** in a follow-up PR (D-42, branch `claude/phase-03-provider-adapter`): `AnthropicAdapter` over the single model-egress module `packages/core/src/model/provider-http.ts` (raw `fetch`, no SDK), with `live-disabled.test.ts` updated to allow `api.anthropic.com` + the POST in exactly that module while trading hosts stay forbidden and `data/http.ts` stays POST-free; the compose passes `ANTHROPIC_API_KEY` through (empty default). Request/response mapping is tested against a mock transport; no key is in the repo (Matt rotated the one pasted in chat).
 
 **Still deferred, by design — see `docs/PHASE3_REQUIREMENTS_MATRIX.md`:** one live verification run against the real API on the Pi (CR-12/CR-13 — exact wire shape, latency, cache); persistence of the model-call record and running budget; and wiring C1/D1 into the decision loop (prospective, Phase 5). No live trading mode, broker credential, or trading-host egress is added. No LLM output can set a size, choose an account, or form an order.
 
-**Phase 3 completion (branch `claude/phase-03-completion`, being built 2026-09-07):** call archiving + budget persistence (migration `0007` `model_calls`, `research/model-call-log.ts`), the analyst wiring (`analyst/run-analyst.ts` + a `research analyst` CLI command reading `ANTHROPIC_API_KEY` in `config/load.ts` only), and operator visibility of the archived-call count on the read-only status page (`EvidenceStatus.modelCalls`, count-only within the page's A3/T-22 constraints) are built and tested with a stub adapter. This closes the "archive everything" criterion. **Still open:** the live CR-12/CR-13 run (needs a key on the Pi), C1/D1 backtest wiring (Phase 5, review-gated), and a deterministic factor classifier (Phase 4). The `research analyst` command fails closed without a key and makes no call.
+**Phase 3 completion (merged to `main` at `9238e94`, [PR #25](https://github.com/mherman1990/BlackGold/pull/25), 2026-09-07):** call archiving + budget persistence (migration `0007` `model_calls`, `research/model-call-log.ts`), the analyst wiring (`analyst/run-analyst.ts` + a `research analyst` CLI command reading `ANTHROPIC_API_KEY` in `config/load.ts` only), and operator visibility of the archived-call count on the read-only status page (`EvidenceStatus.modelCalls`, count-only within the page's A3/T-22 constraints) are built and tested with a stub adapter. This closes the "archive everything" criterion. Unlike PR #9, this PR got an independent pass: the Codex security review completed on `ce4c41c` with no findings. **Still open:** the live CR-12/CR-13 run (needs a key on the Pi), C1/D1 backtest wiring (Phase 5, review-gated), and a deterministic factor classifier (Phase 4). The `research analyst` command fails closed without a key and makes no call.
 
 ## Phase 2 exit criteria
 
@@ -79,7 +79,7 @@ Verified: 17. Partial: 4. UNVERIFIED: 3 (all Schwab rows, Alpaca duplicate clien
 
 ## Next authorized action
 
-None for code. Everything through Phase 2 plus the Phase 0 seal completion is on `main` and green. The next steps are Matt's, in rough order of what unblocks the most:
+None for code. Everything through Phase 3 (its full machinery: PR #22, #23, #25) plus the Phase 0 seal completion is on `main` and green. No further Phase 3 code advances without Matt: the one live CR-12/CR-13 run needs a key on the Pi, and C1/D1 wiring (Phase 5) and the factor classifier (Phase 4) are later phases that are not started autonomously. The next steps are Matt's, in rough order of what unblocks the most:
 
 1. **Make the GHCR package public** once the first image publishes: github.com/users/mherman1990/packages/container/blackgold/settings -> Change visibility -> Public. A new GHCR package is private by default and umbrelOS pulls anonymously, so the Umbrel install fails with `unauthorized` until this is done. This is now the *only* step in the release chain Claude Code cannot perform; the tag and publish go through a `release.yml` dispatch (D-38).
 2. **Confirm or overrule D-32** (book-slot priority between the entry rule and the hysteresis hold rule). The code resolves it provisionally; the prose charter should state it either way before anything is frozen.
