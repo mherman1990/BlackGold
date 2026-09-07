@@ -105,14 +105,42 @@ describe("evaluateHaltState", () => {
     expect(d.state).toBe("HALT_NEW_RISK");
   });
 
-  it("never enters EMERGENCY_FLATTEN from a fault, and leaves an owner-set one alone", () => {
+  it("never enters EMERGENCY_FLATTEN from a fault, and leaves an owner-set one alone within its session", () => {
     // No fault path produces EMERGENCY_FLATTEN...
     const escalated = evaluateHaltState({ policy: POLICY, current: "NORMAL", portfolio: pf(80) });
     expect(escalated.state).not.toBe("EMERGENCY_FLATTEN_AUTHORIZED");
-    // ...and an owner-set flatten is not changed by the fault engine, though faults are still recorded.
+    // ...and an owner-set flatten is not changed by the fault engine while its session is live.
     const held = evaluateHaltState({ policy: POLICY, current: "EMERGENCY_FLATTEN_AUTHORIZED", portfolio: pf(80) });
     expect(held.state).toBe("EMERGENCY_FLATTEN_AUTHORIZED");
     expect(held.faults.length).toBeGreaterThan(0);
     expect(held.automaticFlatten).toBe(false);
+  });
+
+  it("expires an emergency flatten at session end, landing in at least HALT_NEW_RISK (section 9.3)", () => {
+    const expired = evaluateHaltState({ policy: POLICY, current: "EMERGENCY_FLATTEN_AUTHORIZED", portfolio: pf(100), emergencyFlattenExpired: true });
+    expect(expired.state).toBe("HALT_NEW_RISK");
+    // If a deeper fault is live at expiry, the more restrictive state wins.
+    const expiredDeep = evaluateHaltState({ policy: POLICY, current: "EMERGENCY_FLATTEN_AUTHORIZED", portfolio: pf(90), emergencyFlattenExpired: true });
+    expect(expiredDeep.state).toBe("HOLD_ONLY");
+  });
+
+  it("holds (not merely halts) on reconciliation, order-state, or broker uncertainty (sections 7-8)", () => {
+    expect(evaluateHaltState({ policy: POLICY, current: "NORMAL", portfolio: pf(100), unknownBrokerState: true }).state).toBe("HOLD_ONLY");
+    expect(evaluateHaltState({ policy: POLICY, current: "NORMAL", portfolio: pf(100), reconciliationUnresolved: true }).state).toBe("HOLD_ONLY");
+    expect(evaluateHaltState({ policy: POLICY, current: "NORMAL", portfolio: pf(100), uncertainOrderState: true }).state).toBe("HOLD_ONLY");
+    expect(evaluateHaltState({ policy: POLICY, current: "NORMAL", portfolio: pf(100), coreGatewayDisagree: true }).state).toBe("HOLD_ONLY");
+  });
+
+  it("holds on a critical incident but only halts new risk on a high one", () => {
+    expect(evaluateHaltState({ policy: POLICY, current: "NORMAL", portfolio: pf(100), incidents: [{ id: "I-3", severity: "critical" }] }).state).toBe("HOLD_ONLY");
+    expect(evaluateHaltState({ policy: POLICY, current: "NORMAL", portfolio: pf(100), incidents: [{ id: "I-4", severity: "high" }] }).state).toBe("HALT_NEW_RISK");
+  });
+
+  it("recovers from HOLD_ONLY one step at a time: an owner re-arm to NORMAL only reaches HALT_NEW_RISK first (section 9.2)", () => {
+    const step1 = evaluateHaltState({ policy: POLICY, current: "HOLD_ONLY", portfolio: pf(100), ownerReArm: { to: "NORMAL", actor: "matt", at: AT } });
+    expect(step1.state).toBe("HALT_NEW_RISK");
+    // A second re-arm, now from HALT_NEW_RISK with faults clear, reaches NORMAL.
+    const step2 = evaluateHaltState({ policy: POLICY, current: "HALT_NEW_RISK", portfolio: pf(100), ownerReArm: { to: "NORMAL", actor: "matt", at: AT } });
+    expect(step2.state).toBe("NORMAL");
   });
 });

@@ -534,7 +534,13 @@ critical input, expired authorization, unknown state, or severe incident lands i
 `HOLD_ONLY` at the deeper drawdown); automatic flatten never happens; escalation to a more restrictive state is
 automatic while relaxation needs an explicit owner re-arm, and even then an active fault still binds; unknown
 state fails closed. It is pure - no model, broker, or network - and lives under `risk/`, which the analyst
-layer is forbidden to import (T-05). 14 boundary/positive/negative tests.
+layer is forbidden to import (T-05). 18 boundary/positive/negative tests.
+
+The Codex code review on PR #29 caught three genuine gaps against `docs/AUTOMATION_AND_LIVE_GATES.md`, all
+fixed before merge: reconciliation/order-state/broker uncertainty must demand `HOLD_ONLY` (not merely
+`HALT_NEW_RISK`, sections 7-8); an owner-entered emergency flatten must expire at session end (section 9.3);
+and recovery from `HOLD_ONLY` is staged one step at a time (`HOLD_ONLY` -> `HALT_NEW_RISK` -> `NORMAL`,
+section 9.2), so an owner re-arm cannot skip the intermediate state.
 
 **What still needs Matt / is deferred.** Resolving OD-3 (approving risk.yaml) is his act; the engine is built
 and tested, but the policy it consumes is not yet approved, so nothing may register or run for real. Deferred

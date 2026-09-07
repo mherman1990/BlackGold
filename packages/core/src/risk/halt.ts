@@ -8,13 +8,16 @@ import type { RiskConfig } from "../config/schema.ts";
  * This is the core risk safety property in code form, and every rule here is one CLAUDE.md states as
  * non-negotiable:
  *
- * - A drawdown, daily loss, stale critical input, expired authorization, unknown state, or severe incident
- *   lands the system in `HALT_NEW_RISK` (or `HOLD_ONLY`), never in an automatic liquidation. `automaticFlatten`
- *   is `false` by schema and this engine never returns `EMERGENCY_FLATTEN_AUTHORIZED` from a fault - that state
- *   is entered by the owner alone.
+ * - A drawdown, daily loss, stale critical input, expired authorization, or severe incident lands the system
+ *   in `HALT_NEW_RISK`, never in an automatic liquidation. `automaticFlatten` is `false` by schema and this
+ *   engine never returns `EMERGENCY_FLATTEN_AUTHORIZED` from a fault - that state is entered by the owner alone
+ *   and expires automatically at the end of its session (section 9.3).
+ * - Reconciliation, order-state, or broker uncertainty demands `HOLD_ONLY`, not merely `HALT_NEW_RISK`: nothing
+ *   may proceed against a book whose picture is not reconciled (sections 7 and 8).
  * - Transitions toward a MORE restrictive state are automatic; a transition toward a LESS restrictive one
- *   happens only on an explicit owner re-arm, and even then an active fault still binds (you cannot re-arm to
- *   NORMAL while the drawdown that halted you persists).
+ *   happens only on an explicit owner re-arm, is staged one step at a time (`HOLD_ONLY` -> `HALT_NEW_RISK` ->
+ *   `NORMAL`, section 9.2), and even then an active fault still binds (you cannot re-arm to NORMAL while the
+ *   drawdown that halted you persists).
  * - Unknown or unclassified state fails closed: absent portfolio numbers are treated as a fault, not as "all
  *   clear".
  *
@@ -29,6 +32,8 @@ export type RiskState = (typeof RISK_STATES)[number];
 /** Restrictiveness of the three fault-reachable states. `EMERGENCY_FLATTEN_AUTHORIZED` is owner-only and out of band. */
 const FAULT_RANK: Record<"NORMAL" | "HALT_NEW_RISK" | "HOLD_ONLY", number> = { NORMAL: 0, HALT_NEW_RISK: 1, HOLD_ONLY: 2 };
 type FaultState = keyof typeof FAULT_RANK;
+const BY_RANK: readonly FaultState[] = ["NORMAL", "HALT_NEW_RISK", "HOLD_ONLY"];
+const fromRank = (r: number): FaultState => BY_RANK[Math.min(Math.max(r, 0), BY_RANK.length - 1)] ?? "HOLD_ONLY";
 
 export type Fault = {
   code: string;
@@ -55,10 +60,22 @@ export type HaltInput = {
   /** Names of critical inputs that are stale or missing (e.g. `market_data`, `financial_picture`, `broker_auth`). */
   staleInputs?: readonly string[];
   incidents?: readonly IncidentSignal[];
+  /** Broker state cannot be trusted. Order/reconciliation uncertainty demands HOLD_ONLY, not merely HALT_NEW_RISK. */
   unknownBrokerState?: boolean;
+  /** A reconciliation break unresolved past one session (AUTOMATION_AND_LIVE_GATES section 8) -> HOLD_ONLY. */
+  reconciliationUnresolved?: boolean;
+  /** An order was submitted with no acknowledgement -> HOLD_ONLY until its state is resolved. */
+  uncertainOrderState?: boolean;
+  /** Core and gateway disagree on mode or halt state -> HOLD_ONLY (the more restrictive picture wins). */
+  coreGatewayDisagree?: boolean;
   authorizationExpired?: boolean;
   unapprovedVersionChange?: boolean;
-  /** An explicit owner action to relax the state. Even so, an active fault still binds. */
+  /** True when the owner-entered emergency-flatten authorization's session has ended; it then expires (section 9.3). */
+  emergencyFlattenExpired?: boolean;
+  /**
+   * An explicit owner action to relax the state. Relaxation is staged - at most one step less restrictive per
+   * re-arm (HOLD_ONLY -> HALT_NEW_RISK -> NORMAL; section 9.2) - and an active fault still binds.
+   */
   ownerReArm?: { to: FaultState; actor: string; at: UtcInstant } | undefined;
 };
 
@@ -109,13 +126,18 @@ function collectFaults(input: HaltInput): Fault[] {
   for (const name of input.staleInputs ?? []) {
     faults.push({ code: "STALE_INPUT", detail: `critical input '${name}' is stale or missing`, demands: "HALT_NEW_RISK" });
   }
-  if (input.unknownBrokerState === true) faults.push({ code: "UNKNOWN_BROKER_STATE", detail: "broker state is unknown; failing closed", demands: "HALT_NEW_RISK" });
+  // Broker, reconciliation, and order-state uncertainty demand HOLD_ONLY: nothing may proceed against a book
+  // whose picture is not reconciled (AUTOMATION_AND_LIVE_GATES.md 7 and 8).
+  if (input.unknownBrokerState === true) faults.push({ code: "UNKNOWN_BROKER_STATE", detail: "broker state is unknown; hold until reconciled", demands: "HOLD_ONLY" });
+  if (input.reconciliationUnresolved === true) faults.push({ code: "RECONCILIATION_UNRESOLVED", detail: "a reconciliation break is unresolved past one session", demands: "HOLD_ONLY" });
+  if (input.uncertainOrderState === true) faults.push({ code: "UNCERTAIN_ORDER_STATE", detail: "an order was submitted with no acknowledgement", demands: "HOLD_ONLY" });
+  if (input.coreGatewayDisagree === true) faults.push({ code: "CORE_GATEWAY_DISAGREE", detail: "core and gateway disagree on mode or halt state", demands: "HOLD_ONLY" });
   if (input.authorizationExpired === true) faults.push({ code: "AUTHORIZATION_EXPIRED", detail: "live authorization is expired or missing", demands: "HALT_NEW_RISK" });
   if (input.unapprovedVersionChange === true) faults.push({ code: "UNAPPROVED_VERSION_CHANGE", detail: "an unapproved version change was detected", demands: "HALT_NEW_RISK" });
   for (const inc of input.incidents ?? []) {
-    if (inc.severity === "high" || inc.severity === "critical") {
-      faults.push({ code: "SEVERE_INCIDENT", detail: `incident ${inc.id} at severity ${inc.severity}`, demands: "HALT_NEW_RISK" });
-    }
+    // "HALT_NEW_RISK or HOLD_ONLY per incident class" (section 8): a critical incident holds everything.
+    if (inc.severity === "critical") faults.push({ code: "SEVERE_INCIDENT", detail: `incident ${inc.id} at severity critical`, demands: "HOLD_ONLY" });
+    else if (inc.severity === "high") faults.push({ code: "SEVERE_INCIDENT", detail: `incident ${inc.id} at severity high`, demands: "HALT_NEW_RISK" });
   }
   return faults;
 }
@@ -130,12 +152,23 @@ export function evaluateHaltState(input: HaltInput): HaltDecision {
 
   let state: RiskState;
   if (input.current === "EMERGENCY_FLATTEN_AUTHORIZED") {
-    // Owner-controlled and session-expiring; the fault engine neither enters nor leaves it. Faults are still
-    // recorded so the ledger shows what was true while flattening.
-    state = "EMERGENCY_FLATTEN_AUTHORIZED";
+    if (input.emergencyFlattenExpired === true) {
+      // Scheduled expiry at session end (section 9.3): the owner state ends on its own and the system lands
+      // in at least HALT_NEW_RISK (mode drops to PAPER; re-entering live needs a fresh promotion review). A
+      // scheduled expiry is a legitimate automatic transition, not an owner re-arm.
+      state = moreRestrictive("HALT_NEW_RISK", faultFloor);
+    } else {
+      // Still authorized this session; the fault engine neither leaves nor deepens it. Faults are still
+      // recorded so the ledger shows what was true while flattening.
+      state = "EMERGENCY_FLATTEN_AUTHORIZED";
+    }
   } else if (input.ownerReArm !== undefined) {
-    // An owner may relax, but an active fault still binds: you cannot re-arm below what the faults demand.
-    state = moreRestrictive(input.ownerReArm.to, faultFloor);
+    // Relaxation is staged: an owner re-arm may reduce restrictiveness by at most one step (section 9.2), so a
+    // HOLD_ONLY cannot jump straight to NORMAL. And an active fault still binds, so a request below the fault
+    // floor is clamped up to it. `input.current` is one of the three fault states here.
+    const oneStepFloor = FAULT_RANK[input.current] - 1;
+    const requested = Math.max(FAULT_RANK[input.ownerReArm.to], oneStepFloor);
+    state = fromRank(Math.max(requested, FAULT_RANK[faultFloor]));
   } else {
     // No owner action: escalate to the fault floor if it is more restrictive, never relax below the current
     // state on our own. `input.current` is one of the three fault states here (EMERGENCY_FLATTEN is handled above).
