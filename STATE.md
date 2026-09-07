@@ -8,7 +8,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 
 | Item | Value |
 |---|---|
-| Phase | Discovery (PR #1), Phase 0 (PR #2), and Phase 1 (PR #3) open and green, awaiting Matt. Phase 1 research kernel complete in code and tests on `claude/phase-01-research-kernel`, stacked on Phase 0 (D-28); Codex review findings fixed (D-31) |
+| Phase | Discovery (PR #1) and Phase 0 (PR #2) merged to `main` at `bbc7077` on 2026-09-07. Phase 1 (PR #3) merged into the Phase 0 branch after that branch had already been merged forward, so `main` lacks Phase 1; [PR #4](https://github.com/mherman1990/BlackGold/pull/4) carries the identical reviewed tree to `main` (draft, awaiting Matt). Codex review findings fixed (D-31) |
 | Application code | `packages/shared`, `packages/core` (Phase 0 foundation plus Phase 1 data, market, universe, research modules), `packages/broker-gateway` |
 | Tests | 248 passing across 32 files: unit (shared, core, gateway), policy, and temporal projects; `npm run check` green locally |
 | Live trading | Absent by construction. Config loader and gateway both refuse `LIVE_MANUAL` and `LIVE_LIMITED`; CI asserts the image refuses them too |
@@ -26,8 +26,8 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 | `main` | Exists (bootstrap commit e7fc3d9). Matt must still set it as default branch and apply protection in GitHub settings |
 | PR #1 | Discovery Pack: `claude/black-gold-trading-tool-n713ly` into `main`. Open, awaiting Matt |
 | Phase 0 branch | `claude/phase-00-foundation`, stacked on the Discovery branch (D-26) |
-| Phase 0 PR | PR #2 against the Discovery branch: CI green, Codex findings fixed and resolved, mergeable. Retarget to `main` after PR #1 merges |
-| Phase 1 branch / PR | `claude/phase-01-research-kernel`, [PR #3](https://github.com/mherman1990/BlackGold/pull/3) against the Phase 0 branch: CI green at `e5c6a70`, seven Codex findings fixed and resolved, mergeable once PR #2 merges; retarget as the stack merges |
+| Phase 0 PR | PR #2 merged 2026-09-07 (into the Discovery branch, then to `main` via PR #1) |
+| Phase 1 branch / PR | `claude/phase-01-research-kernel`: PR #3 merged into the Phase 0 branch only (see Phase row); [PR #4](https://github.com/mherman1990/BlackGold/pull/4) to `main`, tree identical to the reviewed head `6119df5`, merge commit `7c21b73` brings `main` in with no history rewritten |
 | Branch protection | Not configured (needs Matt in GitHub UI) |
 | CI | `.github/workflows/ci.yml` green on PR #2 and PR #3 (checks + multi-arch image) |
 

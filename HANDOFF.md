@@ -17,7 +17,7 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 - PR #1 (Discovery Pack) is open against `main`, awaiting Matt.
 - PR #2 (Phase 0) is open against the Discovery branch, CI green, review findings resolved.
-- PR #3 (Phase 1 research kernel) is open against the Phase 0 branch (D-28): CI green, Codex findings fixed (D-31). 264 tests, all 16 temporal fixtures.
+- Discovery (PR #1) and Phase 0 (PR #2) are merged to `main`. PR #3 (Phase 1) merged into the Phase 0 branch after it had been merged forward, so `main` lacks Phase 1; PR #4 (draft) carries the identical reviewed tree to `main`. 264 tests, all 16 temporal fixtures. Next owner action: mark PR #4 ready and merge it.
 - `main` exists but is not yet the default branch and has no protection. Matt does that in GitHub settings.
 - No image has been published. No Umbrel install exists. No credential exists. No live data ingest has run.
 
@@ -27,7 +27,7 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 2. Review and merge PR #1. Then retarget the Phase 0 PR to `main` (GitHub offers this automatically) and review it. Watch its CI: the `image` job is the first multi-arch build of the Dockerfile.
 3. Before or after merging Phase 0, run the two hardware checks in `docs/PHASE0_REQUIREMENTS_MATRIX.md`: pull or build the image on the Pi and on the Windows Docker host, run `health` for both roles, and run `scripts/pi-benchmark.sh` on the Pi. Record results in the matrix.
 4. Answer the open facts: D-12 (sleeve account), D-16 (backup destination), D-04 port check on the Pi.
-5. Review and merge PR #3 after PR #2 (retarget each as the stack merges).
+5. Mark PR #4 ready and merge it; that puts Phase 1 on `main`. Delete the merged `claude/phase-00-foundation` and Discovery branches afterwards.
 6. Provide, when ready, the credentials the first live ingest needs: `BLACKGOLD_SEC_USER_AGENT_CONTACT` (an email), `BLACKGOLD_FRED_API_KEY`, `BLACKGOLD_ALPACA_KEY_ID` and `BLACKGOLD_ALPACA_SECRET_KEY` (paper keys work for data). They go into the Umbrel app environment or a local `.env`, never into git.
 7. Approve and freeze `strategies/etf-trend-vol/ALPHA_CHARTER.md` (fill the approval block; every PROPOSED number becomes frozen) and authorize Phase 2 explicitly.
 
