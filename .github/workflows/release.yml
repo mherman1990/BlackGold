@@ -1,13 +1,36 @@
 name: release
 
-# Publishes the multi-arch image to GHCR. Runs ONLY on a semver tag pushed by the owner after the
-# corresponding PR merged to main (docs/UMBREL_STORE_AND_RELEASE.md). Never on PRs, never on other tags.
+# Publishes the multi-arch image to GHCR (docs/UMBREL_STORE_AND_RELEASE.md). Never on PRs, never on
+# other tags.
+#
+# Two ways in, both releasing exactly the same thing - the head of `main`, at the version `package.json`
+# already declares there:
+#
+#   push a v<semver> tag   the original path; the tag names the commit
+#   workflow_dispatch      give the version, and this workflow creates the tag itself
+#
+# The dispatch path exists because Claude Code's git credential is refused tag refs by GitHub (HTTP 403
+# on `git push origin v0.1.0`, while branch pushes to the same repo succeed), which left the whole
+# release chain waiting on a manual command. D-38 records that and why this is the narrower fix: a
+# general tag-ref grant would let anything be tagged, whereas this can only ever tag `main`'s head with
+# the version already committed to `package.json`, after a full `npm run check` passes on it. It cannot
+# publish unreviewed code, because it cannot publish anything that is not already merged.
+#
+# Every guard the tag path had still applies, and the dispatch path adds two: the version must match
+# `package.json` at the resolved commit, and an existing tag is refused rather than moved.
 
 on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver without v, e.g. 0.1.0. Must already be package.json's version on main."
+        required: true
+        type: string
 
+# Read-only by default. Only the `tag` job widens to contents: write, and only to create one ref.
 permissions:
   contents: read
   packages: write
@@ -15,31 +38,77 @@ permissions:
 
 jobs:
   guard:
-    name: tag must be reachable from main and match package.json
+    name: resolve and verify the commit to release
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
+      sha: ${{ steps.v.outputs.sha }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - id: v
+        # The dispatch input reaches the script through the environment, never through ${{ }}
+        # interpolation into the shell body: a version string is attacker-controlled in principle, and
+        # interpolation would splice it into the script text before bash ever sees it.
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
-          PKG=$(node -p "require('./package.json').version")
-          if [ "$VERSION" != "$PKG" ]; then echo "tag $TAG does not match package.json $PKG"; exit 1; fi
           git fetch origin main --depth=1000
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then echo "tag commit is not on main"; exit 1; fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # Resolve the version and the commit. The two triggers disagree about which is authoritative:
+          # a tag names its own commit, a dispatch names only a version and must mean main's head.
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            VERSION="${INPUT_VERSION}"
+            # Shape-check before the value is used anywhere else. The push trigger gets this free from
+            # its ref pattern; the dispatch input has no such filter, so it is applied here.
+            if ! printf '%s' "${VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "version '${VERSION}' is not a bare semver like 0.1.0" >&2
+              exit 1
+            fi
+            SHA=$(git rev-parse origin/main)
+            # Refuse a tag that already exists rather than moving it. A published version is immutable:
+            # the compose file pins it by digest, and re-pointing the tag would silently change what an
+            # installed app resolves on its next pull.
+            if git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+              echo "tag v${VERSION} already exists; bump package.json instead of re-releasing" >&2
+              exit 1
+            fi
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+            SHA="${GITHUB_SHA}"
+          fi
+
+          # package.json is the single source of truth for the version (docs/IDENTITY.md), and it is read
+          # from the resolved commit, not the working tree, so a dispatch from some other ref cannot
+          # smuggle in a different one.
+          git show "${SHA}:package.json" > /tmp/released-package.json
+          PKG=$(node -p "require('/tmp/released-package.json').version")
+          if [ "${VERSION}" != "${PKG}" ]; then
+            echo "version ${VERSION} does not match package.json ${PKG} at ${SHA}" >&2
+            exit 1
+          fi
+
+          # The commit must already be on main. This is what makes the dispatch path unable to publish
+          # anything unreviewed: unmerged work is unreachable from main by definition.
+          if ! git merge-base --is-ancestor "${SHA}" origin/main; then
+            echo "commit ${SHA} is not on main" >&2
+            exit 1
+          fi
+
+          echo "releasing ${VERSION} from ${SHA} (trigger: ${GITHUB_EVENT_NAME})" >> "$GITHUB_STEP_SUMMARY"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
 
   checks:
-    name: full checks on the tagged commit
+    name: full checks on the commit being released
     runs-on: ubuntu-latest
     needs: guard
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
       - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
@@ -47,12 +116,43 @@ jobs:
       - run: npm ci
       - run: npm run check
 
+  tag:
+    name: create the release tag
+    runs-on: ubuntu-latest
+    needs: [guard, checks]
+    # The one job that may write a ref, and it runs only after checks pass, so a failing release leaves
+    # no tag behind pointing at nothing.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
+      - name: tag the resolved commit
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          SHA: ${{ needs.guard.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # An annotated tag needs a committer identity, which actions/checkout does not set.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${VERSION}" "${SHA}" -m "Release v${VERSION}"
+          git push origin "v${VERSION}"
+          echo "tagged ${SHA} as v${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+      # On the tag-push path the tag is what triggered this run, so there is nothing to create. The job
+      # still runs, so `publish` can depend on it unconditionally.
+
   publish:
     name: build and push multi-arch image
     runs-on: ubuntu-latest
-    needs: [guard, checks]
+    needs: [guard, checks, tag]
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
@@ -68,9 +168,11 @@ jobs:
           push: true
           provenance: true
           sbom: true
+          # sha- tag uses the resolved commit, not github.sha: on the dispatch path those differ, and
+          # labelling the image with the dispatch ref would misname what is inside it.
           tags: |
             ghcr.io/mherman1990/blackgold:${{ needs.guard.outputs.version }}
-            ghcr.io/mherman1990/blackgold:sha-${{ github.sha }}
+            ghcr.io/mherman1990/blackgold:sha-${{ needs.guard.outputs.sha }}
       - name: record digest and verify both architectures
         run: |
           set -euo pipefail

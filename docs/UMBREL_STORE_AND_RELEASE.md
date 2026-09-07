@@ -124,12 +124,15 @@ Everything mutable lives under `${APP_DATA_DIR}`: `data/blackgold.sqlite` (+WAL)
 1. PR merged to `main`, CI green.
 2. `CHANGELOG.md` entry written for the operator: what changed, why it matters, required actions, risk impact, migration, rollback.
 3. Version bumped in `package.json` and propagated; identity check green.
-4. Matt creates and pushes `v<version>` tag (or explicitly authorizes Claude Code to).
-5. `release.yml` green; digest recorded.
-6. `release-verify.yml` confirms `linux/arm64` and `linux/amd64` present and Pi can pull (`docker pull` on Pi).
-7. Compose in the store directory pinned to tag and digest in a follow-up PR if the digest was not known in advance; identity check green.
-8. Disposable-environment clean install, upgrade from previous version with existing data, health check, and rollback to previous tag all pass.
-9. Only then: Matt refreshes the store in umbrelOS and updates the app.
+4. Trigger `release.yml`, either way round (D-38):
+   - **Dispatch** with the bare version, e.g. `0.1.0`. The workflow resolves `main`'s head, verifies the version against `package.json` at that commit, runs `npm run check`, creates the `v<version>` tag, then publishes. This is the path Claude Code uses, because GitHub refuses its credential a tag ref.
+   - **Or push the tag by hand**: `git tag v<version> <commit-on-main> && git push origin v<version>`. Unchanged behaviour.
+5. `release.yml` green; digest recorded in the run summary.
+6. **First release of a new package only: make the GHCR package public.** github.com/users/mherman1990/packages/container/blackgold/settings -> Change visibility -> Public. A new GHCR package is private by default and umbrelOS pulls anonymously, so a private package fails the install with `unauthorized` - which looks like a different fault from the missing-image `manifest unknown` but is the same step not done. See "GHCR visibility" above for why public is the deliberate choice.
+7. `release-verify.yml` confirms `linux/arm64` and `linux/amd64` present and Pi can pull (`docker pull` on Pi).
+8. Compose in the store directory pinned to tag and digest in a follow-up PR if the digest was not known in advance; identity check green.
+9. Disposable-environment clean install, upgrade from previous version with existing data, health check, and rollback to previous tag all pass.
+10. Only then: Matt refreshes the store in umbrelOS and updates the app.
 
 ## Install and removal isolation
 

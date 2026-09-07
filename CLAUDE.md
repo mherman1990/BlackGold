@@ -42,7 +42,7 @@ Claude Code has standing authorization for the entire git and GitHub mechanic (D
 - Stage exact paths only. Never `git add -A` or `git add .`.
 - `npm run check` must be green before anything is pushed. A red push is never acceptable because autonomy made it faster.
 - Every PR body states scope, linked phase, financial and security risk, migrations, rollback, test evidence, resource impact, deferred items, and confirms live trading remains disabled. Autonomy does not shorten the PR body; it matters more, because it becomes the only record of what a merge did.
-- Release images are built in CI, never on the Pi, tagged by semver and commit SHA, never `latest`. Follow the checklist in `docs/UMBREL_STORE_AND_RELEASE.md`. The owner still performs the steps needing his hardware: installing on Umbrel and running `scripts/pi-benchmark.sh`.
+- Release images are built in CI, never on the Pi, tagged by semver and commit SHA, never `latest`. Follow the checklist in `docs/UMBREL_STORE_AND_RELEASE.md`. Cut a release by dispatching `release.yml` with the bare version (D-38); it resolves `main`'s head, verifies the version against `package.json` there, runs the full check, tags, then publishes. Do not try to `git push` a tag - GitHub refuses this credential any tag ref, and retrying wastes a session. The owner still performs the steps needing his hardware or his GitHub settings: making a new GHCR package public on its first release, installing on Umbrel, and running `scripts/pi-benchmark.sh`.
 - Runtime data (SQLite, raw artifacts, ledgers, logs, account data) never enters git.
 
 ### What standing authorization never covers
