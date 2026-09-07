@@ -69,6 +69,24 @@ const Universe = z.strictObject({
   survivorship_note: z.string().min(1),
 });
 
+/** A factor tag: lowercase snake_case, e.g. `market`, `value`, `sector_technology`. */
+const factorTag = z.string().regex(/^[a-z][a-z0-9_]*$/, "factor tags are lowercase snake_case");
+
+/**
+ * Deterministic factor classification for the universe (docs/PRODUCT_SPEC.md sections 6 and 11).
+ *
+ * The Analyst declares a `factorsTouched` set; code independently classifies each candidate and rejects a
+ * mismatch (threat model T-05 - the model's own claim never becomes the authority). These assignments are that
+ * independent authority, so they live in the charter and are covered by its hash: a change is a new strategy
+ * version, exactly like any other data transform (`CLAUDE.md`). `taxonomy` is the closed vocabulary; every tag
+ * in `assignments` must be drawn from it. A candidate with no assignment is *unclassified*, which fails closed
+ * ("unknown factor classification blocks new risk", spec section 11) rather than defaulting to no exposure.
+ */
+const Factors = z.strictObject({
+  taxonomy: z.array(factorTag).min(1),
+  assignments: z.record(z.string(), z.array(factorTag)),
+});
+
 const Features = z.strictObject({
   momentum_lookback_sessions: z.int().min(2),
   momentum_skip_sessions: z.int().min(0),
@@ -183,6 +201,8 @@ export const CharterSchema = z.strictObject({
     regular_session_only: z.literal(true),
     max_gross_exposure: ratioString,
   }),
+  /** Optional today; when present it is the code-side authority the model's `factorsTouched` is checked against. */
+  factors: Factors.optional(),
   features: Features,
   rules: Rules,
   sizing: Sizing,
@@ -243,6 +263,16 @@ function structuralIssues(c: Charter): string[] {
   for (const cl of c.sizing.clusters) {
     for (const m of cl.members) if (!risk.has(m)) issues.push(`sizing.clusters.${cl.id} member ${m} is not in risk_etfs`);
     if (cl.max_members >= cl.members.length) issues.push(`sizing.clusters.${cl.id}.max_members ${cl.max_members} does not constrain a ${cl.members.length}-member cluster`);
+  }
+  if (c.factors) {
+    const taxonomy = new Set(c.factors.taxonomy);
+    if (taxonomy.size !== c.factors.taxonomy.length) issues.push("factors.taxonomy has duplicate tags");
+    const members = new Set([...c.universe.risk_etfs, c.universe.cash_etf]);
+    for (const [sym, tags] of Object.entries(c.factors.assignments)) {
+      if (!members.has(sym)) issues.push(`factors.assignments.${sym} is not a universe member (risk_etfs or cash_etf)`);
+      for (const t of tags) if (!taxonomy.has(t)) issues.push(`factors.assignments.${sym} tag ${t} is not in factors.taxonomy`);
+      if (new Set(tags).size !== tags.length) issues.push(`factors.assignments.${sym} lists a factor tag twice`);
+    }
   }
   const b = c.boundaries;
   if (b.design.start < b.registered_history_start) issues.push("boundaries.design.start precedes registered_history_start");

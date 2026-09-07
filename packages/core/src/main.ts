@@ -20,6 +20,7 @@ import { ArtifactStore } from "./data/artifacts/store.ts";
 import { PointInTimeRepository } from "./data/pit/repository.ts";
 import { INGEST_USAGE, parseIngestArgs, parseOptions, runIngest, UsageError } from "./ingest/run.ts";
 import { admittedRiskEtfs, charterUniverseMembers, loadCharterFile, registrabilityReasons } from "./strategy/charter.ts";
+import { classifyCandidateFactors } from "./strategy/factors.ts";
 import { splitPlan } from "./research/walkforward.ts";
 import { enumerateGrid, enumerateTiers } from "./research/robustness.ts";
 import { buildCoverageReport } from "./research/coverage.ts";
@@ -58,8 +59,9 @@ Phase 2 research (deterministic charters only; computes nothing that a DRAFT cha
 
 Phase 3 runtime-LLM analyst (requires ANTHROPIC_API_KEY in the environment; abstains fail-closed without it):
   research analyst --manifest <model-manifest.yaml> --model <id> --candidate <SYMBOL> --at <iso-instant>
-                   --sources <sourceId[:entityId],...> [--factors <name,...>] [--mode historical]
-                                            One analyst decision: seal a point-in-time packet, assess, archive the call
+                   --sources <sourceId[:entityId],...> --charter <charter.yaml> [--mode historical]
+                                            One analyst decision: seal a point-in-time packet, assess, archive the call.
+                                            Factors are classified deterministically from the charter; an unclassified candidate is refused
 
 Configuration comes from BLACKGOLD_* environment variables (see config/schema/README.md).`;
 
@@ -242,7 +244,7 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
       if (sub === "analyst") {
         const o = parseOptions(rest, {
           manifest: { type: "string" }, model: { type: "string" }, candidate: { type: "string" }, at: { type: "string" },
-          sources: { type: "string" }, factors: { type: "string" }, "strategy-id": { type: "string" },
+          sources: { type: "string" }, charter: { type: "string" }, "strategy-id": { type: "string" },
           "strategy-version": { type: "string" }, "prompt-version": { type: "string" }, mode: { type: "string" },
         });
         const manifest = o["manifest"];
@@ -250,8 +252,16 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
         const candidate = o["candidate"];
         const at = o["at"];
         const sourcesCsv = o["sources"];
-        if (typeof manifest !== "string" || typeof modelId !== "string" || typeof candidate !== "string" || typeof at !== "string" || typeof sourcesCsv !== "string") {
-          throw new UsageError("research analyst requires --manifest <path> --model <id> --candidate <SYMBOL> --at <iso-instant> --sources <sourceId[:entityId],...>");
+        const charterPath = o["charter"];
+        if (typeof manifest !== "string" || typeof modelId !== "string" || typeof candidate !== "string" || typeof at !== "string" || typeof sourcesCsv !== "string" || typeof charterPath !== "string") {
+          throw new UsageError("research analyst requires --manifest <path> --model <id> --candidate <SYMBOL> --at <iso-instant> --sources <sourceId[:entityId],...> --charter <charter.yaml>");
+        }
+        // Code, not the operator, decides which factors the candidate touches (T-05). An unknown classification
+        // fails closed: no model call is made, matching "unknown factor classification blocks new risk".
+        const loadedCharter = loadCharterFile(charterPath);
+        const classification = classifyCandidateFactors(loadedCharter.charter, candidate);
+        if (!classification.classified) {
+          return { exitCode: 2, output: `Candidate ${candidate} has no deterministic factor classification in ${charterPath}; unknown factor classification blocks new risk. Assign its factors in the charter (a new charter version) before assessing it.` };
         }
         const key = readAnthropicApiKey();
         if (key === undefined) {
@@ -263,7 +273,7 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
           const [sourceId, entityId] = s.split(":");
           return entityId !== undefined && entityId !== "" ? { sourceId: sourceId ?? s, entityId } : { sourceId: sourceId ?? s };
         });
-        const factors = new Set((typeof o["factors"] === "string" ? o["factors"] : "").split(",").map((s) => s.trim()).filter((s) => s !== ""));
+        const factors = classification.factors;
         const runMode = o["mode"] === "historical" ? "HISTORICAL_REPLAY" : "PROSPECTIVE";
         mkdirSync(config.dataDir, { recursive: true });
         const { db } = openCoreDb(config);
@@ -276,8 +286,8 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
             pricing: pricingFrom(entry),
             budgets: { perCallUsd: new Dec(config.budgets.llmPerCallUsd), perDayUsd: new Dec(config.budgets.llmPerDayUsd), perMonthUsd: new Dec(config.budgets.llmPerMonthUsd) },
             now,
-            strategyId: typeof o["strategy-id"] === "string" ? o["strategy-id"] : "adhoc",
-            strategyVersion: typeof o["strategy-version"] === "string" ? o["strategy-version"] : "adhoc",
+            strategyId: typeof o["strategy-id"] === "string" ? o["strategy-id"] : loadedCharter.charter.strategy_id,
+            strategyVersion: typeof o["strategy-version"] === "string" ? o["strategy-version"] : loadedCharter.charter.charter_version,
             candidateId: candidate,
             decisionAt: utc(at),
             sources,
