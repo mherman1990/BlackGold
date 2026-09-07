@@ -1,8 +1,9 @@
 import { statSync, statfsSync } from "node:fs";
-import { integrityCheck, isLiveMode, type ChainVerdict, type Db, type IsoDate, type Mode, type UtcInstant } from "@blackgold/shared";
+import { isLiveMode, type ChainVerdict, type Db, type IsoDate, type Mode, type UtcInstant } from "@blackgold/shared";
 import type { AppConfig } from "../config/schema.ts";
 import type { ExchangeCalendar } from "../calendar/types.ts";
 import { Ledger, sealThroughDate, type LedgerSeal } from "../ledger/ledger.ts";
+import { FULL_VERIFICATION_STALE_MS, readLastFullVerification, type FullVerification } from "./integrity.ts";
 import { CORE_VERSION } from "../version.ts";
 
 export type HealthCheck = { component: string; ok: boolean; detail: string };
@@ -14,8 +15,12 @@ export type HealthReport = {
   /** Hard-coded false: this build contains no live trading path. */
   liveCapable: false;
   at: UtcInstant;
+  /** DB integrity as of the last full verification (moved off the hot path); pending until the first run. */
   dbIntegrity: { ok: boolean; messages: string[] };
+  /** Hot-path verdict: the unsealed tail only (`Ledger.verifyChainSinceLastSeal`). The frozen prefix is covered by `lastFullVerification`. */
   ledgerChain: ChainVerdict;
+  /** Last scheduled/startup full verification (whole chain + seals + DB integrity), or null before the first run. */
+  lastFullVerification: FullVerification | null;
   ledgerEvents: number;
   lastSeal: LedgerSeal | null;
   /** UTC days with events, older than the seal grace window, that carry no seal. Empty when sealing is current. */
@@ -31,19 +36,39 @@ const WAL_WARN_BYTES = 256 * 1024 * 1024;
 
 export function runHealth(config: AppConfig, db: Db, calendar: ExchangeCalendar, now: UtcInstant): HealthReport {
   const checks: HealthCheck[] = [];
-  const dbIntegrity = integrityCheck(db);
-  checks.push({ component: "db_integrity", ok: dbIntegrity.ok, detail: dbIntegrity.messages.join("; ") });
-
   const ledger = new Ledger(db);
-  const ledgerChain = ledger.verifyChain();
+
+  // Hot path: verify only the unsealed tail. The full chain + seals + DB integrity_check are O(store size) and
+  // this probe runs on every request (the container healthcheck every 60 s), which becomes a restart-loop-class
+  // cost at volume (HANDOFF.md §7). The full suite runs on a schedule and at serve() startup and is reported
+  // below via `lastFullVerification`; a tamper in the sealed prefix is still caught there, only less often.
+  const ledgerChain = ledger.verifyChainSinceLastSeal();
   const ledgerEvents = ledger.count();
   checks.push({
     component: "ledger_chain",
     ok: ledgerChain.ok,
-    detail: ledgerChain.ok ? `${ledgerEvents} events` : `broken at seq ${ledgerChain.brokenAt}: ${ledgerChain.reason}`,
+    detail: ledgerChain.ok ? `${ledgerEvents} events; unsealed tail intact` : `broken at seq ${ledgerChain.brokenAt}: ${ledgerChain.reason}`,
   });
-  const seals = ledger.verifySeals();
-  checks.push({ component: "ledger_seals", ok: seals.ok, detail: seals.ok ? "all seals match" : `mismatch: ${seals.mismatches.join(",")}` });
+
+  const lastFull = readLastFullVerification(db);
+  const fullStale = lastFull !== null && Date.parse(now) - Date.parse(lastFull.at) > FULL_VERIFICATION_STALE_MS;
+  // A genuine recorded failure stays fatal to the probe, exactly as the inline full check was before this
+  // split. A missing record (fresh install, before the first run) or a stale one (the job stopped) is
+  // reported but not fatal: failing the container probe on it would restart-loop the app rather than surface
+  // the problem - the same reasoning the seal-backlog check documents below. The unsealed tail, which is the
+  // live "new risk" surface, is still checked fatally above.
+  checks.push({
+    component: "full_verification",
+    ok: lastFull === null ? true : lastFull.ok,
+    detail:
+      lastFull === null
+        ? "no full verification recorded yet (runs at startup and daily)"
+        : `${lastFull.ok ? "clear" : "FAILED"} at ${lastFull.at}${fullStale ? " (stale)" : ""}: ${lastFull.detail}`,
+  });
+  const dbIntegrity =
+    lastFull === null
+      ? { ok: true, messages: ["no full verification recorded yet"] }
+      : { ok: lastFull.integrityOk, messages: [`db integrity from full verification at ${lastFull.at}`] };
   const lastSeal = ledger.latestSeal() ?? null;
 
   // Whether sealing is keeping up. Without this, a seal job failing every night leaves unsealed days piling
@@ -92,6 +117,7 @@ export function runHealth(config: AppConfig, db: Db, calendar: ExchangeCalendar,
     at: now,
     dbIntegrity,
     ledgerChain,
+    lastFullVerification: lastFull,
     ledgerEvents,
     lastSeal,
     unsealedDays: unsealed,

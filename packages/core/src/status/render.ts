@@ -47,7 +47,15 @@ export function renderStatusPage(r: StatusReport): string {
   ])}
   ${card("Ledger", [
     kv("Events", num(h.ledgerEvents)),
-    kv("Hash chain", h.ledgerChain.ok ? pill("intact", "good") : pill(`broken at ${String(h.ledgerChain.brokenAt)}`, "bad")),
+    kv("Hash chain (tail)", h.ledgerChain.ok ? pill("intact", "good") : pill(`broken at ${String(h.ledgerChain.brokenAt)}`, "bad")),
+    kv(
+      "Full verification",
+      h.lastFullVerification === null
+        ? muted("pending")
+        : h.lastFullVerification.ok
+          ? `${pill("clear", "good")} <span class="dim">${esc(h.lastFullVerification.at)}</span>`
+          : pill("failed", "bad"),
+    ),
     kv(
       "Last daily seal",
       h.lastSeal
