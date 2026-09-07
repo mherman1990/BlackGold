@@ -53,6 +53,16 @@ export type AsOfResult<T = unknown> = {
   processingDelayMs: number;
 };
 
+/**
+ * The read surface a research or feature layer is allowed. Deliberately narrower than
+ * `PointInTimeRepository`: it carries `asOf` and nothing that writes, so a decision path typed against it
+ * cannot append an observation, create a snapshot, or reach a raw table. The leakage auditor implements it
+ * too, which is how an audited repository substitutes for a plain one.
+ */
+export interface ReadOnlyPointInTime {
+  asOf<T = unknown>(query: AsOfQuery): AsOfResult<T>;
+}
+
 export type Snapshot = {
   snapshotId: string;
   dataset: string;

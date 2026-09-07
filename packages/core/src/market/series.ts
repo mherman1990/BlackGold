@@ -1,6 +1,6 @@
 import { addDays, Dec, ONE, ZERO, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import type { ExchangeCalendar } from "../calendar/types.ts";
-import type { PointInTimeRepository } from "../data/pit/repository.ts";
+import type { ReadOnlyPointInTime } from "../data/pit/types.ts";
 import { corporateActionFromValue, corporateActionSourceId, rawBarFromValue, type CorporateAction, type RawBar } from "./types.ts";
 
 /**
@@ -34,7 +34,7 @@ export type RawSeriesResult = {
 };
 
 export type RawSeriesQuery = {
-  pit: PointInTimeRepository;
+  pit: ReadOnlyPointInTime;
   entityId: string;
   from: IsoDate;
   to: IsoDate;
