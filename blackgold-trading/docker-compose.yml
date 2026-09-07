@@ -24,6 +24,10 @@ services:
       BLACKGOLD_DATA_DIR: /data
       BLACKGOLD_HTTP_PORT: "8479"
       TZ: UTC
+      # Model-provider API key for the research LLM overlay. Passed through from the app environment on the Pi
+      # (a gitignored secrets file, never this repo, never the image). Empty default so a missing key does not
+      # break startup: with no key the analyst simply abstains. Not a broker credential and cannot trade.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - ${APP_DATA_DIR}/data:/data
     healthcheck:
