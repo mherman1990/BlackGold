@@ -45,6 +45,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-37 | Claude Code has standing authorization for the whole git and GitHub mechanic, including merging its own PRs to `main` and tagging releases. Charter approval, holdout opening, promotion-evidence claims, and anything live remain the owner's alone | Accepted 2026-09-07 by Matt | Supersedes the per-action authorization rule in the original git protocol |
 | D-38 | `release.yml` also accepts `workflow_dispatch` with a version, and creates the `v<version>` tag itself after checks pass. Claude Code releases through that instead of a tag push, because GitHub refuses its credential any tag ref | Accepted 2026-09-07 by Matt, who asked for the capability directly | Makes D-37's tagging grant actually usable; narrower than a general tag-ref permission |
 | D-39 | The `etf-trend-vol` charter's four open decisions resolved and the XLE condition settled: look-through applies and XLE is excluded (12-ETF risk universe), BIL is the cash instrument, `risk.yaml` defaults approved as written with ADV participation at 1%, and Alpaca free/IEX approved as the market-data source | Accepted 2026-09-07 by Matt | Removes four of the nine blockers on charter registration; the approval block remains unsigned and is his alone |
+| D-40 | Granary (separate product `mherman1990/Granary`) owns the household / personal-finance / capital-allocation layer and sits above Black Gold in the hierarchy, reading Black Gold data read-only. Black Gold takes no dependency on Granary and stops growing an in-house household planner | **Proposed** 2026-09-07 by Claude Code | Phase 4 (household scope) |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -390,6 +391,26 @@ It does not approve the charter. Four of the nine registration blockers are clea
 the approval block itself - `state`, `approved_by`, `approval_date`, `code_commit`, `approval_ref` - and
 signing it is the owner's act. `assertRegistrable` still refuses this charter, correctly.
 
+
+---
+
+## D-40 Granary owns the household layer; Black Gold is a read-only source to it
+
+**Status:** Proposed 2026-09-07 by Claude Code, recording Matt's decision to build the personal-finance / household layer as a separate product rather than inside Black Gold. Matt must accept, replace, or reject before any Phase 4 household work proceeds.
+
+**Context.** The original plan put the household picture inside Black Gold: Phase 4 delivers a "schema-validated financial picture and read-only CSV import" with household-allocation and exposure modelling (D-12 sleeve account, D-20 household coverage, `config/examples/financial-picture.yaml`). Matt has since decided to build that layer as **Granary** (`mherman1990/Granary`), a separate, private, local-first household planning workspace that sits *above* Black Gold in the hierarchy and will eventually bring in data *from* Black Gold. Granary is its own Umbrel app (`granary`, port 3000) with its own repo, phases, and isolation rules; it currently forbids any real Black Gold connection and treats integration as a future, separately gated step.
+
+**Decision (proposed).**
+
+1. **Direction is one-way and, from Black Gold's side, outbound-only.** Granary reads Black Gold; Black Gold never reads or depends on Granary. No Granary identifier, port, path, image, credential, schema, or line of code enters this repository - the same "this repository contains Black Gold only" rule that already governs it, and the mirror of Granary's own isolation rule. Identifiers are already disjoint and stay that way: Black Gold is `blackgold-trading` on 8479, Granary is `granary` on 3000; no shared volume, secret, port, release, or Umbrel identity.
+
+2. **Black Gold's non-negotiable boundaries are unchanged and now also serve as this integration's safety guarantee.** No inbound connector to any nonpublic, household, or professional source may exist in code; household dollar totals never reach a model or a notification; no money-movement code exists. Granary consuming Black Gold adds no inbound path and must never be allowed to, so the risk sits entirely on Granary's side of the boundary, where its own rules already place it.
+
+3. **Black Gold stops growing an in-house household planner.** The Phase 4 household scope (D-20 CSV import, household-allocation modelling) shrinks to the minimum Black Gold's own deterministic gates actually need - the sleeve-as-a-share-of-liquid-assets check (D-15), restricted-theme and career-conflict flags (D-14), and exposure staleness - and even those inputs may ultimately be supplied by Granary as a read-only import rather than maintained here. What Black Gold must not do is become the household book of record. Granary is.
+
+4. **If and when Granary consumes Black Gold, it does so through a read-only export Black Gold already trends toward** - point-in-time snapshots, the content-addressed artifact store, the read-only status page on 8479, and sealed ledger roots - carrying sleeve NAV, positions, per-arm decisions, and halt/incident state, and never credentials, orders, or any mutation method. Designing that export contract is Phase 4/5 work, not now.
+
+**What this does not do.** It authorizes no code change, starts no phase, and grants Granary no access. It records the hierarchy so a future Black Gold session neither rebuilds the household layer here nor takes a dependency on Granary. The two decisions it unblocks - the exact read-only export contract, and whether `config/examples/financial-picture.yaml` stays a minimal local risk-gate input or is eventually fed from Granary - are Matt's to make when Phase 4 is authorized.
 
 ---
 
