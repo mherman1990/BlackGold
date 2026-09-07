@@ -1,0 +1,33 @@
+# Model capability manifest (docs/PRODUCT_SPEC.md section 6; D-11, MP-02).
+# Model IDs live here, never in code. Each strategy version pins one snapshot; a provider-side upgrade is a
+# new strategy version. `checkedAt` dates the pricing/capability verification; staleness beyond
+# risk.staleness.modelConfigMaxAgeDays fails closed. Prices are per MILLION tokens, decimal strings.
+# Schema: config/schema/model-manifest.schema.json
+models:
+  - provider: anthropic
+    modelId: claude-haiku-4-5
+    tier: fast
+    structuredOutput: true
+    promptCaching: true
+    batch: { supported: true, completionWindowHours: 24 }
+    contextTokens: 200000
+    pricing:
+      inputPerMTokUsd: "1.00"
+      outputPerMTokUsd: "5.00"
+      cachedInputPerMTokUsd: "0.10"
+      checkedAt: "2026-09-07"
+    registeredTasks: [extraction, triage]
+
+  - provider: anthropic
+    modelId: claude-sonnet-5
+    tier: synthesis
+    structuredOutput: true
+    promptCaching: true
+    batch: { supported: true, completionWindowHours: 24 }
+    contextTokens: 200000
+    pricing:
+      inputPerMTokUsd: "3.00"
+      outputPerMTokUsd: "15.00"
+      cachedInputPerMTokUsd: "0.30"
+      checkedAt: "2026-09-07"
+    registeredTasks: [synthesis]

@@ -379,6 +379,41 @@ export const LiveAuthorizationSchema = z.object({
 
 export type LiveAuthorization = z.output<typeof LiveAuthorizationSchema>;
 
+// ---------------------------------------------------------------------------------------------
+// ModelManifestConfig (the capability manifest; model IDs live here, never in code - D-11, MP-02)
+// ---------------------------------------------------------------------------------------------
+
+export const ModelTiers = ["fast", "synthesis", "premium"] as const;
+export const ModelTasks = ["extraction", "triage", "synthesis"] as const;
+
+const ModelEntrySchema = z.object({
+  provider: z.string().min(1),
+  /** The exact model snapshot id, pinned per strategy version. A provider-side upgrade is a new version. */
+  modelId: z.string().min(1),
+  tier: z.enum(ModelTiers),
+  structuredOutput: z.boolean(),
+  promptCaching: z.boolean(),
+  batch: z.object({ supported: z.boolean(), completionWindowHours: z.number().int().positive() }),
+  contextTokens: z.number().int().positive(),
+  pricing: z.object({
+    inputPerMTokUsd: decString,
+    outputPerMTokUsd: decString,
+    cachedInputPerMTokUsd: decString,
+    /** The date this pricing and these capabilities were verified. Staleness fails closed (modelConfigMaxAgeDays). */
+    checkedAt: isoDateString,
+  }),
+  registeredTasks: z.array(z.enum(ModelTasks)).min(1),
+});
+
+export const ModelManifestConfigSchema = z
+  .object({
+    models: z.array(ModelEntrySchema).min(1),
+  })
+  .refine((m) => new Set(m.models.map((e) => e.modelId)).size === m.models.length, "model ids must be unique");
+
+export type ModelEntry = z.output<typeof ModelEntrySchema>;
+export type ModelManifestConfig = z.output<typeof ModelManifestConfigSchema>;
+
 /** Every config schema by file name, for JSON Schema emission and documentation. */
 export const CONFIG_SCHEMAS = {
   app: AppConfigSchema,
@@ -386,6 +421,7 @@ export const CONFIG_SCHEMAS = {
   "financial-picture": FinancialPictureConfigSchema,
   "restricted-list": RestrictedListConfigSchema,
   "live-authorization": LiveAuthorizationSchema,
+  "model-manifest": ModelManifestConfigSchema,
 } as const;
 
 /**

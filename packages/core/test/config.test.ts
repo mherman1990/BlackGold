@@ -11,6 +11,7 @@ import {
   FinancialPictureConfigSchema,
   RestrictedListConfigSchema,
   LiveAuthorizationSchema,
+  ModelManifestConfigSchema,
   processingDelayOverridesMs,
 } from "../src/index.ts";
 import { LIVE_MODES, MODES } from "@blackgold/shared";
@@ -77,8 +78,13 @@ describe("example YAML configs parse against their schemas", () => {
   it("LIVE_AUTHORIZATION.example.yaml parses but is only a schema in Phase 0", () => {
     expect(() => parseYamlConfig(example("LIVE_AUTHORIZATION.example.yaml"), LiveAuthorizationSchema)).not.toThrow();
   });
+  it("model-manifest.yaml parses and pins model ids in config, not code", () => {
+    const m = parseYamlConfig(example("model-manifest.yaml"), ModelManifestConfigSchema, "model-manifest.yaml");
+    expect(m.models.length).toBeGreaterThan(0);
+    expect(m.models.every((e) => e.modelId.length > 0)).toBe(true);
+  });
   it("no example contains a dollar total or a credential-shaped string", () => {
-    for (const f of ["risk.yaml", "financial-picture.yaml", "restricted-list.yaml", "LIVE_AUTHORIZATION.example.yaml", "app.env.example"]) {
+    for (const f of ["risk.yaml", "financial-picture.yaml", "restricted-list.yaml", "LIVE_AUTHORIZATION.example.yaml", "app.env.example", "model-manifest.yaml"]) {
       const text = example(f);
       expect(text, f).not.toMatch(/\$\s?\d{1,3}(,\d{3})+/);
       expect(text, f).not.toMatch(/sk-ant-|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,}/);
