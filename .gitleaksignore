@@ -1,0 +1,7 @@
+# Gitleaks fingerprints (commit:path:rule:line) suppressed in CI's full-history scan.
+# Each entry must name a specific historical commit, never a path or rule wholesale.
+# The repository's own scanner (npm run check:secrets) still covers every tracked file.
+#
+# Synthetic Alpaca paging cursor in a recorded fixture. It was a base64 page token,
+# not a credential, and the fixture now uses an obviously fake string.
+cdfcc9502cdd1e980e89e802d0c9a6326f057e4d:test/fixtures/alpaca/bars-1d-page1.json:generic-api-key:9

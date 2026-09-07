@@ -14,10 +14,11 @@ function trackedSource(): string[] {
 }
 
 describe("live trading is absent by construction (Phase 0)", () => {
-  it("no real broker SDK, broker host, or model provider SDK is referenced in source", () => {
+  it("no real broker SDK, broker trading host, or model provider SDK is referenced in source", () => {
+    // data.alpaca.markets (market data, read-only) is an allowlisted public source; the TRADING hosts are not.
     const forbidden = [
       /@alpacahq\//,
-      /alpaca\.markets/,
+      /(?:^|[^.\w])api\.alpaca\.markets|paper-api\.alpaca\.markets|broker-api\.alpaca\.markets/,
       /schwabapi|api\.schwab(?:api)?\.com|developer\.schwab\.com/,
       /robinhood/i,
       /@anthropic-ai\/sdk/,
@@ -32,16 +33,20 @@ describe("live trading is absent by construction (Phase 0)", () => {
     expect(hits).toEqual([]);
   });
 
-  it("no outbound network call exists in package source", () => {
+  it("outbound HTTP exists only in the single allowlisted egress module", () => {
+    const EGRESS = "packages/core/src/data/http.ts";
     const hits: string[] = [];
-    for (const f of trackedSource().filter((p) => p.startsWith("packages/") && p.includes("/src/"))) {
+    for (const f of trackedSource().filter((p) => p.startsWith("packages/") && p.includes("/src/") && p !== EGRESS)) {
       const text = readFileSync(`${ROOT}/${f}`, "utf8");
       if (/\bfetch\s*\(/.test(text) || /from\s+"node:https?"/.test(text) || /from\s+"undici"/.test(text)) {
         // The core `serve` command may run a LOCAL http server (node:http listen), which is allowed; outbound requests are not.
-        if (!text.includes('createServer') || /\bfetch\s*\(/.test(text) || /\.request\s*\(/.test(text)) hits.push(f);
+        if (!text.includes("createServer") || /\bfetch\s*\(/.test(text) || /\.request\s*\(/.test(text)) hits.push(f);
       }
     }
     expect(hits).toEqual([]);
+    const egress = readFileSync(`${ROOT}/${EGRESS}`, "utf8");
+    expect(egress).toMatch(/allowlist/);
+    expect(egress).not.toMatch(/method:\s*"(POST|PUT|DELETE|PATCH)"/);
   });
 
   it("no dependency on a broker or model provider package is declared", () => {
