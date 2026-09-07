@@ -39,5 +39,7 @@ Status values: `implemented`, `tested`, `deferred`, `blocked`, `not applicable`.
 |---|---|---|
 | 2026-09-07 | `npm run check` (final Phase 1 tree) | lint clean; typecheck clean; 32 test files, 248 tests passed (unit 214, policy 16, temporal 18); identity check ok; secret scan ok over 192 tracked files |
 | 2026-09-07 | committed adapter tree verified alone in a clean worktree | tsc clean; 90 core tests passed |
-| pending | `ci.yml` on the Phase 1 PR | records here after the run |
+| 2026-09-07 | `ci.yml` run 24 on PR #3 head `01f4d1d` | checks job red: gitleaks (full-history, pull_request event) flagged the synthetic Alpaca `next_page_token` in `test/fixtures/alpaca/bars-1d-page1.json` (commit `cdfcc95`) as `generic-api-key`; lint, typecheck, 248 tests, identity, and secret scan all passed. Push-event run 23 on the same commit was green because it scans only the tip |
+| 2026-09-07 | gitleaks 8.24.3 locally, same range as CI (`--no-merges --first-parent <merge-base>..HEAD`) | reproduced the finding; `.gitleaksignore` fingerprint clears it (`no leaks found` on the range and on the working tree). The plural `[[allowlists]]` table is not honoured by 8.24.3, so the fingerprint file is used instead of a `.gitleaks.toml` |
+| pending | `ci.yml` on the fixed head | records here after the run |
 | not run | live ingest against SEC, FRED, CFTC, Alpaca | needs credentials from Matt; adapters are fixture-tested only (Phase 5 first live ingest) |

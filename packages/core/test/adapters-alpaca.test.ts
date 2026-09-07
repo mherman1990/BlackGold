@@ -65,7 +65,7 @@ describe("Alpaca IEX daily bars parser", () => {
       providerTimestamp: "2026-09-15T04:00:00.000Z",
     });
     const paged = parseBarsPage(page1, ctxFor(page1));
-    expect(paged.nextPageToken).toBe("U1BZfDIwMjYtMTEtMjdUMDU6MDA6MDBa");
+    expect(paged.nextPageToken).toBe("FAKE-PAGE-TOKEN-SPY-2026-11-27");
     const second = parseBarsPage(page2, ctxFor(page2));
     expect(second.nextPageToken).toBeNull();
     expect(second.observations.map((o) => o.value.symbol)).toEqual(["VTI", "VTI"]);
@@ -126,7 +126,7 @@ describe("Alpaca IEX daily bars fetcher", () => {
     expect(first.searchParams.get("feed")).toBe("iex");
     expect(first.searchParams.get("adjustment")).toBe("raw");
     expect(first.searchParams.get("timeframe")).toBe("1Day");
-    expect(new URL(requests[1]?.url ?? "").searchParams.get("page_token")).toBe("U1BZfDIwMjYtMTEtMjdUMDU6MDA6MDBa");
+    expect(new URL(requests[1]?.url ?? "").searchParams.get("page_token")).toBe("FAKE-PAGE-TOKEN-SPY-2026-11-27");
     for (const r of requests) {
       expect(r.headers["APCA-API-KEY-ID"]).toBe(KEY_ID);
       expect(r.headers["APCA-API-SECRET-KEY"]).toBe(SECRET);
