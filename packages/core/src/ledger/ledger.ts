@@ -39,8 +39,9 @@ export class SealMismatchError extends Error {
  * its seal, `verifySeals()` would fail for the rest of the database's life, and there is no repair path -
  * `ledger_seals` carries no-UPDATE and no-DELETE triggers and `sealDaily` throws on a changed root. Failing
  * the write loses one event and keeps the integrity record intact; allowing it keeps the event and destroys
- * the record. The realistic cause is a caller that captured a timestamp, did hours of work, and appended
- * with the stale value (see `ingest/run.ts`), so the error names the date and kind to make that obvious.
+ * the record. The realistic cause is a caller that captured a timestamp, did hours of work, and appended with
+ * the stale value - `runIngest` did exactly that until its events were moved to a completion stamp - so the
+ * error names the date and the kind to make the offending call site obvious.
  */
 export class SealedDateAppendError extends Error {
   constructor(date: IsoDate, kind: string) {
@@ -58,8 +59,9 @@ export class SealedDateAppendError extends Error {
  * Sealing a day is irreversible: `ledger_seals` carries no-UPDATE and no-DELETE triggers, and any event that
  * later lands on a sealed date is refused (`SealedDateAppendError`). So the seal must not run so close behind
  * the clock that it races a job still in flight. A caller that captures a timestamp and appends with it after
- * a long piece of work is the realistic case - `runIngest` does exactly that, stamping `ingest.completed`
- * with an instant captured before hours of rate-limited fetching.
+ * a long piece of work is the realistic case; `runIngest` stamped `ingest.completed` with an instant captured
+ * before hours of rate-limited fetching until that was fixed at the source, and the next such caller will not
+ * arrive announced.
  *
  * One full grace day means an event whose timestamp is up to two days stale still lands safely. Raising this
  * only delays tamper-evidence; lowering it to zero reintroduces the race the append guard then has to catch.

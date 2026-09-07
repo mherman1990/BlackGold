@@ -67,6 +67,12 @@ export function buildPublicSourceClient(config: AppConfig, fetchImpl?: FetchLike
 
 export async function runIngest(deps: IngestDeps, request: IngestRequest): Promise<IngestReport> {
   const clock = deps.clock ?? Date.now;
+  // One instant for every observation this run produces, so a multi-page fetch cannot stamp two pages with
+  // different `ingestedAt` values and make point-in-time reads of the same run incoherent. That is why it is
+  // captured up front - but it is NOT what the ledger events below are stamped with: a ledger event records
+  // when the thing happened, and by the time an ingest completes this value can be hours stale. Stamping an
+  // event with it both misreports the audit record and risks landing on an already-sealed day
+  // (`SealedDateAppendError`). The run's start stays in the payload.
   const ingestedAt = nowUtc(clock);
   const ledger = new Ledger(deps.db, clock);
   const budget = deps.config.sources.artifactBudgetBytes;
@@ -82,8 +88,8 @@ export async function runIngest(deps: IngestDeps, request: IngestRequest): Promi
     if (err instanceof ArtifactBudgetExceededError) {
       ledger.append(
         "ingest.refused_budget",
-        { source: request.source, usageBytes: err.usageBytes, budgetBytes: err.budgetBytes, attemptedBytes: err.attemptedBytes, requestsCompleted: client.requests() },
-        ingestedAt,
+        { source: request.source, startedAt: ingestedAt, usageBytes: err.usageBytes, budgetBytes: err.budgetBytes, attemptedBytes: err.attemptedBytes, requestsCompleted: client.requests() },
+        nowUtc(clock),
       );
     }
     throw err;
@@ -103,7 +109,7 @@ export async function runIngest(deps: IngestDeps, request: IngestRequest): Promi
     requestCount: client.requests(),
     sourceIds,
   };
-  const event = ledger.append("ingest.completed", report, ingestedAt);
+  const event = ledger.append("ingest.completed", { ...report, startedAt: ingestedAt }, nowUtc(clock));
   return { ...report, ledgerSeq: event.seq, ingestedAt };
 }
 
