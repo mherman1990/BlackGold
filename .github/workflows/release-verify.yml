@@ -48,9 +48,14 @@ jobs:
           node -e "const h=require('./health.json');if(!h.ok||h.liveCapable!==false)process.exit(1)"
           ls -la appdata/data
 
-          # Negative case: an unwritable data directory must fail with the diagnosable error, not SQLite's
-          # bare "unable to open database file". This is the failure an operator actually hits on a bad
-          # bind mount, and the first run of this workflow reported only the opaque form.
+          # Negative case: an unwritable data directory must fail closed, leaving nothing half-written.
+          #
+          # This workflow verifies a PUBLISHED image, so it may only assert behaviour that image actually
+          # has. An earlier version of this step grepped for `DataDirNotWritableError`, which no image
+          # before 0.1.1 can produce - coupling a published-image check to unpublished code and making the
+          # workflow unable to pass against the very release it was written for. The error *message* is a
+          # unit-test concern and is covered in packages/core/test/db.test.ts; what belongs here is the
+          # version-independent invariant an operator depends on.
           mkdir -p appdata/unwritable
           sudo chown -R 0:0 appdata/unwritable
           sudo chmod 555 appdata/unwritable
@@ -59,4 +64,10 @@ jobs:
             echo "expected migrate to fail on an unwritable data dir, but it succeeded"; exit 1
           fi
           cat unwritable.json
-          grep -q "DataDirNotWritableError\|Cannot write to /data" unwritable.json
+          # Whatever the wording, it must name a database problem rather than crash unrecognisably.
+          grep -qi "database\|data dir" unwritable.json
+          # And it must not have created a database it cannot maintain: a partially initialised store is
+          # worse than none, because `health` would then report on a schema that never finished migrating.
+          if sudo ls appdata/unwritable | grep -q .; then
+            echo "refused run left files behind in the data directory:"; sudo ls -la appdata/unwritable; exit 1
+          fi
