@@ -1,6 +1,6 @@
 import { Dec, ZERO, sumDec } from "@blackgold/shared";
 import type { RiskConfig } from "../config/schema.ts";
-import type { Charter } from "../strategy/charter.ts";
+import { admittedRiskEtfs, type Charter } from "../strategy/charter.ts";
 import { classifyCandidateFactors } from "../strategy/factors.ts";
 
 /**
@@ -16,8 +16,11 @@ import { classifyCandidateFactors } from "../strategy/factors.ts";
  * Fail closed: a holding the charter does not classify has an unknown sector, so its concentration cannot be
  * checked - it is rejected, not waved through (spec section 11, "unknown classification blocks new risk").
  *
- * Scope of this first limit engine: per-instrument weight, open-position count, gross/net exposure, the cash
- * floor, sector concentration, and correlated-cluster weight and membership. Factor concentration (the broad
+ * Scope of this first limit engine: admission (a held instrument must be an admitted risk ETF of the charter -
+ * being classified is not the same as being admitted, so an unadmitted conditional member like XLE is
+ * rejected), per-instrument weight, open-position count (the stricter of the risk.yaml and charter caps),
+ * gross/net exposure, the cash floor, sector concentration, and correlated-cluster weight and membership.
+ * Factor concentration (the broad
  * `market` tag is on every holding and needs a policy decision on which tags are cap-bearing), theme and
  * liquidity limits, order-level notional/quantity/turnover, and the per-position initial-risk budget are
  * deferred to follow-up limit engines that need order, price, or theme data this check does not take.
@@ -56,9 +59,10 @@ export function evaluateRiskLimits(input: RiskLimitsInput): RiskVerdict {
     if (w.gt(etfCap)) v.push({ code: "SINGLE_ETF_WEIGHT", detail: `${id} weight ${w.toFixed(4)} exceeds maxSingleEtfWeightPct ${p.positionLimits.maxSingleEtfWeightPct}` });
   }
 
-  // Open-position count.
-  if (lines.length > p.positionLimits.maxOpenPositions) {
-    v.push({ code: "MAX_OPEN_POSITIONS", detail: `${lines.length} open positions exceed maxOpenPositions ${p.positionLimits.maxOpenPositions}` });
+  // Open-position count: the stricter of the sleeve-wide risk.yaml cap and the frozen charter's book size.
+  const maxPositions = Math.min(p.positionLimits.maxOpenPositions, input.charter.rules.max_positions);
+  if (lines.length > maxPositions) {
+    v.push({ code: "MAX_OPEN_POSITIONS", detail: `${lines.length} open positions exceed the binding cap ${maxPositions} (risk.yaml ${p.positionLimits.maxOpenPositions}, charter ${input.charter.rules.max_positions})` });
   }
 
   // Gross and net exposure (long-only: net equals gross), and the cash floor.
@@ -67,9 +71,16 @@ export function evaluateRiskLimits(input: RiskLimitsInput): RiskVerdict {
   if (gross.gt(new Dec(p.exposure.maxNetExposurePct))) v.push({ code: "NET_EXPOSURE", detail: `net ${gross.toFixed(4)} exceeds maxNetExposurePct ${p.exposure.maxNetExposurePct}` });
   if (input.cashWeight.lt(new Dec(p.exposure.minCashPct))) v.push({ code: "MIN_CASH", detail: `cash ${input.cashWeight.toFixed(4)} is below minCashPct ${p.exposure.minCashPct}` });
 
-  // Sector concentration, and the fail-closed check on any unclassified holding.
+  // Admission, then sector concentration, then the fail-closed check on any unclassified holding.
+  // Being classified in the charter's factor block does NOT mean a holding is admitted: XLE is classified but
+  // its conditional universe entry is not admitted, so it must still be rejected here.
+  const admitted = new Set(admittedRiskEtfs(input.charter));
   const sectorWeight = new Map<string, Dec>();
   for (const [id, w] of lines) {
+    if (!admitted.has(id)) {
+      v.push({ code: "NOT_ADMITTED", detail: `${id} is not an admitted risk ETF of this charter (a non-member, or a conditional member that is not admitted)` });
+      continue;
+    }
     const c = classifyCandidateFactors(input.charter, id);
     if (!c.classified) {
       v.push({ code: "UNCLASSIFIED_HOLDING", detail: `${id} has no factor classification; its concentration cannot be checked (fail closed)` });
