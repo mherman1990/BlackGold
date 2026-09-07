@@ -47,6 +47,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-39 | The `etf-trend-vol` charter's four open decisions resolved and the XLE condition settled: look-through applies and XLE is excluded (12-ETF risk universe), BIL is the cash instrument, `risk.yaml` defaults approved as written with ADV participation at 1%, and Alpaca free/IEX approved as the market-data source | Accepted 2026-09-07 by Matt | Removes four of the nine blockers on charter registration; the approval block remains unsigned and is his alone |
 | D-40 | Granary (separate product `mherman1990/Granary`) owns the household / personal-finance / capital-allocation layer and sits above Black Gold in the hierarchy, reading Black Gold data read-only. Black Gold takes no dependency on Granary and stops growing an in-house household planner | **Proposed** 2026-09-07 by Claude Code | Phase 4 (household scope) |
 | D-41 | Phase 3 authorized (Matt, 2026-09-07, ordering "2 → 1 → 3"). Built as the provider-agnostic analyst pipeline and its safety surface, tested with a deterministic stub; the real Anthropic adapter, the POST egress change, and live CR-11/12/13 re-verification are a separate follow-up PR needing an API key | Accepted 2026-09-07 by Matt | Provider wiring, call/budget persistence, and prospective C1/D1 backtest wiring remain (credentials / Phase 5) |
+| D-42 | The Anthropic model adapter (raw `fetch`, no SDK) as its own PR: a second egress module `packages/core/src/model/provider-http.ts` is the only outbound POST and the only reference to `api.anthropic.com`; `live-disabled.test.ts` is updated to allow exactly that while trading hosts stay forbidden and `data/http.ts` stays POST-free. The key is passed in from the environment, never in git, code, or the image | Accepted 2026-09-07 by Matt ("keep building… put the key in when things are connected") | Live CR-12/CR-13 verification against the real API is Matt's one run on the Pi; call/budget persistence and C1/D1 wiring still Phase 5 |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -442,6 +443,41 @@ records exactly which rows this leaves open and why.
 **What this does not do.** It integrates no live mode, adds no broker credential, and adds no provider egress
 path. No LLM output can set a size, choose an account, or form an order — enforced structurally and by a
 permanent CI gate. The ablation plan is locked but registers no experiment and promotes nothing.
+
+---
+
+## D-42 The Anthropic model adapter and the model-egress change
+
+**Status:** Accepted 2026-09-07 by Matt, who directed the build to continue and said the key would be placed
+in the environment once code is connected to it ("keep building and we can come back and put the key in when
+things are connected to it"). The key he pasted into chat earlier was rotated; no key value is in this repo.
+
+**What was built.** `AnthropicAdapter` (`packages/core/src/model/anthropic.ts`), the single Anthropic
+implementation of `ModelAdapter`, and `packages/core/src/model/provider-http.ts`, the single model-egress
+module. The adapter builds the Messages API request (pinned model id from config, `output_config.format`
+structured output over the assessment schema, a cacheable system prompt, the sealed packet as the user
+content), POSTs it through an injectable transport, and maps the response back to the provider-agnostic
+`ModelResponse`. It is fail-closed: any network error, timeout, non-200, refusal, or non-JSON body throws
+`ModelUnavailableError` (the orchestration abstains); a body that parses but fails the schema is returned for
+the deterministic validator to reject.
+
+**Why raw `fetch` and not the SDK.** Adding `@anthropic-ai/sdk` would grow the dependency surface of a
+financial-critical system and make provider calls outside the one audited egress module. A thin `fetch`
+confined to `provider-http.ts` keeps egress centralized and auditable, adds no dependency, and is what the
+`live-disabled` policy gate now enforces: `api.anthropic.com` and the outbound POST are allowed in exactly
+that module, every broker/trading host stays forbidden everywhere, `data/http.ts` stays read-only (POST-free),
+and no provider SDK or dependency is added. This is a deliberate, reviewed change to the egress model, not a
+weakening of the live-trading protection, which concerns brokers and orders and is untouched.
+
+**The key path.** The adapter takes the API key as a constructor argument; the model layer never reads
+`process.env` (the no-LLM-in-sizing gate). A wiring layer allowed to read the environment injects it when an
+analyst command is built (Phase 5). The compose passes `ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}` to the core
+container (empty default, so a missing key does not break startup and the analyst simply abstains); the value
+lives in a gitignored secrets file on the Pi, never in git or the image.
+
+**What still needs Matt.** One live verification run against the real API on the Pi (CR-12/CR-13: the exact
+structured-output wire shape, real latency and cache behaviour). Persistence of the model-call record and
+running budget, and wiring C1/D1 into the decision loop, remain Phase 5.
 
 ---
 
