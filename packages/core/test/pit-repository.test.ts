@@ -49,7 +49,7 @@ describe("PointInTimeRepository.append", () => {
     expect(c.conflict).toBe(true);
     expect(r.count()).toBe(2);
     expect(r.byId(c.id)?.qualityFlags).toContain("CORRECTED");
-    expect(r.byId(a.id)?.value.v).toBe(1); // the original is untouched
+    expect(r.byId<{ v: number }>(a.id)?.value.v).toBe(1); // the original is untouched
   });
 
   it("observations are append-only at the database level", () => {
