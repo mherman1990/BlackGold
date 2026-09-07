@@ -7,6 +7,7 @@ import {
   utc,
   verifyEventChain,
   addDays,
+  dateOfInstantInZone,
   isoDate,
   type ChainVerdict,
   type Db,
@@ -31,6 +32,45 @@ export class SealMismatchError extends Error {
   }
 }
 
+/**
+ * An append whose `at` falls on a date that is already sealed.
+ *
+ * Refused rather than accepted, because accepting it is unrecoverable: the day's root would no longer match
+ * its seal, `verifySeals()` would fail for the rest of the database's life, and there is no repair path -
+ * `ledger_seals` carries no-UPDATE and no-DELETE triggers and `sealDaily` throws on a changed root. Failing
+ * the write loses one event and keeps the integrity record intact; allowing it keeps the event and destroys
+ * the record. The realistic cause is a caller that captured a timestamp, did hours of work, and appended
+ * with the stale value (see `ingest/run.ts`), so the error names the date and kind to make that obvious.
+ */
+export class SealedDateAppendError extends Error {
+  constructor(date: IsoDate, kind: string) {
+    super(
+      `Refusing to append a "${kind}" event dated ${date}: that day is already sealed. ` +
+        `A ledger event must be stamped when it happens, not with a timestamp captured earlier.`,
+    );
+    this.name = "SealedDateAppendError";
+  }
+}
+
+/**
+ * Days left open before the seal job will touch them, beyond the current day.
+ *
+ * Sealing a day is irreversible: `ledger_seals` carries no-UPDATE and no-DELETE triggers, and any event that
+ * later lands on a sealed date is refused (`SealedDateAppendError`). So the seal must not run so close behind
+ * the clock that it races a job still in flight. A caller that captures a timestamp and appends with it after
+ * a long piece of work is the realistic case - `runIngest` does exactly that, stamping `ingest.completed`
+ * with an instant captured before hours of rate-limited fetching.
+ *
+ * One full grace day means an event whose timestamp is up to two days stale still lands safely. Raising this
+ * only delays tamper-evidence; lowering it to zero reintroduces the race the append guard then has to catch.
+ */
+export const SEAL_GRACE_DAYS = 1;
+
+/** Newest UTC date the seal job may seal at `now`: yesterday, less the grace window. */
+export function sealThroughDate(now: UtcInstant): IsoDate {
+  return addDays(dateOfInstantInZone(now, "UTC"), -(1 + SEAL_GRACE_DAYS));
+}
+
 type EventRow = { seq: number; at: string; kind: string; payload: string; prev_hash: string; hash: string };
 type SealRow = { date: string; first_seq: number | null; last_seq: number | null; root_hash: string; sealed_at: string };
 
@@ -52,6 +92,10 @@ export class Ledger {
     if (kind.length === 0) throw new TypeError("ledger event kind must be non-empty");
     const atNormalized = utc(at);
     return this.db.transaction(() => {
+      // Fail closed on a backdated append into a sealed day: it would break that day's root permanently and
+      // no repair path exists. See SealedDateAppendError.
+      const atDate = isoDate(atNormalized.slice(0, 10));
+      if (this.seal(atDate)) throw new SealedDateAppendError(atDate, kind);
       const last = this.db.prepare("SELECT seq, hash FROM ledger_events ORDER BY seq DESC LIMIT 1").get() as
         | { seq: number; hash: string }
         | undefined;

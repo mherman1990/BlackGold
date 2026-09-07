@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { addDays, dateOfInstantInZone, nowUtc, type Db, type UtcInstant } from "@blackgold/shared";
+import { nowUtc, type Db, type UtcInstant } from "@blackgold/shared";
 import type { AppConfig } from "./config/schema.ts";
 import type { ExchangeCalendar } from "./calendar/types.ts";
-import { Ledger } from "./ledger/ledger.ts";
+import { Ledger, sealThroughDate } from "./ledger/ledger.ts";
 import { Scheduler } from "./scheduler/scheduler.ts";
 import { runHealth, type HealthReport } from "./health/health.ts";
 import { CORE_VERSION } from "./version.ts";
@@ -15,7 +15,8 @@ import { CORE_VERSION } from "./version.ts";
  *   requests and accepts no state-changing method.
  * - A scheduler loop that ticks every `schedulerPollSeconds`, running missed-run detection before due runs.
  *
- * Phase 0 registers one job (the daily heartbeat). Nothing here touches a broker or a model provider.
+ * Phase 0 registers two jobs: the daily heartbeat and the daily ledger seal. Nothing here touches a
+ * broker or a model provider.
  */
 export type ServeOptions = {
   config: AppConfig;
@@ -42,29 +43,27 @@ export function registerPhase0Jobs(scheduler: Scheduler): void {
 
   scheduler.register({
     jobId: "seal_ledger",
-    name: "Seal every unsealed UTC day up to yesterday",
-    // Five past midnight UTC, after the heartbeat has landed in the new day. Sealing yesterday can never
-    // race the heartbeat's own event, which belongs to today, but the offset keeps the two jobs from
-    // sharing a scheduled instant and makes the log easier to read.
+    name: "Seal every unsealed UTC day older than the grace window",
+    // Five past midnight UTC, after the heartbeat has landed in the new day. The offset keeps the two jobs
+    // from sharing a scheduled instant and makes the log easier to read.
     schedule: { kind: "daily_utc", hh: 0, mm: 5 },
     deadlineMs: 120_000,
     handler: (ctx) => {
-      // Seal the whole unsealed backlog, not just yesterday.
+      // Seal the whole unsealed backlog, not just the newest eligible day.
       //
       // The scheduler records a run it could not perform as `missed` rather than running it late, so a Pi
       // that was powered off over a weekend would otherwise leave those days unsealed for good. Working the
-      // backlog means one successful run repairs any such gap. `sealDaily` is idempotent, so re-sealing an
-      // unchanged day is a no-op; a day whose events changed after sealing throws SealMismatchError, which
-      // is the tamper signal and must propagate rather than be swallowed here.
-      const yesterday = addDays(dateOfInstantInZone(ctx.now, "UTC"), -1);
-      const pending = ctx.ledger.unsealedDates(yesterday);
+      // backlog means one successful run repairs any such gap, which is safe because `sealDaily` is
+      // idempotent.
+      const throughDate = sealThroughDate(ctx.now);
+      const pending = ctx.ledger.unsealedDates(throughDate);
       const sealed: string[] = [];
       for (const date of pending) {
         ctx.ledger.sealDaily(date, ctx.now);
         sealed.push(date);
       }
       if (sealed.length > 0) {
-        ctx.ledger.append("ledger.sealed", { scheduledFor: ctx.scheduledFor, dates: sealed, throughDate: yesterday }, ctx.now);
+        ctx.ledger.append("ledger.sealed", { scheduledFor: ctx.scheduledFor, dates: sealed, throughDate }, ctx.now);
       }
     },
   });
@@ -169,6 +168,7 @@ function renderStatus(r: HealthReport): string {
     `next session: ${r.nextSession}`,
     `ledger events: ${r.ledgerEvents}   chain: ${r.ledgerChain.ok ? "ok" : "BROKEN"}`,
     `last seal: ${r.lastSeal ? `${r.lastSeal.date} ${r.lastSeal.rootHash.slice(0, 12)}` : "none"}`,
+    `unsealed days: ${r.unsealedDays.length === 0 ? "none" : r.unsealedDays.join(",")}`,
     "",
     "checks:",
     ...r.checks.map((c) => `  [${c.ok ? "ok" : "FAIL"}] ${c.component}: ${c.detail}`),
