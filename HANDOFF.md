@@ -47,14 +47,15 @@ Do these in order. Steps 1 to 4 are reversible; step 5 is not.
 
 ## 6. Things that must never happen in any session
 
-- Pushing to `main`, force-pushing, or merging.
+- Pushing or committing directly to `main`, force-pushing, or rewriting anyone else's history. Merging is authorized (D-37); bypassing the PR is not.
 - Merging a stacked PR into a base branch that has already been merged forward. Retarget it to `main` first, or merge it before its base goes in. This has now cost two extra PRs (D-36); before merging anything stacked, check `git merge-base --is-ancestor <base-head> origin/main` and retarget if it answers yes.
 - Registering an experiment on a charter that `assertRegistrable` refuses, or editing a frozen charter value in code instead of in `charter.yaml`.
 - Opening the holdout, or evaluating anything inside its dates, without Matt's written decision and the registry call.
 - Computing or displaying a result and then changing a parameter, grid, boundary, metric, or cost without a new experiment id and a parent.
 - Adding a live-trading code path, a broker credential, or a workplace data connector.
 - Copying identifiers, paths, ports, or adapters from any other application.
-- Running a release workflow, publishing an image, or installing on the Pi without explicit authorization for that specific action.
+- Signing a charter approval block, resolving a charter's open decisions, admitting a conditional universe member, opening a holdout, citing a run as promotion evidence, or accepting Claude Code's own results as investment evidence. Standing git autonomy (D-37) never reaches these: propose them, never perform them.
+- Installing on the Pi or running `scripts/pi-benchmark.sh`, which need Matt's hardware.
 - Marking a safety requirement complete from inspection alone.
 
 ## 7. Known environment quirks
