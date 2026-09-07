@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { Dec, ONE, ZERO, isoDate, type IsoDate } from "@blackgold/shared";
 import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
@@ -7,12 +7,6 @@ import { armMetrics, buildResultReport, REPORT_VERSION, taxScenarios } from "../
 import { backtestParamsFromCharter, costsFromCharter, runBacktest } from "../src/research/backtest.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
 
-/**
- * Building a report runs a full backtest first, so these tests carry the same cost as the backtest suite and
- * the same reason for an explicit budget: vitest's 5-second default is not a realistic ceiling for a
- * multi-decision backtest plus a bootstrap, and leaving it there lets runner speed decide the outcome.
- */
-vi.setConfig({ testTimeout: 30_000 });
 
 function charter(): Charter {
   return loadCharterFile(fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url))).charter;
