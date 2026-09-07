@@ -2,6 +2,8 @@
 import { mkdirSync } from "node:fs";
 import { isoDate, nowUtc, dateOfInstantInZone, addDays, type Db, type IsoDate } from "@blackgold/shared";
 import { loadAppConfig, type AppConfig } from "./config/load.ts";
+import { processingDelayOverridesMs } from "./config/schema.ts";
+import { verifyArtifacts } from "./data/artifacts/verify.ts";
 import { openCoreDb } from "./db/open.ts";
 import { backupDatabase, verifyRestore } from "./db/backup.ts";
 import { Ledger } from "./ledger/ledger.ts";
@@ -38,11 +40,16 @@ Phase 1 research kernel (public sources only; requires BLACKGOLD_SEC_USER_AGENT_
   pit count [--source <id>]                 Count stored observations
   pit latest --source <id> [--entity <id>]  Newest availableAt and the newest row for a source
   snapshot create --dataset <name> --description <text>
-  artifacts verify [--sample N]             Verify stored artifacts against their hashes (default sample 100)
+  artifacts verify [--sample N]             Verify stored artifacts; failures quarantine referencing rows (default sample 100)
 
 Configuration comes from BLACKGOLD_* environment variables (see config/schema/README.md).`;
 
 type CommandResult = { exitCode: number; output: unknown };
+
+/** Every repository the CLI builds carries the configured processing-delay overrides. */
+function pitRepository(db: Db, config: AppConfig): PointInTimeRepository {
+  return new PointInTimeRepository(db, { processingDelayOverrides: processingDelayOverridesMs(config.sources) });
+}
 
 function withDb<T>(config: AppConfig, fn: (db: Db) => T): T {
   mkdirSync(config.dataDir, { recursive: true });
@@ -131,7 +138,7 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
       if (sub === "count") {
         const o = parseOptions(rest, { source: { type: "string" } });
         const source = typeof o["source"] === "string" ? o["source"] : undefined;
-        const n = withDb(config, (db) => new PointInTimeRepository(db).count(source));
+        const n = withDb(config, (db) => pitRepository(db, config).count(source));
         return { exitCode: 0, output: { source: source ?? "*", observations: n } };
       }
       if (sub === "latest") {
@@ -140,7 +147,7 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
         if (typeof source !== "string") throw new UsageError("pit latest requires --source <id>");
         const entity = typeof o["entity"] === "string" ? o["entity"] : undefined;
         const out = withDb(config, (db) => {
-          const repo = new PointInTimeRepository(db);
+          const repo = pitRepository(db, config);
           const rows = repo.all(source, entity);
           return { source, entity: entity ?? "*", count: rows.length, latestAvailableAt: repo.latestAvailableAt(source, entity) ?? null, newestRow: rows.at(-1) ?? null };
         });
@@ -155,7 +162,7 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
       const dataset = o["dataset"];
       const description = o["description"];
       if (typeof dataset !== "string" || typeof description !== "string") throw new UsageError("snapshot create requires --dataset and --description");
-      const snapshot = withDb(config, (db) => new PointInTimeRepository(db).createSnapshot(dataset, description));
+      const snapshot = withDb(config, (db) => pitRepository(db, config).createSnapshot(dataset, description));
       return { exitCode: 0, output: snapshot };
     }
     case "artifacts": {
@@ -164,11 +171,10 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
       const o = parseOptions(rest, { sample: { type: "string" } });
       const sample = typeof o["sample"] === "string" ? Number.parseInt(o["sample"], 10) : 100;
       if (!Number.isInteger(sample) || sample <= 0) throw new UsageError("--sample must be a positive integer");
-      const result = withDb(config, (db) => {
-        const store = new ArtifactStore(config.artifactsDir, db);
-        const results = store.verifySample(sample);
-        return { total: store.count(), checked: results.length, failed: results.filter((r) => !r.ok), diskUsageBytes: store.diskUsageBytes() };
-      });
+      // Failures quarantine every referencing observation (ARTIFACT_MISSING) and are recorded in the ledger.
+      const result = withDb(config, (db) =>
+        verifyArtifacts({ store: new ArtifactStore(config.artifactsDir, db), repo: pitRepository(db, config), ledger: new Ledger(db) }, { sample }),
+      );
       return { exitCode: result.failed.length === 0 ? 0 : 1, output: result };
     }
     case "serve": {

@@ -1,5 +1,6 @@
 import { addDays, addMs, compareInstants, dateOfInstantInZone, epochMs, isoDate, utc, weekday, zonedToUtc, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import type { ExchangeCalendar } from "../calendar/types.ts";
+import { isFederalBusinessDay, isFederalHoliday } from "../calendar/us-federal.ts";
 
 /**
  * Source-specific release-lag rules (docs/DATA_PROVENANCE_SPEC.md section 3). Pure functions shared by the
@@ -46,19 +47,26 @@ export function form4Flags(transactionDate: IsoDate, acceptanceAt: UtcInstant, c
 }
 
 /**
- * CFTC COT: positions as of Tuesday, released Friday 15:30 ET. When Friday is a holiday the release moves to
- * the next business day at 15:30 ET. `calendar` supplies the holiday schedule (NYSE holidays approximate the
- * federal schedule; CFTC-specific deviations are recorded as observations with RELEASE_DELAYED).
+ * CFTC COT: positions as of Tuesday, released Friday 15:30 ET. The CFTC follows the FEDERAL holiday calendar,
+ * not the exchange calendar: when a federal holiday falls on the Wednesday, Thursday, or Friday of the release
+ * week, the release moves to the following Monday at 15:30 ET (the next federal business day if that Monday is
+ * itself a holiday). A Monday holiday does not delay the release. Verified against every 2026 release date
+ * (docs/CAPABILITY_REGISTER.md CR-27): Jan 5, Jun 22, Jul 6, Nov 16, Nov 30, Dec 28 are the delayed ones.
+ *
+ * A federal holiday on the Tuesday itself (the CFTC then compiles as of Monday) has no 2026 instance; the
+ * same Monday shift is applied conservatively and the row is additionally AVAILABLE_AT_ESTIMATED.
  */
-export function cotReleaseInstant(positionDate: IsoDate, calendar: ExchangeCalendar): LagResult {
+export function cotReleaseInstant(positionDate: IsoDate): LagResult {
   if (weekday(positionDate) !== 2) throw new RangeError(`COT position date must be a Tuesday, got ${positionDate}`);
-  let friday = addDays(positionDate, 3);
-  const flags: string[] = [];
-  while (!calendar.isSession(friday)) {
-    friday = addDays(friday, 1);
-    if (!flags.includes("RELEASE_DELAYED")) flags.push("RELEASE_DELAYED");
-  }
-  return { availableAt: zonedToUtc(friday, 15, 30, NY), flags };
+  const friday = addDays(positionDate, 3);
+  const week = [positionDate, addDays(positionDate, 1), addDays(positionDate, 2), friday];
+  const holidays = week.filter(isFederalHoliday);
+  if (holidays.length === 0) return { availableAt: zonedToUtc(friday, 15, 30, NY), flags: [] };
+  let release = addDays(friday, 3);
+  while (!isFederalBusinessDay(release)) release = addDays(release, 1);
+  const flags = ["RELEASE_DELAYED"];
+  if (holidays.includes(positionDate)) flags.push("AVAILABLE_AT_ESTIMATED");
+  return { availableAt: zonedToUtc(release, 15, 30, NY), flags };
 }
 
 /** FRED/ALFRED: a vintage dated D is assumed released at 08:30 ET on D unless a release calendar says otherwise. */

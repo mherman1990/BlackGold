@@ -42,6 +42,8 @@ export const COT_SOCRATA_DATASET_IDS: Readonly<Record<CotDataset, string>> = {
 
 const BASE = "https://publicreporting.cftc.gov/resource";
 const DEFAULT_LIMIT = 50_000;
+/** Hard stop on Socrata paging; the whole legacy futures history is well under this at the default page size. */
+const MAX_PAGES = 200;
 
 export function cotSourceId(dataset: CotDataset): string {
   return `cftc.cot.${dataset}`;
@@ -60,9 +62,18 @@ export type CotRow = {
   positions: Record<string, string>;
 };
 
-export type CotContext = AdapterContext & { dataset: CotDataset; marketCode?: string | undefined; from?: IsoDate | undefined; to?: IsoDate | undefined; limit?: number | undefined };
+export type CotContext = AdapterContext & {
+  dataset: CotDataset;
+  marketCode?: string | undefined;
+  from?: IsoDate | undefined;
+  to?: IsoDate | undefined;
+  /** Socrata page size ($limit). Every page is its own artifact. */
+  limit?: number | undefined;
+  /** Socrata $offset of the page being requested. */
+  offset?: number | undefined;
+};
 
-export function cotRequestUrl(ctx: Pick<CotContext, "dataset" | "marketCode" | "from" | "to" | "limit">): string {
+export function cotRequestUrl(ctx: Pick<CotContext, "dataset" | "marketCode" | "from" | "to" | "limit" | "offset">): string {
   const url = new URL(`${BASE}/${COT_SOCRATA_DATASET_IDS[ctx.dataset]}.json`);
   const where: string[] = [];
   if (ctx.from !== undefined || ctx.to !== undefined) {
@@ -77,14 +88,30 @@ export function cotRequestUrl(ctx: Pick<CotContext, "dataset" | "marketCode" | "
   if (where.length > 0) url.searchParams.set("$where", where.join(" AND "));
   url.searchParams.set("$order", "report_date_as_yyyy_mm_dd,cftc_contract_market_code");
   url.searchParams.set("$limit", (ctx.limit ?? DEFAULT_LIMIT).toString());
+  if (ctx.offset !== undefined && ctx.offset > 0) url.searchParams.set("$offset", ctx.offset.toString());
   return url.toString();
 }
 
+/**
+ * Fetch every page of the request. Socrata caps a response at `$limit` rows and says nothing when it truncates,
+ * so a page that comes back full is followed by the next `$offset`; a short (or empty) page ends the walk.
+ * Each page is stored and parsed separately so a mid-walk failure leaves complete, hash-referenced pages only.
+ */
 export async function fetchCot(client: AllowlistedHttpClient, store: ArtifactStore, ctx: CotContext): Promise<FetchOutcome<CotRow>> {
-  const url = cotRequestUrl(ctx);
-  const { put, ref } = await fetchAndStore(client, store, url, { locator: url, mime: "application/json", retention: "macro" });
-  const observations = parseCot(store.get(put.hash), { calendar: ctx.calendar, ingestedAt: ctx.ingestedAt, rawContentHash: put.hash, dataset: ctx.dataset });
-  return { artifacts: [ref], observations };
+  const limit = ctx.limit ?? DEFAULT_LIMIT;
+  if (!Number.isInteger(limit) || limit <= 0) throw new RangeError(`COT page size must be a positive integer, got ${limit}`);
+  const artifacts: FetchOutcome<CotRow>["artifacts"] = [];
+  const observations: PointInTimeObservation<CotRow>[] = [];
+  const sourceId = cotSourceId(ctx.dataset);
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const url = cotRequestUrl({ ...ctx, limit, offset: page * limit });
+    const { put, ref } = await fetchAndStore(client, store, url, { locator: url, mime: "application/json", retention: "macro" });
+    artifacts.push(ref);
+    const rows = parseCot(store.get(put.hash), { calendar: ctx.calendar, ingestedAt: ctx.ingestedAt, rawContentHash: put.hash, dataset: ctx.dataset });
+    observations.push(...rows);
+    if (rows.length < limit) return { artifacts, observations };
+  }
+  throw new SchemaDriftError(sourceId, `more than ${MAX_PAGES} pages of ${limit} rows; narrow the request with --from/--to or --market`);
 }
 
 const RowSchema = z
@@ -112,7 +139,7 @@ export function parseCot(bytes: Uint8Array, ctx: CotParseContext): PointInTimeOb
   return parsed.data.map((row) => {
     const reportDate = isoDate(row.report_date_as_yyyy_mm_dd.slice(0, 10));
     const marketCode = row.cftc_contract_market_code.trim();
-    const lag = releaseFor(reportDate, ctx);
+    const lag = releaseFor(reportDate);
     const positions: Record<string, string> = {};
     for (const key of Object.keys(row).sort()) {
       if (!NUMERIC_COLUMN_RE.test(key)) continue;
@@ -157,10 +184,10 @@ export function parseCot(bytes: Uint8Array, ctx: CotParseContext): PointInTimeOb
  * as of Monday when Tuesday is a federal holiday), the release still follows that week's schedule: use the next
  * Tuesday on or after the date as the schedule anchor and mark the instant estimated.
  */
-function releaseFor(reportDate: IsoDate, ctx: CotParseContext): { availableAt: PointInTimeObservation["availableAt"]; flags: string[] } {
-  if (weekday(reportDate) === 2) return cotReleaseInstant(reportDate, ctx.calendar);
+function releaseFor(reportDate: IsoDate): { availableAt: PointInTimeObservation["availableAt"]; flags: string[] } {
+  if (weekday(reportDate) === 2) return cotReleaseInstant(reportDate);
   let anchor = reportDate;
   while (weekday(anchor) !== 2) anchor = addDays(anchor, 1);
-  const lag = cotReleaseInstant(anchor, ctx.calendar);
+  const lag = cotReleaseInstant(anchor);
   return { availableAt: lag.availableAt, flags: [...lag.flags, "AVAILABLE_AT_ESTIMATED"] };
 }

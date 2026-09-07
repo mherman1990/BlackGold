@@ -112,3 +112,49 @@ describe("CFTC COT fetcher", () => {
     db.close();
   });
 });
+
+describe("CFTC COT fetcher pagination", () => {
+  const allRows = JSON.parse(new TextDecoder().decode(bytes)) as unknown[];
+  function paging(): { client: AllowlistedHttpClient; store: ArtifactStore; requested: URL[] } {
+    const requested: URL[] = [];
+    const fakeFetch: FetchLike = (reqUrl) => {
+      const u = new URL(reqUrl);
+      requested.push(u);
+      const limit = Number(u.searchParams.get("$limit"));
+      const offset = Number(u.searchParams.get("$offset") ?? "0");
+      const body = new TextEncoder().encode(JSON.stringify(allRows.slice(offset, offset + limit)));
+      return Promise.resolve({ status: 200, headers: { get: () => null }, arrayBuffer: () => Promise.resolve(toBuf(body)) });
+    };
+    const client = new AllowlistedHttpClient({ allowlist: ["publicreporting.cftc.gov"], ratePerSecond: {}, userAgent: "BlackGold/test (ops@example.invalid)", fetchImpl: fakeFetch });
+    const dir = mkdtempSync(join(tmpdir(), "bg-cot-page-"));
+    const { db } = openCoreDb({ dbPath: join(dir, "p.sqlite") });
+    return { client, store: new ArtifactStore(join(dir, "artifacts"), db), requested };
+  }
+
+  it("follows $offset until a short page, storing each page as its own artifact", async () => {
+    const { client, store, requested } = paging();
+    expect(allRows).toHaveLength(3);
+    const out = await fetchCot(client, store, { calendar, ingestedAt, dataset: "legacy_futures", limit: 2 });
+    expect(requested.map((u) => u.searchParams.get("$offset"))).toEqual([null, "2"]);
+    expect(requested.every((u) => u.searchParams.get("$limit") === "2")).toBe(true);
+    expect(out.artifacts).toHaveLength(2);
+    expect(new Set(out.artifacts.map((a) => a.hash)).size).toBe(2);
+    expect(out.observations.map((o) => o.value.reportDate)).toEqual(["2026-01-13", "2026-06-23", "2026-06-30"]);
+    expect(out.observations.map((o) => o.rawContentHash)).toEqual([out.artifacts[0]?.hash, out.artifacts[0]?.hash, out.artifacts[1]?.hash]);
+  });
+
+  it("an exactly full last page is followed by one empty page, then stops", async () => {
+    const { client, store, requested } = paging();
+    const out = await fetchCot(client, store, { calendar, ingestedAt, dataset: "legacy_futures", limit: 3 });
+    expect(requested.map((u) => u.searchParams.get("$offset"))).toEqual([null, "3"]);
+    expect(out.observations).toHaveLength(3);
+    expect(out.artifacts).toHaveLength(2);
+  });
+
+  it("rejects a non-positive page size and omits $offset on the first page", async () => {
+    const { client, store } = paging();
+    await expect(fetchCot(client, store, { calendar, ingestedAt, dataset: "legacy_futures", limit: 0 })).rejects.toThrow(RangeError);
+    expect(new URL(cotRequestUrl({ dataset: "legacy_futures", offset: 0 })).searchParams.has("$offset")).toBe(false);
+    expect(new URL(cotRequestUrl({ dataset: "legacy_futures", offset: 50_000 })).searchParams.get("$offset")).toBe("50000");
+  });
+});

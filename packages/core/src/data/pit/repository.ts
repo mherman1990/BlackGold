@@ -182,6 +182,32 @@ export class PointInTimeRepository {
     return { rows, labels, processingDelayMs: delay };
   }
 
+  /**
+   * Quarantine every row that references an artifact which failed verification: append a correction carrying
+   * ARTIFACT_MISSING for each current row with that rawContentHash. The collapse rule then hides the original
+   * (the correction is the latest row for the identity) and the exclusion rule bars the correction, so the
+   * observation leaves every decision made at or after `at` while earlier decisions stay reproducible.
+   * Idempotent: rows already flagged are skipped and a repeated call deduplicates. Returns the number of rows
+   * newly excluded.
+   */
+  markArtifactMissing(hash: string, at: UtcInstant = nowUtc(this.clock)): number {
+    return this.db.transaction(() => {
+      const rows = (this.db.prepare("SELECT * FROM observations WHERE raw_content_hash = ? ORDER BY id").all(hash) as Row[]).map((r) => rowToObservation(r));
+      let n = 0;
+      for (const row of rows) {
+        if (row.qualityFlags.includes("ARTIFACT_MISSING")) continue;
+        // The correction becomes available at the detection instant (never earlier than the original), so
+        // decisions made before the failure was detected still reproduce exactly and only later ones exclude it.
+        const detectedAt = compareInstants(utc(at), row.availableAt) > 0 ? utc(at) : row.availableAt;
+        const obs: PointInTimeObservation = { ...row, qualityFlags: [...row.qualityFlags, "ARTIFACT_MISSING"], ingestedAt: utc(at), availableAt: detectedAt };
+        delete (obs as Partial<StoredObservation>).id;
+        const result = this.append(obs);
+        if (!result.deduplicated) n++;
+      }
+      return n;
+    });
+  }
+
   /** All rows for a source, regardless of time. Operational and quality use only; never a decision input. */
   all<T = unknown>(sourceId: string, entityId?: string): StoredObservation<T>[] {
     const rows =

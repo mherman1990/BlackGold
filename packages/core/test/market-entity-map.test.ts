@@ -87,9 +87,9 @@ describe("EntityMap", () => {
     expect(() => {
       db.exec("DELETE FROM entity_symbols");
     }).toThrow(/append-only/);
-    db.exec("UPDATE entity_symbols SET effective_to = '2021-01-01' WHERE symbol = 'OLD'");
+    db.exec("UPDATE entity_symbols SET effective_to = '2021-01-01', close_known_from = '2021-01-01T00:00:00.000Z' WHERE symbol = 'OLD'");
     expect(() => {
-      db.exec("UPDATE entity_symbols SET effective_to = '2022-01-01' WHERE symbol = 'OLD'");
+      db.exec("UPDATE entity_symbols SET effective_to = '2022-01-01', close_known_from = '2022-01-01T00:00:00.000Z' WHERE symbol = 'OLD'");
     }).toThrow(/may only be closed/);
   });
 
@@ -113,6 +113,35 @@ describe("EntityMap", () => {
     expect(map.resolve("NEW", d("2025-01-02"))).toBe("E1");
     // Idempotent on re-sync.
     expect(map.syncFromRepository(pit, utc("2026-01-01T00:00:00Z")).applied).toBe(1);
+    expect(map.rangesForSymbol("NEW")).toHaveLength(1);
+  });
+
+  it("knowledge is bitemporal: syncing for a later decision never leaks into an earlier one", () => {
+    const { map, pit } = setup();
+    map.register({ symbol: "OLD", entityId: "E1", effectiveFrom: d("2020-01-02"), source: "seed:test" });
+    pit.append(
+      corporateActionObservation(
+        { kind: "SYMBOL_CHANGE", entityId: "E1", oldSymbol: "OLD", newSymbol: "NEW", effective: d("2024-06-03") },
+        { sourceLocator: "ca/E1/2024-06-03", availableAt: utc("2024-06-03T00:00:00Z"), ingestedAt: utc("2026-09-08T00:00:00Z"), rawContentHash: H, adapterVersion: "1.0.0", parserVersion: "1.0.0" },
+      ),
+    );
+    // Sync for a late decision first: the change is applied to the shared table.
+    expect(map.syncFromRepository(pit, utc("2026-01-01T00:00:00Z")).applied).toBe(1);
+    expect(map.resolve("OLD", d("2025-01-02"))).toBeUndefined();
+    expect(map.resolve("NEW", d("2025-01-02"))).toBe("E1");
+    // An earlier decision could not have known about it, even for a trading date after the change.
+    const early = utc("2024-06-02T12:00:00Z");
+    expect(map.resolve("OLD", d("2025-01-02"), { knownAt: early })).toBe("E1");
+    expect(map.resolve("NEW", d("2025-01-02"), { knownAt: early })).toBeUndefined();
+    expect(map.symbolOn("E1", d("2025-01-02"), { knownAt: early })).toBe("OLD");
+    expect(map.symbolsFor("E1", { knownAt: early })).toEqual(["OLD"]);
+    // The change became knowable at availableAt plus the 15-minute corporate_action processing delay.
+    expect(map.resolve("NEW", d("2025-01-02"), { knownAt: utc("2024-06-03T00:14:59Z") })).toBeUndefined();
+    expect(map.resolve("NEW", d("2025-01-02"), { knownAt: utc("2024-06-03T00:15:00Z") })).toBe("E1");
+    expect(map.rangesForSymbol("NEW")[0]?.knownFrom).toBe("2024-06-03T00:15:00.000Z");
+    expect(map.rangesForSymbol("OLD")[0]?.closeKnownFrom).toBe("2024-06-03T00:15:00.000Z");
+    // Re-syncing for the earlier decision changes nothing and the table stays monotonic.
+    expect(map.syncFromRepository(pit, early).applied).toBe(0);
     expect(map.rangesForSymbol("NEW")).toHaveLength(1);
   });
 });

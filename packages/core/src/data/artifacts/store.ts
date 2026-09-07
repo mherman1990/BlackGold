@@ -8,6 +8,10 @@ import { nowUtc, sha256Hex, utc, type Db, type UtcInstant } from "@blackgold/sha
  * Path: <root>/sha256/<aa>/<bb>/<full hex>.zst. The hash is of the UNCOMPRESSED bytes as received, so it
  * equals every referencing observation's rawContentHash. There is no update path; corrections are new
  * artifacts. Metadata lives in SQLite so the daily ledger seal covers it.
+ *
+ * Storage budget: when constructed with `budgetBytes`, a write that would carry the store past the cap is
+ * refused BEFORE anything touches disk. The cap is a hard cap on every write, not a pre-run check, so a
+ * multi-page ingest cannot overrun it page by page. Audit data is never deleted to make room.
  */
 export type ArtifactMeta = {
   hash: string; // "sha256:<hex>"
@@ -34,17 +38,41 @@ export class ArtifactIntegrityError extends Error {
   }
 }
 
+export class ArtifactBudgetExceededError extends Error {
+  readonly usageBytes: number;
+  readonly budgetBytes: number;
+  /** Compressed size of the write that was refused; 0 for a pre-run refusal. */
+  readonly attemptedBytes: number;
+  constructor(usageBytes: number, budgetBytes: number, attemptedBytes = 0) {
+    super(
+      attemptedBytes > 0
+        ? `Artifact store holds ${usageBytes} bytes; writing ${attemptedBytes} more would exceed the configured budget of ${budgetBytes}; write refused`
+        : `Artifact store holds ${usageBytes} bytes, over the configured budget of ${budgetBytes}; ingest refused`,
+    );
+    this.name = "ArtifactBudgetExceededError";
+    this.usageBytes = usageBytes;
+    this.budgetBytes = budgetBytes;
+    this.attemptedBytes = attemptedBytes;
+  }
+}
+
 export type RetentionClass = "ledger" | "filings" | "macro" | "market" | "evidence" | "other";
 
 export class ArtifactStore {
   readonly root: string;
+  readonly budgetBytes: number | undefined;
   private readonly db: Db;
   private readonly clock: () => number;
+  private usageCache: number | undefined;
 
-  constructor(root: string, db: Db, clock: () => number = Date.now) {
+  constructor(root: string, db: Db, clock: () => number = Date.now, opts: { budgetBytes?: number | undefined } = {}) {
+    if (opts.budgetBytes !== undefined && (!Number.isInteger(opts.budgetBytes) || opts.budgetBytes <= 0)) {
+      throw new RangeError(`budgetBytes must be a positive integer, got ${opts.budgetBytes}`);
+    }
     this.root = root;
     this.db = db;
     this.clock = clock;
+    this.budgetBytes = opts.budgetBytes;
     mkdirSync(root, { recursive: true });
   }
 
@@ -52,7 +80,10 @@ export class ArtifactStore {
     return join(this.root, "sha256", hex.slice(0, 2), hex.slice(2, 4), `${hex}.zst`);
   }
 
-  /** Store bytes. Identical content is deduplicated (metadata gets a fresh last-verified time only). */
+  /**
+   * Store bytes. Identical content is deduplicated (metadata gets a fresh last-verified time only).
+   * Throws ArtifactBudgetExceededError, before writing, when the write would exceed the budget.
+   */
   put(
     bytes: Uint8Array,
     meta: { locator: string; mime?: string; etag?: string; lastModified?: string; retention?: RetentionClass; level?: number },
@@ -67,9 +98,11 @@ export class ArtifactStore {
     }
     const level = meta.level ?? 9;
     const compressed = zstdCompressSync(bytes, { params: { [zc.ZSTD_c_compressionLevel]: level } });
+    this.assertWithinBudget(compressed.byteLength);
     const path = this.pathFor(hex);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, compressed, { flag: "w" });
+    if (this.usageCache !== undefined) this.usageCache += compressed.byteLength;
     if (existing) {
       // Metadata existed but the file was gone: restore the file, keep original provenance.
       this.db.prepare("UPDATE artifacts SET last_verified_at = ?, bytes_compressed = ? WHERE hash = ?").run(now, compressed.byteLength, hash);
@@ -94,6 +127,21 @@ export class ArtifactStore {
         );
     }
     return { hash, deduplicated: false, bytesRaw: bytes.byteLength, bytesCompressed: compressed.byteLength };
+  }
+
+  /** Bytes currently on disk, measured once and then tracked through this instance's own writes. */
+  usageBytes(): number {
+    this.usageCache ??= this.diskUsageBytes();
+    return this.usageCache;
+  }
+
+  /** Throws when the store is already over budget or when writing `additionalBytes` would take it over. */
+  assertWithinBudget(additionalBytes = 0): void {
+    if (this.budgetBytes === undefined) return;
+    const usage = this.usageBytes();
+    if (usage > this.budgetBytes || usage + additionalBytes > this.budgetBytes) {
+      throw new ArtifactBudgetExceededError(usage, this.budgetBytes, additionalBytes);
+    }
   }
 
   /** Read and verify. Throws ArtifactIntegrityError on a missing file or a hash mismatch. */
@@ -143,6 +191,11 @@ export class ArtifactStore {
     };
   }
 
+  /**
+   * Low-level integrity check of one artifact. Storage only: it does not touch observations. The operational
+   * entry point that also quarantines referencing rows and records the incident is `verifyArtifacts` in
+   * ./verify.ts; use that from jobs and the CLI.
+   */
   verify(hash: string): VerifyResult {
     try {
       this.get(hash);
@@ -169,7 +222,7 @@ export class ArtifactStore {
     return out;
   }
 
-  /** Bytes on disk under the store root; the input to storage-budget checks. */
+  /** Bytes on disk under the store root, measured by walking it; the input to storage-budget checks. */
   diskUsageBytes(): number {
     let total = 0;
     const walk = (dir: string): void => {

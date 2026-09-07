@@ -258,3 +258,33 @@ describe("ExperimentRegistry trial ledger", () => {
     expect(reg.cumulativeTrialCount(c.experimentId)).toBe(3);
   });
 });
+
+describe("ExperimentRegistry promotion evidence with trial labels", () => {
+  it("refuses promotion when any recorded trial carries a blocking label, even if the registration was clean", () => {
+    const { reg, snapshotId } = setup();
+    const clean = reg.register(def(snapshotId), { registeredBy: "owner" });
+    expect(clean.promotionEvidenceAllowed).toBe(true);
+    const base = {
+      experimentId: clean.experimentId,
+      arm: "B1_DETERMINISTIC",
+      split: "validation/2017-01-03_2019-12-31",
+      params: { lookback_days: 126 },
+      metrics: { primary_metric: "0.31" },
+      costScenario: "base",
+      codeCommit: "4f7a2c9e1b0d",
+      snapshotIds: [snapshotId],
+      resultHash: SHA,
+      runStarted: utc("2026-09-08T15:01:44Z"),
+      runFinished: utc("2026-09-08T15:03:10Z"),
+    };
+    reg.recordTrial(base);
+    // A universe read for this cell came back SURVIVORSHIP_BIASED; the label lives only on the trial row.
+    reg.recordTrial({ ...base, params: { lookback_days: 252 }, labels: ["SURVIVORSHIP_BIASED"] });
+    reg.markResultsViewed(clean.experimentId, { viewedBy: "owner" });
+    reg.openHoldout(clean.experimentId, { reason: "reviewed", requestedBy: "owner" });
+    expect(() => reg.setPromotionEvidence(clean.experimentId, true, { requestedBy: "owner" })).toThrow(/SURVIVORSHIP_BIASED/);
+    expect(reg.get(clean.experimentId).promotionEvidenceAt).toBeNull();
+    // Withdrawing is still allowed.
+    expect(reg.setPromotionEvidence(clean.experimentId, false, { requestedBy: "owner" }).promotionEvidenceAt).toBeNull();
+  });
+});

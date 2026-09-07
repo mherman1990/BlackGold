@@ -36,6 +36,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-28 | Phase 1 authorized by Matt's "keep going" (2026-09-07); implemented as a stacked PR on the Phase 0 branch | Accepted 2026-09-07 | - |
 | D-29 | Market data: fetch raw Alpaca IEX daily bars and compute all adjustments in Black Gold code; corporate actions for the ETF universe vendored as observations until an issuer/vendor feed is verified | Accepted 2026-09-07 (engineering) | Phase 2 |
 | D-30 | Data provenance defaults adopted: processing delays (15 min EDGAR/market, 60 min macro, 24 h batch), storage budgets (spec section 9), 13F research-context only, AVAILABLE_AT_ESTIMATED defaults | Accepted 2026-09-07 (covered by the 2026-09-06 blanket acceptance of recommended defaults) | - |
+| D-31 | CFTC COT availability uses a by-rule U.S. federal holiday calendar (CR-27), not the NYSE calendar; entity map is bitemporal (`knownFrom`/`closeKnownFrom`); migration `0006_entity_symbols` amended in place because it had never run outside test databases | Accepted 2026-09-07 (engineering, from PR #3 review) | - |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -208,6 +209,19 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 
 **Status:** Accepted 2026-09-07 under the blanket acceptance of recommended defaults.
 **Decision:** The five open items in `docs/DATA_PROVENANCE_SPEC.md` section 12 take their proposed values: processing delays of 15 minutes for EDGAR and market data, 60 minutes for macro releases, and 24 hours for batch-routed work; the storage budgets and 15 percent / 30 GB free-space floor in section 9; 13F remains research context through Phase 2; no paid survivorship-free equity dataset is evaluated until the ETF track has run; publication-time estimates are calibrated during Phase 5 shadow operation.
+
+---
+
+## D-31 Review corrections to the Phase 1 research kernel
+
+**Status:** Accepted 2026-09-07 (engineering). Raised by automated review of PR #3; each item verified against the code before acting.
+**Decision:**
+1. COT release timing follows the U.S. federal holiday calendar computed by rule (`packages/core/src/calendar/us-federal.ts`) and verified against every published 2026 release date (CR-27). The NYSE calendar stays the exchange calendar for sessions and bar times only.
+2. The entity map is bitemporal. Each symbol range records the instant it became knowable and the instant its close became knowable; point-in-time resolution passes the decision instant as `knownAt`. Migration `0006_entity_symbols` was amended in place rather than followed by a `0007`, because no image has been published and no database outside test fixtures has run it. From the first published image onward, migrations are forward-only without exception.
+3. Artifact verification quarantines: the operational entry point `verifyArtifacts` appends `ARTIFACT_MISSING` corrections and a ledger incident; the low-level `ArtifactStore.verify` is storage-only.
+4. Promotion evidence is refused when any recorded trial carries a blocking label, not only when the registration did.
+5. Configured processing delays reach every repository the runtime builds (`processingDelayOverridesMs`), and the CLI exposes them as `BLACKGOLD_PROCESSING_DELAYS`.
+6. The artifact budget is a per-write hard cap inside the store. COT requests page through Socrata `$offset`.
 
 ---
 

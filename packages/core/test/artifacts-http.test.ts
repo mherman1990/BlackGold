@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { constants as zc, zstdCompressSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256Hex } from "@blackgold/shared";
-import { AllowlistedHttpClient, ArtifactIntegrityError, ArtifactStore, EgressDeniedError, HttpError, openCoreDb, type FetchLike } from "../src/index.ts";
+import { AllowlistedHttpClient, ArtifactBudgetExceededError, ArtifactIntegrityError, ArtifactStore, EgressDeniedError, HttpError, openCoreDb, type FetchLike } from "../src/index.ts";
 
 function store(): ArtifactStore {
   const dir = mkdtempSync(join(tmpdir(), "bg-art-"));
@@ -37,6 +38,36 @@ describe("ArtifactStore", () => {
     expect(["hash_mismatch", "decompress_failed"]).toContain(v.reason);
     expect(() => s.get(hash)).toThrow(ArtifactIntegrityError);
     expect(s.verify("sha256:" + "0".repeat(64))).toMatchObject({ ok: false, reason: "missing" });
+  });
+
+  it("refuses, before writing, any put that would carry the store past its byte budget", () => {
+    const dir = mkdtempSync(join(tmpdir(), "bg-art-"));
+    const db = openCoreDb({ dbPath: join(dir, "a.sqlite") }).db;
+    const first = Buffer.from(JSON.stringify({ page: 1, pad: "a".repeat(3000) }));
+    const second = Buffer.from(JSON.stringify({ page: 2, pad: "b".repeat(3000) }));
+    const firstCompressed = zstdCompressSync(first, { params: { [zc.ZSTD_c_compressionLevel]: 9 } }).byteLength;
+    const s = new ArtifactStore(join(dir, "capped"), db, Date.now, { budgetBytes: firstCompressed + 1 });
+    expect(s.put(first, { locator: "p/1" })).toMatchObject({ deduplicated: false, bytesCompressed: firstCompressed });
+    expect(s.usageBytes()).toBe(firstCompressed);
+    let caught: unknown;
+    try {
+      s.put(second, { locator: "p/2" });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ArtifactBudgetExceededError);
+    const e = caught as ArtifactBudgetExceededError;
+    expect(e.usageBytes).toBe(firstCompressed);
+    expect(e.budgetBytes).toBe(firstCompressed + 1);
+    expect(e.attemptedBytes).toBeGreaterThan(0);
+    expect(s.has(`sha256:${sha256Hex(second)}`)).toBe(false); // nothing written, no metadata row
+    expect(s.meta(`sha256:${sha256Hex(second)}`)).toBeUndefined();
+    expect(s.usageBytes()).toBe(firstCompressed);
+    expect(s.diskUsageBytes()).toBe(firstCompressed);
+    expect(s.count()).toBe(1);
+    // Re-putting existing content is a metadata touch, never a write, so it is always within budget.
+    expect(s.put(first, { locator: "p/1-again" }).deduplicated).toBe(true);
+    expect(() => new ArtifactStore(join(dir, "x"), db, Date.now, { budgetBytes: 0 })).toThrow(RangeError);
   });
 
   it("verifySample walks the store deterministically", () => {

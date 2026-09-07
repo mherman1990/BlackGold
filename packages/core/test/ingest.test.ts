@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync } from "node:fs";
+import { constants as zc, zstdCompressSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isoDate, utc, type Db } from "@blackgold/shared";
 import { NyseCalendar } from "../src/calendar/nyse.ts";
 import { parseAppConfig, type AppConfig } from "../src/config/load.ts";
-import { ArtifactStore } from "../src/data/artifacts/store.ts";
+import { ArtifactBudgetExceededError, ArtifactStore } from "../src/data/artifacts/store.ts";
 import type { FetchLike } from "../src/data/http.ts";
 import { openCoreDb } from "../src/db/open.ts";
 import { MissingSourceCredentialError } from "../src/errors.ts";
 import { Ledger } from "../src/ledger/ledger.ts";
-import { ArtifactBudgetExceededError, parseIngestArgs, runIngest, UsageError, type IngestRequest } from "../src/ingest/run.ts";
+import { parseIngestArgs, runIngest, UsageError, type IngestRequest } from "../src/ingest/run.ts";
 
 const FIX = new URL("../../../test/fixtures/", import.meta.url);
 const read = (p: string): Uint8Array => new Uint8Array(readFileSync(new URL(p, FIX)));
@@ -133,6 +134,25 @@ describe("ingest run", () => {
     await expect(runIngest({ db: h.db, config: h.config, calendar, clock, fetchImpl: h.fetchImpl }, FRED_REQUEST)).rejects.toThrow(MissingSourceCredentialError);
     expect(h.requests).toHaveLength(0);
     h.db.close();
+  });
+
+  it("enforces the budget on every write: a multi-page ingest stops at the page that would overrun it", async () => {
+    const h = harness();
+    const page1Compressed = zstdCompressSync(fixtures.alpaca1, { params: { [zc.ZSTD_c_compressionLevel]: 9 } }).byteLength;
+    const tight = { ...h.config, sources: { ...h.config.sources, artifactBudgetBytes: page1Compressed + 1 } };
+    const deps = { db: h.db, config: tight, calendar, clock, fetchImpl: h.fetchImpl };
+    await expect(runIngest(deps, ALPACA_REQUEST)).rejects.toThrow(ArtifactBudgetExceededError);
+    // Page 1 fit and stays (audit data is never deleted); page 2 was refused before touching disk.
+    const store = new ArtifactStore(tight.artifactsDir, h.db);
+    expect(store.count()).toBe(1);
+    expect(store.diskUsageBytes()).toBe(page1Compressed);
+    // No observation from the truncated run reached the repository, so nothing half-ingested can be read.
+    expect((h.db.prepare("SELECT count(*) AS n FROM observations").get() as { n: number }).n).toBe(0);
+    const refused = new Ledger(h.db).events().filter((e) => e.kind === "ingest.refused_budget");
+    expect(refused).toHaveLength(1);
+    expect(refused[0]?.payload).toMatchObject({ source: "alpaca-bars", budgetBytes: page1Compressed + 1, usageBytes: page1Compressed, requestsCompleted: 2 });
+    expect((refused[0]?.payload as { attemptedBytes: number }).attemptedBytes).toBeGreaterThan(0);
+    expect(h.requests).toHaveLength(2);
   });
 
   it("refuses when the artifact store exceeds its budget and records the refusal", async () => {

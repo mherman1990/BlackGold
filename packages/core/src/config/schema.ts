@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ACCOUNT_ROLES, ARMS, MODES, SLEEVE_ROLE } from "@blackgold/shared";
+import { ACCOUNT_ROLES, ARMS, MODES, SLEEVE_ROLE, durationMs } from "@blackgold/shared";
 
 /**
  * Configuration schemas for Black Gold core. Money, percentages, and ratios are decimal STRINGS
@@ -65,7 +65,12 @@ const AppConfigInput = z.object({
       alpacaKeyId: z.string().min(8).optional(),
       alpacaSecretKey: z.string().min(8).optional(),
       /** Per-source-prefix processing delays as ISO-8601 durations; override spec defaults. */
-      processingDelays: z.record(z.string(), z.string().regex(/^P(T\d+[HMS]|\d+D)/)).default({}),
+      processingDelays: z
+        .record(
+          z.string().min(1),
+          z.string().regex(/^P(?:\d+D)?(?:T(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/, "ISO-8601 duration such as PT15M, PT2H, P1D, or P1DT6H").refine((s) => s !== "P" && s !== "PT", "duration must name at least one unit"),
+        )
+        .default({}),
       /** Storage cap for the raw artifact store in bytes (spec section 9). */
       artifactBudgetBytes: z.number().int().positive().default(40 * 1024 * 1024 * 1024),
     })
@@ -382,3 +387,15 @@ export const CONFIG_SCHEMAS = {
   "restricted-list": RestrictedListConfigSchema,
   "live-authorization": LiveAuthorizationSchema,
 } as const;
+
+/**
+ * Configured per-source-prefix processing delays in milliseconds, the shape `PointInTimeRepository` takes as
+ * `processingDelayOverrides`. Every repository the runtime constructs must receive this; a repository built
+ * without it silently falls back to the spec defaults (15 or 60 minutes) and can read a source earlier than
+ * the operator declared realistic.
+ */
+export function processingDelayOverridesMs(sources: AppConfig["sources"]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [prefix, iso] of Object.entries(sources.processingDelays)) out[prefix] = durationMs(iso);
+  return out;
+}

@@ -11,6 +11,7 @@ import {
   FinancialPictureConfigSchema,
   RestrictedListConfigSchema,
   LiveAuthorizationSchema,
+  processingDelayOverridesMs,
 } from "../src/index.ts";
 import { LIVE_MODES, MODES } from "@blackgold/shared";
 
@@ -39,6 +40,18 @@ describe("app config from environment", () => {
     for (const role of ["default", "*", "sleeve", "BLACKGOLD_SLEEVE"]) {
       expect(() => envToAppConfigInput({ BLACKGOLD_SLEEVE_ACCOUNT_ROLE: role }), role).toThrow(SleeveRoleError);
     }
+  });
+
+  it("reads processing-delay overrides from the environment and converts them for the repository", () => {
+    const cfg = loadAppConfig({ BLACKGOLD_PROCESSING_DELAYS: "fred.=PT2H, cftc.=P1D,sec.edgar.=P1DT6H" });
+    expect(cfg.sources.processingDelays).toEqual({ "fred.": "PT2H", "cftc.": "P1D", "sec.edgar.": "P1DT6H" });
+    expect(processingDelayOverridesMs(cfg.sources)).toEqual({ "fred.": 7_200_000, "cftc.": 86_400_000, "sec.edgar.": 108_000_000 });
+    expect(processingDelayOverridesMs(loadAppConfig({}).sources)).toEqual({});
+    for (const bad of ["fred.=2h", "fred.", "=PT1H", "fred.=P", "fred.=PT", "fred.=PT1H,"]) {
+      if (bad.endsWith(",")) continue; // a trailing comma is tolerated
+      expect(() => loadAppConfig({ BLACKGOLD_PROCESSING_DELAYS: bad }), bad).toThrow(ConfigError);
+    }
+    expect(loadAppConfig({ BLACKGOLD_PROCESSING_DELAYS: "fred.=PT1H," }).sources.processingDelays).toEqual({ "fred.": "PT1H" });
   });
 
   it("rejects malformed values with a ConfigError", () => {

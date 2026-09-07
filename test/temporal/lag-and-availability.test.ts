@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { isoDate, sha256Hex, utc, zonedToUtc, type UtcInstant } from "@blackgold/shared";
 import {
   ArtifactStore,
+  Ledger,
   NyseCalendar,
   PointInTimeRepository,
   TemporalInversionError,
@@ -23,6 +24,7 @@ import {
   quarterEndOf,
   secDissemination,
   thirteenFDeadline,
+  verifyArtifacts,
   type PointInTimeObservation,
 } from "@blackgold/core";
 
@@ -30,10 +32,10 @@ const cal = new NyseCalendar();
 const T = (s: string): UtcInstant => utc(s);
 const H = (s: string): string => `sha256:${sha256Hex(s)}`;
 
-function rig(): { repo: PointInTimeRepository; store: ArtifactStore } {
+function rig(): { repo: PointInTimeRepository; store: ArtifactStore; ledger: Ledger } {
   const dir = mkdtempSync(join(tmpdir(), "bg-temporal-"));
   const db = openCoreDb({ dbPath: join(dir, "t.sqlite") }).db;
-  return { repo: new PointInTimeRepository(db), store: new ArtifactStore(join(dir, "artifacts"), db) };
+  return { repo: new PointInTimeRepository(db), store: new ArtifactStore(join(dir, "artifacts"), db), ledger: new Ledger(db) };
 }
 
 function obs<T>(p: Partial<PointInTimeObservation<T>> & { sourceId: string; availableAt: UtcInstant; value: T }): PointInTimeObservation<T> {
@@ -133,17 +135,17 @@ describe("Fixture: Form 4 acceptance versus transaction", () => {
 
 describe("Fixture: COT release lag", () => {
   it("Tuesday positions are visible only after Friday 15:30 ET; a holiday Friday moves release to Monday", () => {
-    const normal = cotReleaseInstant(isoDate("2026-09-08"), cal);
+    const normal = cotReleaseInstant(isoDate("2026-09-08"));
     expect(normal).toEqual({ availableAt: "2026-09-11T19:30:00.000Z", flags: [] }); // EDT
-    const holidayWeek = cotReleaseInstant(isoDate("2026-06-30"), cal); // Friday 2026-07-03 is a holiday
+    const holidayWeek = cotReleaseInstant(isoDate("2026-06-30")); // Friday 2026-07-03 is a holiday
     expect(holidayWeek).toEqual({ availableAt: "2026-07-06T19:30:00.000Z", flags: ["RELEASE_DELAYED"] });
     const { repo } = rig();
     repo.append(obs({ sourceId: "cftc.cot.legacy", observedAt: T("2026-09-08T00:00:00Z"), availableAt: normal.availableAt, value: { week: 2 } }));
-    repo.append(obs({ sourceId: "cftc.cot.legacy", sourceLocator: "prev", observedAt: T("2026-09-01T00:00:00Z"), availableAt: cotReleaseInstant(isoDate("2026-09-01"), cal).availableAt, value: { week: 1 } }));
+    repo.append(obs({ sourceId: "cftc.cot.legacy", sourceLocator: "prev", observedAt: T("2026-09-01T00:00:00Z"), availableAt: cotReleaseInstant(isoDate("2026-09-01")).availableAt, value: { week: 1 } }));
     // Wednesday decision sees only the prior week's report.
     const wed = repo.asOf<{ week: number }>({ sourceId: "cftc.cot.legacy", decisionAt: T("2026-09-09T20:00:00Z") });
     expect(wed.rows.map((r) => r.value.week)).toEqual([1]);
-    expect(() => cotReleaseInstant(isoDate("2026-09-09"), cal)).toThrow(RangeError);
+    expect(() => cotReleaseInstant(isoDate("2026-09-09"))).toThrow(RangeError);
   });
 });
 
@@ -171,13 +173,13 @@ describe("Fixture: early close and DST", () => {
   });
 
   it("COT release maps to 19:30 UTC in summer and 20:30 UTC in winter", () => {
-    expect(cotReleaseInstant(isoDate("2026-07-14"), cal).availableAt).toBe("2026-07-17T19:30:00.000Z");
-    expect(cotReleaseInstant(isoDate("2026-12-08"), cal).availableAt).toBe("2026-12-11T20:30:00.000Z");
+    expect(cotReleaseInstant(isoDate("2026-07-14")).availableAt).toBe("2026-07-17T19:30:00.000Z");
+    expect(cotReleaseInstant(isoDate("2026-12-08")).availableAt).toBe("2026-12-11T20:30:00.000Z");
     // Transition weeks: 2026-03-08 (spring forward) and 2026-11-01 (fall back)
-    expect(cotReleaseInstant(isoDate("2026-03-03"), cal).availableAt).toBe("2026-03-06T20:30:00.000Z");
-    expect(cotReleaseInstant(isoDate("2026-03-10"), cal).availableAt).toBe("2026-03-13T19:30:00.000Z");
-    expect(cotReleaseInstant(isoDate("2026-10-27"), cal).availableAt).toBe("2026-10-30T19:30:00.000Z");
-    expect(cotReleaseInstant(isoDate("2026-11-03"), cal).availableAt).toBe("2026-11-06T20:30:00.000Z");
+    expect(cotReleaseInstant(isoDate("2026-03-03")).availableAt).toBe("2026-03-06T20:30:00.000Z");
+    expect(cotReleaseInstant(isoDate("2026-03-10")).availableAt).toBe("2026-03-13T19:30:00.000Z");
+    expect(cotReleaseInstant(isoDate("2026-10-27")).availableAt).toBe("2026-10-30T19:30:00.000Z");
+    expect(cotReleaseInstant(isoDate("2026-11-03")).availableAt).toBe("2026-11-06T20:30:00.000Z");
   });
 });
 
@@ -208,7 +210,7 @@ describe("Fixture: corrected bar and temporal inversion", () => {
 
 describe("Fixture: artifact integrity", () => {
   it("a byte flip is detected and referencing observations are excluded from decisions", () => {
-    const { repo, store } = rig();
+    const { repo, store, ledger } = rig();
     const bytes = Buffer.from(JSON.stringify({ filing: "10-K", text: "x".repeat(500) }));
     const { hash } = store.put(bytes, { locator: "sec/0000012345-26-000001", retention: "filings" });
     repo.append(obs({ sourceId: "sec.edgar.submissions", rawContentHash: hash, availableAt: T("2026-09-01T10:00:00Z"), value: { form: "10-K" } }));
@@ -217,15 +219,20 @@ describe("Fixture: artifact integrity", () => {
     const buf = readFileSync(path);
     buf[8] = buf[8] === 0 ? 255 : 0;
     writeFileSync(path, buf);
-    const verdict = store.verify(hash);
-    expect(verdict.ok).toBe(false);
-    // The daily verify job marks referencing rows ARTIFACT_MISSING by appending a corrected row.
-    const stale = repo.all("sec.edgar.submissions").filter((r) => r.rawContentHash === hash);
-    for (const r of stale) {
-      repo.append({ ...r, qualityFlags: [...r.qualityFlags, "ARTIFACT_MISSING"], ingestedAt: T("2026-12-31T00:00:00Z") });
-    }
+    // The verify job (CLI `artifacts verify`, later the daily scheduler job) detects the failure, appends an
+    // ARTIFACT_MISSING correction to every referencing row, and records the incident in the ledger.
+    const report = verifyArtifacts({ store, repo, ledger, clock: () => Date.parse("2026-12-31T00:00:00Z") }, { sample: 10 });
+    expect(report.failed.map((f) => f.hash)).toEqual([hash]);
+    expect(report.rowsExcluded).toBe(1);
+    expect(ledger.events().filter((e) => e.kind === "artifact.integrity_failed")).toHaveLength(1);
     // Excluded once flagged: the corrected row (latest) carries ARTIFACT_MISSING and is barred from decisions,
     // and the collapse rule never falls back to a superseded row.
     expect(repo.asOf({ sourceId: "sec.edgar.submissions", decisionAt: T("2027-01-01T00:00:00Z") }).rows).toHaveLength(0);
+    // Decisions made before the detection are unchanged and reproducible.
+    expect(repo.asOf({ sourceId: "sec.edgar.submissions", decisionAt: T("2026-09-02T00:00:00Z") }).rows).toHaveLength(1);
+    // A second run finds nothing new to exclude and does not re-log the incident.
+    const again = verifyArtifacts({ store, repo, ledger }, { sample: 10 });
+    expect(again.rowsExcluded).toBe(0);
+    expect(ledger.events().filter((e) => e.kind === "artifact.integrity_failed")).toHaveLength(1);
   });
 });

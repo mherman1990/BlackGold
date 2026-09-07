@@ -87,7 +87,7 @@ The query is implemented once, in a single repository function, and every strate
 
 ### CFTC Commitments of Traders
 
-- Positions are as of Tuesday. Public release is Friday 15:30 ET (19:30 or 20:30 UTC depending on DST). Holiday weeks shift release; use the CFTC release schedule, not an assumed Friday.
+- Positions are as of Tuesday. Public release is Friday 15:30 ET (19:30 or 20:30 UTC depending on DST). Holiday weeks follow the FEDERAL holiday calendar, not the exchange calendar: a federal holiday on the Wednesday, Thursday, or Friday of the release week moves the release to the following Monday 15:30 ET (next federal business day if that Monday is a holiday) and the row carries `RELEASE_DELAYED`; a Monday holiday does not delay it. The rule reproduces every published 2026 release date (CR-27). Veterans Day and Columbus Day are the cases where an NYSE-calendar rule would expose the report early.
 - `observedAt` is the Tuesday position date. `availableAt` is the actual release instant. Store both. A backtest that uses Tuesday as the availability date sees three days into the future.
 - Source: the CFTC public reporting API (Socrata-style). Works without a token as of 2026-09-06; register for a token if throttled.
 
@@ -147,7 +147,7 @@ Corporate actions are explicit records, each a `PointInTimeObservation<Corporate
 
 Tickers are not stable identifiers. Every observation about a security resolves to a stable internal `entityId` through a date-effective mapping table.
 
-- The mapping table is itself point-in-time: `(symbol, effectiveFrom, effectiveTo) -> entityId`, populated from `SYMBOL_CHANGE`, `MERGER`, `SPINOFF`, and `DELISTING` records and from the SEC company tickers file (CIK to ticker) with its own `availableAt`.
+- The mapping table is itself point-in-time and bitemporal: `(symbol, effectiveFrom, effectiveTo, knownFrom, closeKnownFrom) -> entityId`, populated from `SYMBOL_CHANGE`, `MERGER`, `SPINOFF`, and `DELISTING` records and from the SEC company tickers file (CIK to ticker) with its own `availableAt`. `effectiveFrom/To` say when the symbol denoted the entity; `knownFrom` (the action's `availableAt` plus processing delay) and `closeKnownFrom` say from which instant that fact was knowable. A resolution for decision instant D ignores ranges with `knownFrom > D` and treats a close with `closeKnownFrom > D` as not yet having happened, so syncing the table for a later decision never changes what an earlier decision resolves.
 - For SEC sources the natural key is CIK. For market data it is the symbol at that date. For ETFs the issuer's fund identifier is preferred where public; otherwise the symbol at date.
 - A ticker that maps to two entities on the same date (reused symbol after a delisting) is resolved by date range. Failure to resolve yields `UNKNOWN_ENTITY` and the row is excluded.
 - Restricted-list entries are stored against `entityId` and against every symbol the entity has carried, so a symbol change cannot make a restricted name eligible.
@@ -164,7 +164,8 @@ Every fact the runtime model receives is a reference, not free text. A sealed ev
 - Metadata table in SQLite: hash, byte size raw and compressed, MIME type, first `sourceLocator`, first `ingestedAt`, fetch headers (ETag, Last-Modified), reference count from observations, retention class.
 - Deduplication by hash. A refetch that yields identical bytes creates no new artifact; it updates last-verified time only.
 - Immutable by convention: the store has no update path in code. A daily job verifies a random sample of artifacts against their hashes and reports mismatches as an incident. The ledger's daily seal covers the metadata table.
-- Every observation references exactly one artifact by hash. An observation whose artifact is missing is flagged `ARTIFACT_MISSING` and excluded from decisions.
+- Every observation references exactly one artifact by hash. When verification finds an artifact missing, corrupt, or undecodable, the verify job appends an `ARTIFACT_MISSING` correction to every referencing observation, available from the detection instant, and records `artifact.integrity_failed` in the ledger. Decisions from that instant on exclude the rows; decisions made before detection still reproduce exactly.
+- Storage budget: the store refuses, before writing, any artifact that would carry it past the configured cap. The cap is enforced per write, so a multi-page ingest stops at the page that would overrun it; earlier pages stay (audit data is never deleted) and no observation from the interrupted run is appended.
 
 ## 8. Data-quality rules and reason codes
 

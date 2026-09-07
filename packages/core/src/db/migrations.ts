@@ -196,24 +196,31 @@ BEGIN SELECT RAISE(ABORT, 'trial ledger is append-only'); END;
   {
     id: "0006_entity_symbols",
     up: `
+-- Bitemporal: effective_from/effective_to say WHEN a symbol denoted the entity; known_from and
+-- close_known_from say from WHICH INSTANT that fact (and its closing) was knowable. A point-in-time
+-- resolution at decision D ignores rows with known_from > D and treats a close with close_known_from > D
+-- as not yet having happened, so a later sync can never leak into an earlier decision.
 CREATE TABLE entity_symbols (
-  id             INTEGER PRIMARY KEY,
-  symbol         TEXT NOT NULL,
-  effective_from TEXT NOT NULL,
-  effective_to   TEXT,
-  entity_id      TEXT NOT NULL,
-  source         TEXT NOT NULL,
-  registered_at  TEXT NOT NULL
+  id               INTEGER PRIMARY KEY,
+  symbol           TEXT NOT NULL,
+  effective_from   TEXT NOT NULL,
+  effective_to     TEXT,
+  entity_id        TEXT NOT NULL,
+  source           TEXT NOT NULL,
+  registered_at    TEXT NOT NULL,
+  known_from       TEXT NOT NULL,
+  close_known_from TEXT,
+  CHECK ((effective_to IS NULL) = (close_known_from IS NULL))
 );
 CREATE INDEX entity_symbols_symbol ON entity_symbols (symbol, effective_from);
 CREATE INDEX entity_symbols_entity ON entity_symbols (entity_id);
 CREATE TRIGGER entity_symbols_no_delete BEFORE DELETE ON entity_symbols
 BEGIN SELECT RAISE(ABORT, 'entity symbol ranges are append-only'); END;
 CREATE TRIGGER entity_symbols_close_only BEFORE UPDATE ON entity_symbols
-WHEN OLD.effective_to IS NOT NULL OR NEW.effective_to IS NULL OR NEW.symbol <> OLD.symbol
+WHEN OLD.effective_to IS NOT NULL OR NEW.effective_to IS NULL OR NEW.close_known_from IS NULL OR NEW.symbol <> OLD.symbol
   OR NEW.effective_from <> OLD.effective_from OR NEW.entity_id <> OLD.entity_id OR NEW.source <> OLD.source
-  OR NEW.registered_at <> OLD.registered_at OR NEW.id <> OLD.id
-BEGIN SELECT RAISE(ABORT, 'an open symbol range may only be closed'); END;
+  OR NEW.registered_at <> OLD.registered_at OR NEW.known_from <> OLD.known_from OR NEW.id <> OLD.id
+BEGIN SELECT RAISE(ABORT, 'an open symbol range may only be closed, with the instant the close became known'); END;
 `,
   },
 ];

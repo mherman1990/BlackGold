@@ -418,7 +418,13 @@ export class ExperimentRegistry {
     return this.db.transaction(() => {
       const rec = this.get(experimentId);
       if (value) {
-        const blocked = blocksPromotionEvidence(rec.labels);
+        // Labels attach at registration and per trial (a snapshot or asOf read can label a single run
+        // SURVIVORSHIP_BIASED or OPTIMISTIC_DELAY). Any blocking label anywhere makes the whole experiment
+        // exploratory: promotion evidence is refused when one trial carries one.
+        const trialLabels = (this.db.prepare("SELECT labels_json FROM trial_ledger WHERE experiment_id = ?").all(experimentId) as { labels_json: string }[]).flatMap(
+          (r) => JSON.parse(r.labels_json) as string[],
+        );
+        const blocked = [...new Set(blocksPromotionEvidence([...rec.labels, ...trialLabels]))].sort();
         if (blocked.length > 0 || !rec.promotionEvidenceAllowed) {
           throw new PromotionEvidenceRefusedError(experimentId, `labels ${blocked.length > 0 ? blocked.join(", ") : rec.labels.join(", ")} make the run exploratory only`);
         }

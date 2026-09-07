@@ -128,11 +128,12 @@
           "default": {},
           "type": "object",
           "propertyNames": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "additionalProperties": {
             "type": "string",
-            "pattern": "^P(T\\d+[HMS]|\\d+D)"
+            "pattern": "^P(?:\\d+D)?(?:T(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
           }
         },
         "artifactBudgetBytes": {

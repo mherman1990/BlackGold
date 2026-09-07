@@ -1,8 +1,8 @@
 import { parseArgs } from "node:util";
 import { isoDate, nowUtc, type Db, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import type { ExchangeCalendar } from "../calendar/types.ts";
-import type { AppConfig } from "../config/schema.ts";
-import { ArtifactStore } from "../data/artifacts/store.ts";
+import { processingDelayOverridesMs, type AppConfig } from "../config/schema.ts";
+import { ArtifactBudgetExceededError, ArtifactStore } from "../data/artifacts/store.ts";
 import { AllowlistedHttpClient, PUBLIC_SOURCE_HOSTS, PUBLIC_SOURCE_RATES, type FetchLike } from "../data/http.ts";
 import { PointInTimeRepository } from "../data/pit/repository.ts";
 import type { FetchOutcome } from "../data/adapters/common.ts";
@@ -52,13 +52,6 @@ export type IngestDeps = {
   fetchImpl?: FetchLike | undefined;
 };
 
-export class ArtifactBudgetExceededError extends Error {
-  constructor(usageBytes: number, budgetBytes: number) {
-    super(`Artifact store holds ${usageBytes} bytes, over the configured budget of ${budgetBytes}; ingest refused`);
-    this.name = "ArtifactBudgetExceededError";
-  }
-}
-
 /** The public-source client: allowlist and rates from http.ts, User-Agent "BlackGold/<version> (<contact>)". */
 export function buildPublicSourceClient(config: AppConfig, fetchImpl?: FetchLike): AllowlistedHttpClient {
   const contact = config.sources.secUserAgentContact;
@@ -76,18 +69,27 @@ export async function runIngest(deps: IngestDeps, request: IngestRequest): Promi
   const clock = deps.clock ?? Date.now;
   const ingestedAt = nowUtc(clock);
   const ledger = new Ledger(deps.db, clock);
-  const store = new ArtifactStore(deps.config.artifactsDir, deps.db, clock);
-  const usage = store.diskUsageBytes();
   const budget = deps.config.sources.artifactBudgetBytes;
-  if (usage > budget) {
-    ledger.append("ingest.refused_budget", { source: request.source, usageBytes: usage, budgetBytes: budget }, ingestedAt);
-    throw new ArtifactBudgetExceededError(usage, budget);
-  }
+  // The store enforces the cap on every write, so a multi-page fetch cannot overrun it page by page.
+  const store = new ArtifactStore(deps.config.artifactsDir, deps.db, clock, { budgetBytes: budget });
   const client = buildPublicSourceClient(deps.config, deps.fetchImpl);
   const ctx = { calendar: deps.calendar, ingestedAt };
-  const outcome: FetchOutcome<unknown> = await dispatch(client, store, deps.config, ctx, request);
+  let outcome: FetchOutcome<unknown>;
+  try {
+    store.assertWithinBudget();
+    outcome = await dispatch(client, store, deps.config, ctx, request);
+  } catch (err) {
+    if (err instanceof ArtifactBudgetExceededError) {
+      ledger.append(
+        "ingest.refused_budget",
+        { source: request.source, usageBytes: err.usageBytes, budgetBytes: err.budgetBytes, attemptedBytes: err.attemptedBytes, requestsCompleted: client.requests() },
+        ingestedAt,
+      );
+    }
+    throw err;
+  }
 
-  const repo = new PointInTimeRepository(deps.db, { clock });
+  const repo = new PointInTimeRepository(deps.db, { clock, processingDelayOverrides: processingDelayOverridesMs(deps.config.sources) });
   const results = repo.appendMany(outcome.observations);
   const sourceIds = [...new Set(outcome.observations.map((o) => o.sourceId))].sort();
   const report = {
