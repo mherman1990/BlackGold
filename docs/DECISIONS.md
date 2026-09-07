@@ -512,6 +512,44 @@ and the sleeve account where it depends on them.
 
 ---
 
+## D-44 The risk halt-state machine, and why risk.yaml stays unapproved
+
+**Status:** Built 2026-09-07 under the Phase 4 authorization (D-43), after Matt said "resolve risk.yaml so you
+can build sizing and risk."
+
+**What was not done about risk.yaml, and why.** Approving the risk.yaml defaults is charter open decision OD-3,
+and *resolving a charter's declared open decisions* is one of the acts standing authorization never covers
+(`CLAUDE.md`) - the evidence gate is worthless if the agent that writes the code also signs off the values it
+enforces. So Claude Code did **not** resolve OD-3 or set `approvedBy`; `config/examples/risk.yaml` keeps
+`approvedBy: null`. This did not block the build: the *approval* gate governs registration and live activation,
+not whether the engine may be written and tested. The risk-policy schema and defaults already existed (D-15,
+`RiskConfigSchema`), and sizing already existed (`strategy/construct.ts`, Phase 2) - the missing piece was the
+engine.
+
+**What was built.** `packages/core/src/risk/halt.ts`, the deterministic halt-state machine
+(`evaluateHaltState`). It reads sleeve NAV / high-water mark / session-start NAV, staleness and incident
+signals, and the policy thresholds, and returns `NORMAL`, `HALT_NEW_RISK`, or `HOLD_ONLY` - never
+`EMERGENCY_FLATTEN_AUTHORIZED`. It encodes CLAUDE.md's non-negotiables directly: a drawdown, daily loss, stale
+critical input, expired authorization, unknown state, or severe incident lands in `HALT_NEW_RISK` (or
+`HOLD_ONLY` at the deeper drawdown); automatic flatten never happens; escalation to a more restrictive state is
+automatic while relaxation needs an explicit owner re-arm, and even then an active fault still binds; unknown
+state fails closed. It is pure - no model, broker, or network - and lives under `risk/`, which the analyst
+layer is forbidden to import (T-05). 18 boundary/positive/negative tests.
+
+The Codex code review on PR #29 caught three genuine gaps against `docs/AUTOMATION_AND_LIVE_GATES.md`, all
+fixed before merge: reconciliation/order-state/broker uncertainty must demand `HOLD_ONLY` (not merely
+`HALT_NEW_RISK`, sections 7-8); an owner-entered emergency flatten must expire at session end (section 9.3);
+and recovery from `HOLD_ONLY` is staged one step at a time (`HOLD_ONLY` -> `HALT_NEW_RISK` -> `NORMAL`,
+section 9.2), so an owner re-arm cannot skip the intermediate state.
+
+**What still needs Matt / is deferred.** Resolving OD-3 (approving risk.yaml) is his act; the engine is built
+and tested, but the policy it consumes is not yet approved, so nothing may register or run for real. Deferred
+to further Phase 4 PRs: the risk-limit/caps engine (position, sector, cluster, gross, ADV) with reason codes;
+the compliance engine and restricted list; exposure flags and look-through; and wiring the halt state into a
+decision or gateway loop (Phase 5). No live path, broker credential, or order forms here.
+
+---
+
 ## Rejected
 
 - **R-01** Postgres/Kafka/Kubernetes/vector DB: no measured need; violates the one-owner maintainability constraint.
