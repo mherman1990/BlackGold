@@ -46,6 +46,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-38 | `release.yml` also accepts `workflow_dispatch` with a version, and creates the `v<version>` tag itself after checks pass. Claude Code releases through that instead of a tag push, because GitHub refuses its credential any tag ref | Accepted 2026-09-07 by Matt, who asked for the capability directly | Makes D-37's tagging grant actually usable; narrower than a general tag-ref permission |
 | D-39 | The `etf-trend-vol` charter's four open decisions resolved and the XLE condition settled: look-through applies and XLE is excluded (12-ETF risk universe), BIL is the cash instrument, `risk.yaml` defaults approved as written with ADV participation at 1%, and Alpaca free/IEX approved as the market-data source | Accepted 2026-09-07 by Matt | Removes four of the nine blockers on charter registration; the approval block remains unsigned and is his alone |
 | D-40 | Granary (separate product `mherman1990/Granary`) owns the household / personal-finance / capital-allocation layer and sits above Black Gold in the hierarchy, reading Black Gold data read-only. Black Gold takes no dependency on Granary and stops growing an in-house household planner | **Proposed** 2026-09-07 by Claude Code | Phase 4 (household scope) |
+| D-41 | Phase 3 authorized (Matt, 2026-09-07, ordering "2 → 1 → 3"). Built as the provider-agnostic analyst pipeline and its safety surface, tested with a deterministic stub; the real Anthropic adapter, the POST egress change, and live CR-11/12/13 re-verification are a separate follow-up PR needing an API key | Accepted 2026-09-07 by Matt | Provider wiring, call/budget persistence, and prospective C1/D1 backtest wiring remain (credentials / Phase 5) |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -411,6 +412,36 @@ signing it is the owner's act. `assertRegistrable` still refuses this charter, c
 4. **If and when Granary consumes Black Gold, it does so through a read-only export that carries weights and states, never dollars or accounts.** Black Gold exports the sleeve's composition (instrument weights as fractions of sleeve NAV), per-arm decisions, risk/evidence state, data-freshness flags, and sealed ledger roots - and never a dollar amount, account identifier, credential, order, or mutation method. Granary is the household book of record and already holds the sleeve's dollar balance, so it supplies the dollar denominator itself; Black Gold emitting a dollar NAV off-device would violate A3/T-22/F13 and the status-page rule, so it does not. The full design is in `docs/GRANARY_EXPORT_CONTRACT.md` (also Proposed); building it is Phase 4/5 work, not now.
 
 **What this does not do.** It authorizes no code change, starts no phase, and grants Granary no access. It records the hierarchy so a future Black Gold session neither rebuilds the household layer here nor takes a dependency on Granary. The two decisions it unblocks - the exact read-only export contract (`docs/GRANARY_EXPORT_CONTRACT.md`), and whether `config/examples/financial-picture.yaml` stays a minimal local risk-gate input or is eventually fed from Granary - are Matt's to make when Phase 4 is authorized.
+
+---
+
+## D-41 Phase 3 authorization and provider-deferral scoping
+
+**Status:** Accepted 2026-09-07 by Matt, who set the order of work as "2, 1, 3" — the read-only export contract
+first, then Phase 3, then charter signing and data.
+
+**What was built.** The bounded runtime-LLM analyst overlay, as the complete provider-agnostic pipeline and
+its safety surface, tested end to end with a `DeterministicStubAdapter` (no credentials, no network): the
+strict `ResearchAssessment` schema and fail-closed validator; the sealed evidence packet and its
+serialization guard; the `ModelAdapter` boundary and the `runAssessment` orchestration (budgets, deadline,
+retries, circuit breaker, no silent fallback, abstention); the B0/B1/C1/D1 overlay primitives with
+non-interaction enforced by type and contamination labels; the model capability manifest and fail-closed
+resolver; the adversarial corpus; the T-05 no-LLM-in-sizing CI gate; and the locked ablation plan.
+
+**What was deliberately deferred, and why.** The real Anthropic adapter is a separate follow-up PR, not part
+of this one, for a concrete safety reason: wiring it means loosening a permanent CI gate
+(`live-disabled.test.ts` forbids `@anthropic-ai/sdk` and `api.anthropic.com`) and adding a POST egress path
+(`data/http.ts` is policy-forbidden from issuing a POST). That is a deliberate change to the egress/safety
+model and deserves its own review and an API key to verify CR-11/12/13 against the live Models API. Persisting
+the model-call record and the running budget, and wiring C1/D1 into the decision loop, are likewise deferred:
+recording a real call and running a prospective C1/D1 belong with Phase 5 shadow operation. The Phase 3 exit
+criteria are about pipeline safety and are all provider-agnostic, so the safety surface is complete and tested
+now; the deferred items each need either credentials or a later phase. `docs/PHASE3_REQUIREMENTS_MATRIX.md`
+records exactly which rows this leaves open and why.
+
+**What this does not do.** It integrates no live mode, adds no broker credential, and adds no provider egress
+path. No LLM output can set a size, choose an account, or form an order — enforced structurally and by a
+permanent CI gate. The ablation plan is locked but registers no experiment and promotes nothing.
 
 ---
 
