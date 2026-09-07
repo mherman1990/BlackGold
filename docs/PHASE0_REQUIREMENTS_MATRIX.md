@@ -11,11 +11,12 @@ Status values: `implemented`, `tested`, `deferred`, `blocked`, `not applicable`.
 | 5 | `umbrel-app-store.yml` and `blackgold-trading/` manifests with approved identifiers | tested | `scripts/check-identity.ts`; `test/policy/identity.test.ts` |
 | 6 | `scripts/check-identity.ts` cross-file consistency | tested | `npm run check:identity` |
 | 7 | Config schemas (app, `risk.yaml`, financial picture, restricted list, `LIVE_AUTHORIZATION`) with fake examples | tested | `packages/core/src/config/`, `config/examples/`, core config tests |
-| 8 | SQLite WAL, migrations, online backup, integrity check, restore script | tested | `packages/shared/src/db.ts`, `packages/core/src/db/`, `scripts/{backup,restore,integrity-check}.sh`, tests |
-| 9 | Append-only hash-chained ledger with daily seal | tested | `packages/core/src/ledger/`, ledger tests (trigger blocks UPDATE/DELETE; chain detects tampering) |
+| 8 | SQLite WAL, migrations, online backup, integrity check, restore script | tested | `packages/shared/src/db.ts`, `packages/core/src/db/`, `scripts/{backup,restore,integrity-check}.sh`, tests; CLI drill `backup` then `verify-backup` ok |
+| 9 | Append-only hash-chained ledger with daily seal | tested | `packages/core/src/ledger/`, ledger tests (trigger blocks UPDATE/DELETE; chain detects tampering even after triggers are dropped; seal mismatch throws); CLI drill `verify-chain` ok over 9 events |
 | 10 | Exchange calendar with 2026–2027 NYSE fixtures | tested | `packages/core/src/calendar/`, calendar tests against nyse.com schedule accessed 2026-09-06 |
 | 11 | Deterministic scheduler with idempotency keys and missed-run detection | tested | `packages/core/src/scheduler/`, scheduler tests (duplicate tick, reboot replay, missed, deadline) |
-| 12 | `health` command | tested | core and gateway `main.ts health`; CI smoke test |
+| 12 | `health` command | tested | core and gateway `main.ts health`; CI smoke test; CLI drill 2026-09-07 (`health ok=true liveCapable=false`) |
+| 12a | `serve` commands (read-only status listener + scheduler loop; gateway keep-alive with no listener) | tested | `packages/core/src/serve.ts`; drill: GET /health 200, POST 405, SIGTERM exit 0 for both roles |
 | 13 | Synthetic broker adapter with fault injection | tested | `packages/broker-gateway/src/adapters/synthetic/`, gateway fault suite |
 | 14 | Notification stub | tested | `packages/core/src/notify/`, redaction test |
 | 15 | Order state machine skeleton with full legal-transition table | tested | `packages/broker-gateway/src/state-machine/`, exhaustive table test |
@@ -43,3 +44,15 @@ Status values: `implemented`, `tested`, `deferred`, `blocked`, `not applicable`.
 | Measured Pi resource use within budget | blocked | Requires `scripts/pi-benchmark.sh` on the Pi after the first install. |
 
 The two blocked criteria are the only Phase 0 items that need Matt's hardware. Everything else is verified in this repository's test suite and CI.
+
+## Evidence log
+
+| Date | Command | Result |
+|---|---|---|
+| 2026-09-07 | `npm run check` | lint clean; typecheck clean; 15 test files, 122 tests passed; identity check ok; secret scan ok over 144 tracked files |
+| 2026-09-07 | `blackgold-core migrate / health / run-jobs / seal / verify-chain / backup / verify-backup` against a scratch data dir | all exit 0; health `ok=true liveCapable=false`; chain and seals ok; restore drill ok |
+| 2026-09-07 | `BLACKGOLD_MODE=LIVE_MANUAL blackgold-core health` and `LIVE_LIMITED ... migrate` | exit 1 with `LiveModeUnavailableError` |
+| 2026-09-07 | `blackgold-core serve` probe | GET /health 200; GET / status page; POST /health 405; SIGTERM exit 0 |
+| 2026-09-07 | `blackgold-broker-gateway health` / `serve` | `liveCapable:false credentialLoaded:false adapters:["synthetic"]`; SIGTERM exit 0 |
+| pending | `ci.yml` on the Phase 0 PR | first multi-arch image build; records here after the run |
+| pending | Pi and Windows container runs; `scripts/pi-benchmark.sh` | Matt |
