@@ -35,9 +35,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p appdata/data
+          # The container runs as USER 1000:1000 and a bind mount keeps the HOST directory's ownership,
+          # ignoring the `chown 1000:1000 /data` the image does at build time. The runner's own uid is not
+          # 1000, so without this the very first write fails and the test proves nothing about the appliance.
+          # umbrelOS owns APP_DATA_DIR as uid 1000, so chowning to 1000 is what makes this test represent the
+          # Pi rather than the runner.
+          sudo chown -R 1000:1000 appdata/data
           docker run --rm -v "$PWD/appdata/data:/data" -e BLACKGOLD_DATA_DIR=/data \
             "ghcr.io/mherman1990/blackgold:${{ inputs.version }}" packages/core/dist/main.js migrate
           docker run --rm -v "$PWD/appdata/data:/data" -e BLACKGOLD_DATA_DIR=/data \
             "ghcr.io/mherman1990/blackgold:${{ inputs.version }}" packages/core/dist/main.js health | tee health.json
           node -e "const h=require('./health.json');if(!h.ok||h.liveCapable!==false)process.exit(1)"
           ls -la appdata/data
+
+          # Negative case: an unwritable data directory must fail with the diagnosable error, not SQLite's
+          # bare "unable to open database file". This is the failure an operator actually hits on a bad
+          # bind mount, and the first run of this workflow reported only the opaque form.
+          mkdir -p appdata/unwritable
+          sudo chown -R 0:0 appdata/unwritable
+          sudo chmod 555 appdata/unwritable
+          if docker run --rm -v "$PWD/appdata/unwritable:/data" -e BLACKGOLD_DATA_DIR=/data \
+               "ghcr.io/mherman1990/blackgold:${{ inputs.version }}" packages/core/dist/main.js migrate > unwritable.json 2>&1; then
+            echo "expected migrate to fail on an unwritable data dir, but it succeeded"; exit 1
+          fi
+          cat unwritable.json
+          grep -q "DataDirNotWritableError\|Cannot write to /data" unwritable.json
