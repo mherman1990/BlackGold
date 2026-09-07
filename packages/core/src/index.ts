@@ -56,3 +56,4 @@ export * from "./research/packet.ts";
 export * from "./model/adapter.ts";
 export * from "./model/assess.ts";
 export * from "./model/overlay.ts";
+export * from "./model/manifest.ts";

@@ -1,0 +1,115 @@
+{
+  "$id": "https://blackgold.local/config/schema/model-manifest.schema.json",
+  "title": "blackgold model-manifest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "models": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "modelId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "fast",
+              "synthesis",
+              "premium"
+            ]
+          },
+          "structuredOutput": {
+            "type": "boolean"
+          },
+          "promptCaching": {
+            "type": "boolean"
+          },
+          "batch": {
+            "type": "object",
+            "properties": {
+              "supported": {
+                "type": "boolean"
+              },
+              "completionWindowHours": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "supported",
+              "completionWindowHours"
+            ]
+          },
+          "contextTokens": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "pricing": {
+            "type": "object",
+            "properties": {
+              "inputPerMTokUsd": {
+                "type": "string",
+                "pattern": "^-?\\d+(\\.\\d+)?$"
+              },
+              "outputPerMTokUsd": {
+                "type": "string",
+                "pattern": "^-?\\d+(\\.\\d+)?$"
+              },
+              "cachedInputPerMTokUsd": {
+                "type": "string",
+                "pattern": "^-?\\d+(\\.\\d+)?$"
+              },
+              "checkedAt": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              }
+            },
+            "required": [
+              "inputPerMTokUsd",
+              "outputPerMTokUsd",
+              "cachedInputPerMTokUsd",
+              "checkedAt"
+            ]
+          },
+          "registeredTasks": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "extraction",
+                "triage",
+                "synthesis"
+              ]
+            }
+          }
+        },
+        "required": [
+          "provider",
+          "modelId",
+          "tier",
+          "structuredOutput",
+          "promptCaching",
+          "batch",
+          "contextTokens",
+          "pricing",
+          "registeredTasks"
+        ]
+      }
+    }
+  },
+  "required": [
+    "models"
+  ]
+}
