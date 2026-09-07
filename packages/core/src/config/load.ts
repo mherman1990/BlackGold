@@ -93,6 +93,17 @@ export function envToAppConfigInput(env: NodeJS.ProcessEnv): Record<string, unkn
   });
 }
 
+/**
+ * The model-provider API key, read from the standard `ANTHROPIC_API_KEY` variable (not `BLACKGOLD_`-prefixed,
+ * to match the provider's own convention and the compose passthrough). Deliberately NOT placed on `AppConfig`
+ * so it is never serialized into a log, a status surface, or a notification; the analyst wiring passes it
+ * straight to the adapter constructor. Absent or empty yields undefined, and the analyst then fails closed.
+ */
+export function readAnthropicApiKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const v = env["ANTHROPIC_API_KEY"];
+  return v === undefined || v === "" ? undefined : v;
+}
+
 /** Parse an AppConfig from an input object, applying the hard rules. */
 export function parseAppConfig(input: unknown): AppConfig {
   const parsed = AppConfigSchema.safeParse(input);

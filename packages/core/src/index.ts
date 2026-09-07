@@ -60,3 +60,4 @@ export * from "./model/overlay.ts";
 export * from "./model/manifest.ts";
 export * from "./model/provider-http.ts";
 export * from "./model/anthropic.ts";
+export * from "./analyst/run-analyst.ts";
