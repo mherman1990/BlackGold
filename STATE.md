@@ -2,7 +2,7 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-09-07 by Claude Code (Phase 4: risk-limit/caps engine built, D-45, on `claude/phase-04-risk-limits`).
+**Last updated:** 2026-09-07 by Claude Code (Phase 4: compliance engine + restricted list, D-46, on `claude/phase-04-compliance-restricted`).
 
 ## Product state
 
@@ -67,7 +67,9 @@ Phase 4 (household-minimum, compliance, restricted list, portfolio construction,
 
 **Third Phase 4 PR — the risk-limit/caps engine (D-45, branch `claude/phase-04-risk-limits`):** `packages/core/src/risk/limits.ts` (`evaluateRiskLimits`) is the deterministic `RiskEngine` verdict — an independent re-check of a proposed target book against the `risk.yaml` caps and the charter, separate from construction, that admits or rejects with reason codes and never re-sizes. Checks: per-instrument weight, open-position count, gross/net exposure, cash floor, sector concentration, correlated-cluster weight and membership, and the long-only posture; fail-closed on an unclassified holding. Pure (T-05, under `risk/`). 11 tests. **Factor concentration is deferred on a real owner question** (the taxonomy's `market` tag is on every holding, so capping summed `market` weight would cap total exposure — which factor tags are cap-bearing is a policy decision); liquidity, order-level, and per-position-risk-budget limits need order/price/ADV data and are follow-ups.
 
-**Still to come in Phase 4:** exposure flags + ETF look-through, the restricted list + compliance engine, the deferred limit engines (factor concentration once the cap-bearing tags are decided; liquidity/order-level/per-position-risk), and wiring the halt state + limit verdict into the decision/gateway loop (Phase 5) — each a further bounded PR, gated on `risk.yaml` approval (OD-3) and the sleeve account (D-12) where it depends on them.
+**Fourth Phase 4 PR — the compliance engine (D-46, branch `claude/phase-04-compliance-restricted`):** `packages/core/src/compliance/engine.ts` (`evaluateCompliance`) is the deterministic compliance verdict — admit/reject a candidate against the restricted list with reason codes, pure. It encodes the D-14 rules: additions immediate, removals wait a cooling period (`pendingRemovals` until `eligibleAt`); blackout windows block only new risk; a stale list fails closed. Themes are checked against supplied exposures. 6 tests. **The restricted-list *content* is Matt's**, not Claude Code's: it encodes his nonpublic professional restrictions (employer, suppliers, themes), so `config/examples/restricted-list.yaml` keeps fake placeholders and populating the real list is the owner's act (like approving `risk.yaml`). ETF **look-through** (deriving an ETF's restricted-theme exposures) is a deferred Phase 4 piece — the engine takes exposures as input.
+
+**Still to come in Phase 4:** ETF look-through + exposure flags, the deferred limit engines (factor concentration once the cap-bearing tags are decided; liquidity/order-level/per-position-risk), and wiring the research/compliance/risk/limit verdicts + construction into the decision loop (Phase 5) — each a further bounded PR, gated on `risk.yaml` approval (OD-3), the real restricted list, and the sleeve account (D-12) where it depends on them.
 
 ## Phase 2 exit criteria
 

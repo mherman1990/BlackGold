@@ -580,6 +580,33 @@ factor cap is not enforced rather than enforced incorrectly.
 
 ---
 
+## D-46 The compliance engine, and why Claude Code does not author the restricted list
+
+**Status:** Built 2026-09-07 under the Phase 4 authorization (D-43); Matt directed "take the compliance engine
+and restricted list."
+
+**What was built.** `packages/core/src/compliance/engine.ts` (`evaluateCompliance`), a deterministic re-check
+of a candidate against the restricted list, admit/reject with reason codes, pure (no model, broker, or
+network). It encodes the two load-bearing restricted-list rules (D-14): **additions are immediate** (a name,
+ETF, or theme on the list restricts on the same decision) and **removals wait a cooling period** (an item in
+`pendingRemovals` stays restricted until its `eligibleAt`, so a quick add-then-remove cannot free a name).
+Blackout windows block only new risk; a stale list fails closed (blocks new risk) rather than being trusted.
+Themes are checked against the candidate's supplied exposures. 6 tests.
+
+**What Claude Code did not do, and why.** The restricted list's *content* - the employer, suppliers, and
+themes tied to the operator's professional life - is nonpublic and is the owner's compliance policy to set
+(`docs/PRODUCT_SPEC.md` section 2: Matt approves compliance policy, restricted lists, and themes). Claude Code
+built the engine but **did not author any real restricted names**; `config/examples/restricted-list.yaml` keeps
+its deliberately fake placeholder values. Populating the real list is the owner's act, like approving
+`risk.yaml`, and doing otherwise would also put nonpublic professional context into the repository, which the
+boundaries forbid.
+
+**Deferred.** ETF **look-through** - deriving which restricted themes a broad ETF is exposed to (e.g. XLE and
+the RFS/45Z refiner theme) - is a separate Phase 4 piece, so the engine takes theme exposures as input rather
+than computing them. Wiring compliance into the decision loop is Phase 5.
+
+---
+
 ## Rejected
 
 - **R-01** Postgres/Kafka/Kubernetes/vector DB: no measured need; violates the one-owner maintainability constraint.

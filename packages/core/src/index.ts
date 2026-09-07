@@ -46,6 +46,7 @@ export * from "./strategy/construct.ts";
 export * from "./strategy/factors.ts";
 export * from "./risk/halt.ts";
 export * from "./risk/limits.ts";
+export * from "./compliance/engine.ts";
 export * from "./research/leakage.ts";
 export * from "./research/coverage.ts";
 export * from "./research/walkforward.ts";
