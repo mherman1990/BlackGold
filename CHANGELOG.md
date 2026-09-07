@@ -51,7 +51,7 @@ The Phase 2 layer is machinery, not evidence. No experiment is registered, no re
 
 **Required actions**
 
-Installing this release gives you a read-only plain-text status and health page on port 8479 and nothing else. There is no reporting view yet, and nothing to configure: with no charter approved and no credentials supplied, the app runs its scheduler, keeps its ledger sealed, and reports its own health.
+Installing this release gives you a read-only plain-text status and health page on port 8479 and nothing else. There is no reporting view yet, and nothing to configure: with no charter approved and no credentials supplied, the app runs its scheduler and reports its own health.
 
 If you are installing to close the two outstanding Phase 0 exit criteria (`docs/PHASE0_REQUIREMENTS_MATRIX.md`):
 
