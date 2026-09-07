@@ -133,4 +133,87 @@ CREATE TRIGGER artifacts_no_delete BEFORE DELETE ON artifacts
 BEGIN SELECT RAISE(ABORT, 'artifact metadata is append-only'); END;
 `,
   },
+  {
+    id: "0005_research_registry",
+    up: `
+CREATE TABLE experiments (
+  experiment_id              TEXT PRIMARY KEY,
+  registered_at              TEXT NOT NULL,
+  registered_by              TEXT NOT NULL,
+  parent_experiment_id       TEXT REFERENCES experiments (experiment_id),
+  supersedes_reason          TEXT,
+  definition_json            TEXT NOT NULL,
+  definition_hash            TEXT NOT NULL,
+  results_viewed_at          TEXT,
+  holdout_opened_at          TEXT,
+  holdout_opened_by          TEXT,
+  holdout_opened_reason      TEXT,
+  promotion_evidence_allowed INTEGER NOT NULL DEFAULT 1,
+  promotion_evidence_at      TEXT,
+  promotion_evidence_by      TEXT,
+  labels_json                TEXT NOT NULL
+);
+CREATE INDEX experiments_parent ON experiments (parent_experiment_id);
+CREATE TRIGGER experiments_no_delete BEFORE DELETE ON experiments
+BEGIN SELECT RAISE(ABORT, 'experiments are never deleted'); END;
+CREATE TRIGGER experiments_frozen BEFORE UPDATE ON experiments
+WHEN NEW.definition_hash <> OLD.definition_hash OR NEW.definition_json <> OLD.definition_json
+  OR NEW.experiment_id <> OLD.experiment_id OR NEW.registered_at <> OLD.registered_at
+  OR NEW.registered_by <> OLD.registered_by OR COALESCE(NEW.parent_experiment_id,'') <> COALESCE(OLD.parent_experiment_id,'')
+  OR NEW.labels_json <> OLD.labels_json
+BEGIN SELECT RAISE(ABORT, 'experiment definition is frozen at registration'); END;
+CREATE TRIGGER experiments_viewed_once BEFORE UPDATE ON experiments
+WHEN OLD.results_viewed_at IS NOT NULL AND COALESCE(NEW.results_viewed_at,'') <> OLD.results_viewed_at
+BEGIN SELECT RAISE(ABORT, 'results_viewed_at is set once'); END;
+CREATE TRIGGER experiments_holdout_once BEFORE UPDATE ON experiments
+WHEN OLD.holdout_opened_at IS NOT NULL AND (COALESCE(NEW.holdout_opened_at,'') <> OLD.holdout_opened_at
+  OR COALESCE(NEW.holdout_opened_reason,'') <> COALESCE(OLD.holdout_opened_reason,'')
+  OR COALESCE(NEW.holdout_opened_by,'') <> COALESCE(OLD.holdout_opened_by,''))
+BEGIN SELECT RAISE(ABORT, 'the holdout opens once'); END;
+
+CREATE TABLE trial_ledger (
+  trial_id          TEXT PRIMARY KEY,
+  experiment_id     TEXT NOT NULL REFERENCES experiments (experiment_id),
+  arm               TEXT NOT NULL,
+  split             TEXT NOT NULL,
+  params_json       TEXT NOT NULL,
+  metrics_json      TEXT NOT NULL,
+  cost_scenario     TEXT NOT NULL,
+  labels_json       TEXT NOT NULL,
+  code_commit       TEXT NOT NULL,
+  snapshot_ids_json TEXT NOT NULL,
+  result_hash       TEXT NOT NULL,
+  run_started       TEXT NOT NULL,
+  run_finished      TEXT NOT NULL
+);
+CREATE INDEX trial_ledger_experiment ON trial_ledger (experiment_id);
+CREATE TRIGGER trial_ledger_no_update BEFORE UPDATE ON trial_ledger
+BEGIN SELECT RAISE(ABORT, 'trial ledger is append-only'); END;
+CREATE TRIGGER trial_ledger_no_delete BEFORE DELETE ON trial_ledger
+BEGIN SELECT RAISE(ABORT, 'trial ledger is append-only'); END;
+`,
+  },
+  {
+    id: "0006_entity_symbols",
+    up: `
+CREATE TABLE entity_symbols (
+  id             INTEGER PRIMARY KEY,
+  symbol         TEXT NOT NULL,
+  effective_from TEXT NOT NULL,
+  effective_to   TEXT,
+  entity_id      TEXT NOT NULL,
+  source         TEXT NOT NULL,
+  registered_at  TEXT NOT NULL
+);
+CREATE INDEX entity_symbols_symbol ON entity_symbols (symbol, effective_from);
+CREATE INDEX entity_symbols_entity ON entity_symbols (entity_id);
+CREATE TRIGGER entity_symbols_no_delete BEFORE DELETE ON entity_symbols
+BEGIN SELECT RAISE(ABORT, 'entity symbol ranges are append-only'); END;
+CREATE TRIGGER entity_symbols_close_only BEFORE UPDATE ON entity_symbols
+WHEN OLD.effective_to IS NOT NULL OR NEW.effective_to IS NULL OR NEW.symbol <> OLD.symbol
+  OR NEW.effective_from <> OLD.effective_from OR NEW.entity_id <> OLD.entity_id OR NEW.source <> OLD.source
+  OR NEW.registered_at <> OLD.registered_at OR NEW.id <> OLD.id
+BEGIN SELECT RAISE(ABORT, 'an open symbol range may only be closed'); END;
+`,
+  },
 ];
