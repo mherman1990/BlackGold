@@ -1,0 +1,32 @@
+{
+  "name": "blackgold",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Black Gold: evidence-first research and controlled execution for one ring-fenced investment sleeve",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22.18.0" },
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b && tsc -p test/tsconfig.json && tsc -p packages/shared/test && tsc -p packages/core/test && tsc -p packages/broker-gateway/test",
+    "lint": "eslint .",
+    "format": "prettier --check .",
+    "format:write": "prettier --write .",
+    "test": "vitest run",
+    "test:policy": "vitest run --project policy",
+    "check:identity": "node scripts/check-identity.ts",
+    "check:secrets": "node scripts/check-secrets.ts",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run check:identity && npm run check:secrets"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "eslint": "10.10.0",
+    "eslint-config-prettier": "10.1.8",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.69.0",
+    "vitest": "4.1.11",
+    "yaml": "2.9.0"
+  }
+}

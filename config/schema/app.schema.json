@@ -1,0 +1,125 @@
+{
+  "$id": "https://blackgold.local/config/schema/app.schema.json",
+  "title": "blackgold app",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "mode": {
+      "default": "RESEARCH",
+      "type": "string",
+      "enum": [
+        "RESEARCH",
+        "BACKTEST",
+        "SHADOW",
+        "PAPER",
+        "LIVE_MANUAL",
+        "LIVE_LIMITED"
+      ]
+    },
+    "dataDir": {
+      "default": "./data",
+      "type": "string",
+      "minLength": 1
+    },
+    "dbPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifactsDir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "backupsDir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timezoneDisplay": {
+      "default": "America/Chicago",
+      "type": "string",
+      "const": "America/Chicago"
+    },
+    "exchange": {
+      "default": "XNYS",
+      "type": "string",
+      "const": "XNYS"
+    },
+    "schedulerPollSeconds": {
+      "default": 60,
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 3600
+    },
+    "httpPort": {
+      "default": 8479,
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 65535
+    },
+    "notifications": {
+      "default": {
+        "adapter": "stub"
+      },
+      "type": "object",
+      "properties": {
+        "adapter": {
+          "default": "stub",
+          "type": "string",
+          "enum": [
+            "stub",
+            "ntfy"
+          ]
+        },
+        "ntfyTopicUrl": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "budgets": {
+      "default": {
+        "llmPerCallUsd": "0.50",
+        "llmPerDayUsd": "5.00",
+        "llmPerMonthUsd": "60.00"
+      },
+      "type": "object",
+      "properties": {
+        "llmPerCallUsd": {
+          "default": "0.50",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "llmPerDayUsd": {
+          "default": "5.00",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        },
+        "llmPerMonthUsd": {
+          "default": "60.00",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$"
+        }
+      }
+    },
+    "sleeveAccount": {
+      "default": {
+        "role": "blackgold_sleeve",
+        "accountRef": "UNASSIGNED"
+      },
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string",
+          "const": "blackgold_sleeve"
+        },
+        "accountRef": {
+          "default": "UNASSIGNED",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "role"
+      ]
+    }
+  }
+}

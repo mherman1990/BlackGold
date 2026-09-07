@@ -1,0 +1,36 @@
+# Household financial picture (FAKE values). Lives only in local config; dollar totals never reach a model
+# or a notification. Refreshed quarterly (D-20); staleness beyond staleAfterDays blocks new risk.
+# Schema: config/schema/financial-picture.schema.json
+asOf: "2026-09-01"
+staleAfterDays: 120
+liquidInvestableAssetsUsd: "100000.00"
+
+accounts:
+  - accountId: fake-sleeve-001
+    label: Black Gold sleeve (fake)
+    role: blackgold_sleeve
+    taxType: taxable
+    valueUsd: "5000.00"
+    exposures:
+      assetClass: { cash: "1.00" }
+  - accountId: fake-brokerage-001
+    label: Example taxable brokerage (fake)
+    role: read_only
+    taxType: taxable
+    valueUsd: "45000.00"
+    exposures:
+      assetClass: { us_equity: "0.70", intl_equity: "0.20", bonds: "0.10" }
+      sector: { technology: "0.25", financials: "0.15", healthcare: "0.12" }
+      style: { large_blend: "0.60", small_value: "0.10" }
+  - accountId: fake-401k-001
+    label: Example workplace retirement (fake)
+    role: read_only
+    taxType: 401k
+    valueUsd: "50000.00"
+    exposures:
+      assetClass: { us_equity: "0.60", intl_equity: "0.20", bonds: "0.20" }
+
+careerSensitivity:
+  sectorFlags: [agriculture, consumer_staples]
+  themeFlags: [soybean_processing, biofuels]
+  notes: "Flags only. No dollar value for income is recorded."

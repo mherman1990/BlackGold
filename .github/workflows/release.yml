@@ -1,0 +1,81 @@
+name: release
+
+# Publishes the multi-arch image to GHCR. Runs ONLY on a semver tag pushed by the owner after the
+# corresponding PR merged to main (docs/UMBREL_STORE_AND_RELEASE.md). Never on PRs, never on other tags.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  guard:
+    name: tag must be reachable from main and match package.json
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: v
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$VERSION" != "$PKG" ]; then echo "tag $TAG does not match package.json $PKG"; exit 1; fi
+          git fetch origin main --depth=1000
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then echo "tag commit is not on main"; exit 1; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  checks:
+    name: full checks on the tagged commit
+    runs-on: ubuntu-latest
+    needs: guard
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  publish:
+    name: build and push multi-arch image
+    runs-on: ubuntu-latest
+    needs: [guard, checks]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: true
+          sbom: true
+          tags: |
+            ghcr.io/mherman1990/blackgold:${{ needs.guard.outputs.version }}
+            ghcr.io/mherman1990/blackgold:sha-${{ github.sha }}
+      - name: record digest and verify both architectures
+        run: |
+          set -euo pipefail
+          echo "digest=${{ steps.build.outputs.digest }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          docker buildx imagetools inspect ghcr.io/mherman1990/blackgold:${{ needs.guard.outputs.version }} | tee inspect.txt
+          grep -q "linux/amd64" inspect.txt
+          grep -q "linux/arm64" inspect.txt
+          echo "Pin in blackgold-trading/docker-compose.yml as: ghcr.io/mherman1990/blackgold:${{ needs.guard.outputs.version }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

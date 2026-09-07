@@ -1,0 +1,16 @@
+**/node_modules
+**/dist
+**/coverage
+.git
+.github
+docs
+strategies
+test
+scripts
+data
+backups
+*.md
+!README.md
+.env*
+CLAUDE.local.md
+LIVE_AUTHORIZATION*.yaml

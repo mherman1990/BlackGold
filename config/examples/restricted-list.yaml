@@ -1,0 +1,22 @@
+# Restricted list (FAKE values). Additions take effect immediately; removals wait coolingPeriodDays (D-14).
+# Schema: config/schema/restricted-list.schema.json
+asOf: "2026-09-01"
+coolingPeriodDays: 30
+
+names:
+  - FAKE_EMPLOYER_CO
+  - FAKE_SUPPLIER_INC
+themes:
+  - soybean_processing
+  - crop_inputs
+etfs:
+  - FAKEAG
+blackouts:
+  - from: "2026-10-01"
+    to: "2026-10-15"
+    reason: "Fake example: association board meeting window"
+pendingRemovals:
+  - item: FAKE_FORMER_PARTNER_LLC
+    requestedAt: "2026-08-20T15:00:00Z"
+    eligibleAt: "2026-09-19T15:00:00Z"
+    reason: "Fake example: relationship ended"

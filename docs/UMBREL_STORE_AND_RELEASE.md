@@ -13,7 +13,7 @@ name: Black Gold
 
 The store `id` must prefix every app id in the store. The app directory `blackgold-trading/` must contain `umbrel-app.yml` and `docker-compose.yml`. The example manifest uses `manifestVersion: 1` and these fields: `id`, `name`, `tagline`, `icon`, `category`, `version`, `port`, `description`, `developer`, `website`, `submitter`, `submission`, `repo`, `support`, `gallery`, `releaseNotes`, `dependencies`, `path`, `defaultUsername`, `defaultPassword`. The example compose file defines an `app_proxy` service with `APP_HOST: <app-id>_<service>_1` and `APP_PORT`. The store is added in umbrelOS by entering the repository's GitHub URL.
 
-Unverified from the README alone and to be confirmed against the template repository files and umbrelOS source before Phase 0 writes manifests: whether newer `manifestVersion` values are accepted, the exact semantics of `exports.sh`, and whether `${APP_DATA_DIR}` is the canonical data variable in current umbrelOS. These are listed in `docs/capabilities/umbrel-capabilities.md`.
+Verified later the same day from the official `getumbrel/umbrel-apps` packaging guidance and a current official app (uptime-kuma): `${APP_DATA_DIR}/data/...` is the bind-mount root for app-owned state; images are pinned as `repo:version@sha256:<manifest-list digest>` covering both `linux/amd64` and `linux/arm64`; `manifestVersion: 1` is the default; `exports.sh` is required only for computed values or generated secrets, so a single-app package needs none; manifest `port` shares the host port space with other apps and umbrelOS ports 80/443/2000; services run as `user: "1000:1000"`; never mount the Docker socket. Injected variables include `APP_ID`, `APP_VERSION`, `APP_DATA_DIR`, `APP_SEED`, `APP_PASSWORD`, `DEVICE_HOSTNAME`, `DEVICE_DOMAIN_NAME`, `UMBREL_ROOT`, `NETWORK_IP`, `TOR_*`.
 
 ## Proposed layout
 
@@ -23,7 +23,8 @@ BlackGold/
 ├── blackgold-trading/
 │   ├── umbrel-app.yml            # id: blackgold-trading, version pinned
 │   ├── docker-compose.yml        # app_proxy + core + gateway, image pinned by tag+digest
-│   └── exports.sh                # only if verified as the current secret/env mechanism
+│   ├── icon.svg
+│   └── data/.gitkeep             # bind-mount source; umbrelOS removes .gitkeep at runtime
 └── ... (source, docs, CI)
 ```
 
@@ -67,7 +68,7 @@ services:
       APP_PORT: 8479
   core:
     image: ghcr.io/mherman1990/blackgold:0.1.0@sha256:<digest>
-    command: ["node", "dist/core/main.js"]
+    command: ["packages/core/dist/main.js", "serve"]   # ENTRYPOINT is node
     user: "1000:1000"
     init: true
     restart: on-failure
@@ -80,7 +81,7 @@ services:
     healthcheck: { test: ["CMD", "node", "dist/core/health.js"], interval: 60s }
   gateway:
     image: ghcr.io/mherman1990/blackgold:0.1.0@sha256:<digest>
-    command: ["node", "dist/gateway/main.js"]
+    command: ["packages/broker-gateway/dist/main.js", "serve"]
     user: "1000:1000"
     init: true
     restart: on-failure
@@ -98,7 +99,7 @@ The gateway is not reachable through `app_proxy`. In Phases 0–5 the gateway im
 
 ## Version synchronization
 
-Single authority: root `package.json` `version`. CI `identity-check` fails unless `umbrel-app.yml` `version`, both compose image tags, and the top `CHANGELOG.md` heading agree with it. Release tags are `v<version>`.
+Single authority: root `package.json` `version`. CI `identity-check` fails unless `umbrel-app.yml` `version`, both compose image tags, and the top `CHANGELOG.md` heading agree with it. Release tags are `v<version>`; image tags are `<version>` and `sha-<commit>`; compose pins `<version>@sha256:<digest>`.
 
 ## CI workflows (Phase 0 deliverable, not yet created)
 
