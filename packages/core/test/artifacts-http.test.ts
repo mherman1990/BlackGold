@@ -75,7 +75,7 @@ describe("AllowlistedHttpClient", () => {
   it("refuses hosts outside the allowlist and non-https before any network call", async () => {
     const c = client();
     calls.length = 0;
-    await expect(c.get("https://api.alpaca.markets/v2/orders")).rejects.toThrow(EgressDeniedError);
+    await expect(c.get("https://broker.example.invalid/v2/orders")).rejects.toThrow(EgressDeniedError);
     await expect(c.get("https://evil.data.sec.gov/x")).rejects.toThrow(EgressDeniedError);
     await expect(c.get("http://data.sec.gov/x")).rejects.toThrow(EgressDeniedError);
     expect(calls).toHaveLength(0);
