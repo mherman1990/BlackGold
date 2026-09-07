@@ -8,7 +8,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 
 | Item | Value |
 |---|---|
-| Phase | Discovery (PR #1) and Phase 0 (PR #2) open and green, awaiting Matt. Phase 1 research kernel complete in code and tests on `claude/phase-01-research-kernel` (PR #3), stacked on Phase 0 (D-28) |
+| Phase | Discovery (PR #1), Phase 0 (PR #2), and Phase 1 (PR #3) open and green, awaiting Matt. Phase 1 research kernel complete in code and tests on `claude/phase-01-research-kernel`, stacked on Phase 0 (D-28); Codex review findings fixed (D-31) |
 | Application code | `packages/shared`, `packages/core` (Phase 0 foundation plus Phase 1 data, market, universe, research modules), `packages/broker-gateway` |
 | Tests | 248 passing across 32 files: unit (shared, core, gateway), policy, and temporal projects; `npm run check` green locally |
 | Live trading | Absent by construction. Config loader and gateway both refuse `LIVE_MANUAL` and `LIVE_LIMITED`; CI asserts the image refuses them too |
@@ -27,9 +27,9 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 | PR #1 | Discovery Pack: `claude/black-gold-trading-tool-n713ly` into `main`. Open, awaiting Matt |
 | Phase 0 branch | `claude/phase-00-foundation`, stacked on the Discovery branch (D-26) |
 | Phase 0 PR | PR #2 against the Discovery branch: CI green, Codex findings fixed and resolved, mergeable. Retarget to `main` after PR #1 merges |
-| Phase 1 branch / PR | `claude/phase-01-research-kernel`, [PR #3](https://github.com/mherman1990/BlackGold/pull/3) against the Phase 0 branch; retarget as the stack merges |
+| Phase 1 branch / PR | `claude/phase-01-research-kernel`, [PR #3](https://github.com/mherman1990/BlackGold/pull/3) against the Phase 0 branch: CI green at `e5c6a70`, seven Codex findings fixed and resolved, mergeable once PR #2 merges; retarget as the stack merges |
 | Branch protection | Not configured (needs Matt in GitHub UI) |
-| CI | `.github/workflows/ci.yml` green on PR #2 (checks + multi-arch image) |
+| CI | `.github/workflows/ci.yml` green on PR #2 and PR #3 (checks + multi-arch image) |
 
 ## Decisions
 
@@ -45,7 +45,7 @@ See `docs/PHASE0_REQUIREMENTS_MATRIX.md`. Everything verifiable in this reposito
 
 ## Capability register status
 
-Verified: 16. Partial: 4. UNVERIFIED: 3 (all Schwab rows, Alpaca duplicate client-order-id semantics, Alpaca IEX entitlement). Umbrel packaging, NYSE calendar, and multi-arch CI facts were verified on 2026-09-06.
+Verified: 17 (CR-27 added: CFTC COT release schedule follows the federal holiday calendar; 2026 dates reproduced by rule). Partial: 4. UNVERIFIED: 3 (all Schwab rows, Alpaca duplicate client-order-id semantics, Alpaca IEX entitlement). Umbrel packaging, NYSE calendar, and multi-arch CI facts were verified on 2026-09-06.
 
 ## Next authorized action
 

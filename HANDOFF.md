@@ -17,7 +17,7 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 - PR #1 (Discovery Pack) is open against `main`, awaiting Matt.
 - PR #2 (Phase 0) is open against the Discovery branch, CI green, review findings resolved.
-- PR #3 (Phase 1 research kernel) is open against the Phase 0 branch (D-28). 248 tests, all 16 temporal fixtures.
+- PR #3 (Phase 1 research kernel) is open against the Phase 0 branch (D-28): CI green, Codex findings fixed (D-31). 264 tests, all 16 temporal fixtures.
 - `main` exists but is not yet the default branch and has no protection. Matt does that in GitHub settings.
 - No image has been published. No Umbrel install exists. No credential exists. No live data ingest has run.
 
