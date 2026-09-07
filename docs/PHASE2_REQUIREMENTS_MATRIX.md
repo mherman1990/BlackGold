@@ -76,6 +76,8 @@ Computing and viewing a result before the charter is frozen would be irreversibl
 
 No new runtime dependency, no new service, no schema migration. The feature engine holds a few hundred sessions for at most 14 entities plus a 14x14 covariance matrix; the charter's own estimate (section 22) is compute under one second and storage under 20 MB, and nothing here changes that. The heaviest addition is the bootstrap: 2000 resamples of a daily series is a few hundred milliseconds and runs only when a report is built.
 
+Test-suite wall time is about 26 seconds, up from about 6 seconds at the Phase 1 baseline. Most of the increase is the backtest and report suites: a backtest re-reads its feature window at every decision instant, which is the honest cost of reading point-in-time and is deliberately not cached in production. Those two suites declare an explicit 30-second per-test budget (`vi.setConfig`) because vitest's 5-second default was never a realistic ceiling for a multi-decision backtest: the slowest test measured 4.2 seconds locally and timed out at 5.0 seconds on a slower CI runner, so the same commit passed and failed depending on which machine picked it up. The budget is roughly thirteen times the slowest observed test, so runner speed cannot decide the outcome while a genuine hang still fails.
+
 ## Evidence log
 
 | Date | Command | Result |
@@ -85,3 +87,5 @@ No new runtime dependency, no new service, no schema migration. The feature engi
 | 2026-09-07 | `node packages/core/dist/main.js charter show --path strategies/etf-trend-vol/charter.yaml` | `registrable: false` with all ten reasons listed; 12 admitted risk ETFs (XLE excluded) |
 | 2026-09-07 | `node packages/core/dist/main.js charter plan --path strategies/etf-trend-vol/charter.yaml` | Design, 8 walk-forward and recent splits; holdout reported sealed; trial count 72; registered grid index 63; 10 sensitivity tiers |
 | 2026-09-07 | `node packages/core/dist/main.js research coverage --path strategies/etf-trend-vol/charter.yaml --from 2026-01-02 --to 2026-06-30` | Exit code 1, all 13 universe members uncovered: correct for an empty store, and the reason a real coverage report is still owed |
+| 2026-09-07 | CI on `bbf99ee` (PR #6), two runs of the same job on the same commit | One `success`, one `failure`. The failure was `research-backtest.test.ts > produces sealed weekly decisions and two independent arms`: `Test timed out in 5000ms` at 5290 ms. Not infrastructure - a test written with only 20% headroom against vitest's default |
+| 2026-09-07 | `npm run check` after declaring a 30 s budget for the two backtest-backed suites and sharing their read-only fixture market | 494 tests still passing (no assertion changed); slowest test 4174 ms to 2249 ms; suite 44 s to 26 s |

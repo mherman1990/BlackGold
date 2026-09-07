@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import { Dec, ONE, ZERO, isoDate, type IsoDate } from "@blackgold/shared";
 import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
@@ -6,6 +6,13 @@ import { TR_ADJUSTMENT_VERSION, type TRPoint, type TRSeries } from "../src/marke
 import { armMetrics, buildResultReport, REPORT_VERSION, taxScenarios } from "../src/research/report.ts";
 import { backtestParamsFromCharter, costsFromCharter, runBacktest } from "../src/research/backtest.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
+
+/**
+ * Building a report runs a full backtest first, so these tests carry the same cost as the backtest suite and
+ * the same reason for an explicit budget: vitest's 5-second default is not a realistic ceiling for a
+ * multi-decision backtest plus a bootstrap, and leaving it there lets runner speed decide the outcome.
+ */
+vi.setConfig({ testTimeout: 30_000 });
 
 function charter(): Charter {
   return loadCharterFile(fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url))).charter;
@@ -160,9 +167,13 @@ describe("buildResultReport", () => {
     return c;
   }
 
+  // Read-only across tests, so one market serves the whole suite (see the backtest suite for the reasoning).
+  let sharedMarket: ReturnType<typeof buildMarket> | undefined;
+
   function run() {
     const c = shortCharter();
-    const m = buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-06-30") });
+    sharedMarket ??= buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-06-30") });
+    const m = sharedMarket;
     const bt = runBacktest({
       charter: c,
       charterHash: `sha256:${"0".repeat(64)}`,
