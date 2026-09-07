@@ -41,6 +41,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-33 | An entity priced behind the rest of the cross-section at a decision is excluded from that decision entirely (`STALE_ANCHOR`), rather than ranked on its last good bar | Accepted 2026-09-07 (engineering) | - |
 | D-34 | `charter.yaml` is the only form the code executes, and `assertRegistrable` refuses to freeze an experiment on an unsigned charter, an unresolved open decision, or an undecided conditional universe member | Accepted 2026-09-07 (engineering) | - |
 | D-35 | Phase 2 authorized by Matt's "keep building out" (2026-09-07); built as machinery plus fixture tests only. No registered experiment, no historical result, and no holdout access, because the charter is DRAFT and no source data has been ingested | Accepted 2026-09-07 | Owner approves the charter, then the same code produces the evidence |
+| D-36 | A stacked PR is retargeted to `main` before it is merged, or merged before its base goes in. Merging into an already-merged-forward base leaves `main` a phase behind; the remedy is a merge commit bringing `main` in plus a fresh PR, never a force-push | Accepted 2026-09-07 (engineering) | - |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -260,6 +261,24 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 **Decision.** Phase 2 was authorized by Matt's instruction to keep building (2026-09-07) and was built as machinery plus fixture tests only: the charter loader and approval gate, feature engine, candidate engine, portfolio construction, leakage audit, coverage report, walk-forward splitter, statistics, attribution, backtest runner, robustness harness, and result report.
 
 **What was deliberately not done.** No experiment was registered, no historical result was computed, and the holdout was not opened. Two independent reasons: the charter is `DRAFT` with four unresolved open decisions, and no market data has been ingested from any source (no credentials exist yet). Registering an experiment on unapproved numbers, or viewing a result before the charter is frozen, would consume information that cannot be given back - the viewed-results rule in `docs/EXPERIMENT_PROTOCOL.md` section 3 makes it irreversible. The machinery is therefore complete and tested, and the same code produces the evidence once the charter is approved and data is ingested.
+
+## D-36 Stacked-PR merge order
+
+**Status:** Accepted 2026-09-07 (engineering). Recorded after the same mistake happened twice.
+
+**What happened.** Twice a phase PR was merged into a base branch that had already been merged forward, leaving `main` a phase behind the reviewed work:
+
+- PR #3 merged Phase 1 into `claude/phase-00-foundation` after that branch had gone into `main`. Fixed by PR #4.
+- PR #5 merged Phase 2 into `claude/phase-01-research-kernel` at 12:56:48Z, twelve seconds after PR #4 merged that same branch into `main` at 12:56:35Z. Fixed by a fresh PR.
+
+Neither was a code fault and neither lost work: in both cases the reviewed tree was intact on the branch, just not reachable from `main`. Both cost an extra PR.
+
+**Decision.**
+
+1. A stacked PR is retargeted to `main` **before** it is merged, or merged before its base branch goes in. GitHub offers the retarget automatically when the base merges; taking that offer is the whole fix.
+2. Before merging anything stacked, check whether the base is already in `main`: `git merge-base --is-ancestor <base-head> origin/main`. If it answers yes, retarget before merging.
+3. When it happens anyway, the remedy is a merge commit that brings `main` into the phase branch plus a fresh PR carrying the identical tree. Never a force-push, never a rebase, never reusing the merged PR. Verify the tree is unchanged with `git diff <reviewed-head> HEAD` and expect an empty diff.
+4. Merged phase branches are deleted once their successor lands. Branches left lying around are what make the mistake easy to repeat.
 
 ---
 

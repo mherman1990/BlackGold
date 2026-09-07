@@ -8,7 +8,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 
 | Item | Value |
 |---|---|
-| Phase | Discovery (PR #1) and Phase 0 (PR #2) merged to `main`. Phase 1 complete on [PR #4](https://github.com/mherman1990/BlackGold/pull/4) (draft, awaiting Matt). Phase 2 **machinery** complete in code and tests; **no Phase 2 result exists** and none may exist until the charter is approved and data is ingested (D-35) |
+| Phase | Discovery, Phase 0 and Phase 1 merged to `main` at `8006268` on 2026-09-07 (PR #1, #2, #4). Phase 2 machinery merged by PR #5 into `claude/phase-01-research-kernel` twelve seconds after that branch had itself been merged forward, so **`main` carries Phase 1 but not Phase 2**; a fresh PR carries the identical reviewed tree to `main` (D-36). Phase 2 **machinery** complete in code and tests; **no Phase 2 result exists** and none may exist until the charter is approved and data is ingested (D-35) |
 | Application code | `packages/shared`, `packages/core` (Phase 0 foundation, Phase 1 data/market/universe/research, Phase 2 strategy/research), `packages/broker-gateway` |
 | Tests | 494 passing across 45 files: unit 439, policy 29, temporal 26. `npm run check` green locally |
 | Live trading | Absent by construction. Config loader and gateway both refuse `LIVE_MANUAL` and `LIVE_LIMITED`; CI asserts the image refuses them too |
@@ -25,15 +25,17 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 | Item | Value |
 |---|---|
 | Remote | `https://github.com/mherman1990/BlackGold` (public) |
-| `main` | At `bbc7077`: Discovery plus Phase 0. Matt must still set `main` as the default branch and apply protection in GitHub settings |
-| Phase 1 PR | [PR #4](https://github.com/mherman1990/BlackGold/pull/4), `claude/phase-01-research-kernel` into `main`. Draft, CI green, Codex findings fixed (D-31). Next owner action: mark ready and merge |
-| Phase 2 branch | `claude/black-gold-continued-rxiesj`, stacked on the Phase 1 branch (Phase 1 is not yet on `main`) |
+| `main` | At `8006268`: Discovery, Phase 0 and Phase 1. Matt must still set `main` as the default branch and apply protection in GitHub settings |
+| Phase 1 PR | [PR #4](https://github.com/mherman1990/BlackGold/pull/4) merged to `main` 2026-09-07 12:56:35Z |
+| Phase 2 PR | [PR #5](https://github.com/mherman1990/BlackGold/pull/5) merged 12:56:48Z into `claude/phase-01-research-kernel`, which PR #4 had already merged forward. CI was green on its head `cc6d9b4`. Superseded by a fresh PR to `main` whose tree is identical to `cc6d9b4` (verified by an empty `git diff`); the merge commit brings `main` in without rewriting history |
+| Phase 2 branch | `claude/black-gold-continued-rxiesj`, now containing `origin/main` |
+| Stale branches | `claude/phase-00-foundation`, `claude/black-gold-trading-tool-n713ly` and `claude/phase-01-research-kernel` are all merged into `main` and safe to delete once the Phase 2 PR lands |
 | Branch protection | Not configured (needs Matt in GitHub UI) |
 | CI | `.github/workflows/ci.yml` green on PR #2, PR #3 and PR #4 (checks plus multi-arch image) |
 
 ## Decisions
 
-All Discovery recommendations accepted by Matt on 2026-09-06 (see the header of `docs/DECISIONS.md`). Phase 2 added D-32 to D-35.
+All Discovery recommendations accepted by Matt on 2026-09-06 (see the header of `docs/DECISIONS.md`). Phase 2 added D-32 to D-36.
 
 **D-32 needs the owner's confirmation before the charter is frozen.** The prose charter's entry rule and its hysteresis hold rule can name six ETFs for a five-slot book, and section 9 does not say which yields. The code resolves it in favour of the incumbent, because resolving by rank alone would make the hysteresis band dead code whenever five names are eligible. If Matt intends the opposite, section 8 of `ALPHA_CHARTER.md` needs a sentence and the code needs a one-line change; either way the prose should say so explicitly before anything is frozen.
 
@@ -57,4 +59,6 @@ Verified: 17. Partial: 4. UNVERIFIED: 3 (all Schwab rows, Alpaca duplicate clien
 
 ## Next authorized action
 
-None beyond what this session did. The next step is Matt's, not code's: merge PR #4, then approve and freeze the charter (which resolves D-32 and the four open decisions) and provide the data credentials. Only then can a registered experiment produce a Phase 2 result. See `HANDOFF.md`.
+Merge the Phase 2 PR to `main`, so `main` stops being one phase behind the reviewed work. After that the next step is Matt's, not code's: approve and freeze the charter (which resolves D-32 and the four open decisions) and provide the data credentials. Only then can a registered experiment produce a Phase 2 result. See `HANDOFF.md`.
+
+**Merge order matters in this repository.** Twice now a phase PR has been merged into a base branch that had already been merged forward, leaving `main` a phase behind (PR #3 for Phase 1, PR #5 for Phase 2). A stacked PR must be retargeted to `main` *before* it is merged, or merged before its base goes in. D-36 records the rule.
