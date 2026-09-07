@@ -52,6 +52,8 @@ Exit only when: adversarial content cannot cause tool calls, secret disclosure, 
 
 Deliver: schema-validated financial picture and read-only CSV import; exposure flags and ETF look-through with coverage/staleness; restricted list with immediate additions and cooling-period removals; compliance engine; deterministic portfolio constructor and sizing; risk engine with halt states; table and property tests for every rule boundary.
 
+**Scope change (D-40, 2026-09-07):** the household / personal-finance layer moves to a separate product, **Granary**, which sits above Black Gold. Black Gold's household scope shrinks to the minimum its own risk/compliance gates need and does not become the household book of record. The read-only, dollar-free export Granary consumes is designed in `docs/GRANARY_EXPORT_CONTRACT.md` (Proposed); it can be built as its own bounded PR ahead of the rest of Phase 4 because it needs neither the charter signed nor household data.
+
 Exit only when: every hard rule has positive, negative, and boundary tests; unknown and stale states fail closed; factor mismatches reject; sizing is provably invariant to LLM uncertainty; no code path can form or route a non-sleeve mutation.
 
 ## Phase 5 - Prospective shadow and paper operations

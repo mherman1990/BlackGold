@@ -43,6 +43,10 @@ All Discovery recommendations accepted by Matt on 2026-09-06 (see the header of 
 
 Open facts still owed by Matt: whether the sleeve account exists and its type (D-12), backup destination host (D-16), Phase 6 written blast-radius acceptance (D-13), port-collision check on the Pi before first install (D-04), and the four open decisions inside the charter itself.
 
+## External context: Granary (separate product, added 2026-09-07)
+
+Matt is building the household / personal-finance / capital-allocation layer as a **separate** product, **Granary** (`mherman1990/Granary`, Umbrel app `granary`, port 3000), which sits *above* Black Gold and will eventually read Black Gold data. This changes Black Gold's Phase 4 scope: Black Gold does **not** become the household book of record and does **not** take any dependency on Granary. Integration is one-way (Granary reads Black Gold, never the reverse) and Black Gold's existing boundaries (no inbound nonpublic/household connector, no household dollars to a model, no money movement) are the safety guarantee. Recorded as **D-40 (Proposed)**; it blocks no current work and awaits Matt's acceptance before any Phase 4 household work. Do not rebuild the household layer inside this repository. The read-only export Granary would consume is designed (dollar-free by construction) in `docs/GRANARY_EXPORT_CONTRACT.md` (Proposed): Black Gold exports weights and states, never dollars or accounts, and Granary supplies the dollar denominator. Building it is a Phase 4/5 PR, authorized on its own.
+
 ## Phase 2 exit criteria
 
 See `docs/PHASE2_REQUIREMENTS_MATRIX.md`. Every criterion verifiable without owner approval and without ingested data is `tested`. One is `blocked`: "predeclared research tests complete and reported" cannot be met, because the charter is DRAFT and no market data exists. That blockage is the honest state, not an oversight - see the matrix's "Why no result exists yet".
