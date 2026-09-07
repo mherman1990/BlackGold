@@ -51,16 +51,24 @@ The Phase 2 layer is machinery, not evidence. No experiment is registered, no re
 
 **Required actions**
 
-None. Nothing to install.
+Installing this release gives you a read-only plain-text status and health page on port 8479 and nothing else. There is no reporting view yet, and nothing to configure: with no charter approved and no credentials supplied, the app runs its scheduler, keeps its ledger sealed, and reports its own health.
+
+If you are installing to close the two outstanding Phase 0 exit criteria (`docs/PHASE0_REQUIREMENTS_MATRIX.md`):
+
+1. Pull the image on the Pi and on the Windows Docker host, and run `health` for both roles. Both must report `liveCapable: false`.
+2. Run `scripts/pi-benchmark.sh` on the Pi and record the numbers against `docs/RESOURCE_BUDGET.md`.
+3. Check port 8479 is free on the Pi before the first install (D-04).
+
+Supplying data credentials is optional and separate. `ingest` needs `BLACKGOLD_SEC_USER_AGENT_CONTACT` plus per-source keys; they go in the Umbrel app environment, never in git. Without them the research adapters simply never run.
 
 **Risk impact**
 
-None to capital. No broker connectivity, no credentials, no live path.
+None to capital. No broker connectivity, no credentials, no live path, and no code that could form or route an order. The gateway in this release holds no credential and offers only the synthetic broker; it exposes no port and has no app_proxy route.
 
 **Migration**
 
-Initial schema.
+Initial schema. Migrations run automatically on start and are forward-only from this release onward.
 
 **Rollback**
 
-Not applicable.
+Roll back to the previous image tag; there is no previous published tag for 0.1.0, so rollback means removing the app. All mutable state lives under `${APP_DATA_DIR}/data` and is removed with it. No external state exists to reconcile.
