@@ -5,12 +5,15 @@ import type { ExchangeCalendar } from "./calendar/types.ts";
 import { Ledger, sealThroughDate } from "./ledger/ledger.ts";
 import { Scheduler } from "./scheduler/scheduler.ts";
 import { runHealth, type HealthReport } from "./health/health.ts";
+import { buildStatusReport } from "./status/model.ts";
+import { renderStatusPage } from "./status/render.ts";
 import { CORE_VERSION } from "./version.ts";
 
 /**
  * Long-running core process for the Umbrel container.
  *
- * - A LOCAL, read-only HTTP status listener (GET /health as JSON, GET / as a plain status page). It binds to
+ * - A LOCAL, read-only HTTP status listener: GET / is an HTML status page, GET /health is the same health
+ *   report as JSON, GET /status.txt is the plain-text view for terminals. It binds to
  *   all container interfaces because Umbrel's app_proxy is the only route to it; it never makes outbound
  *   requests and accepts no state-changing method.
  * - A scheduler loop that ticks every `schedulerPollSeconds`, running missed-run detection before due runs.
@@ -101,6 +104,24 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
       return;
     }
     if (req.url === "/" || req.url === "/index.html") {
+      // The HTML page always refreshes rather than serving `lastReport`: a stale "OK" on a dashboard is worse
+      // than a slow one, and the operator opening this page is asking what is true now.
+      const html = renderStatusPage(buildStatusReport(opts.db, refreshHealth()));
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        // Defence in depth for a page that is already script-free and makes no outbound request. If a future
+        // change introduces either, this refuses it rather than silently allowing it.
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+        "referrer-policy": "no-referrer",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+      });
+      res.end(html);
+      return;
+    }
+    // Kept for terminals and `curl` on the Pi, where the HTML page is unreadable.
+    if (req.url === "/status.txt") {
       const report = lastReport ?? refreshHealth();
       res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
       res.end(renderStatus(report));
