@@ -39,8 +39,13 @@ export function assertNonNegative(value: Dec, label: string): void {
   if (value.isNegative()) throw new RangeError(`${label} must be non-negative, got ${value.toString()}`);
 }
 
+/** Strictly greater than zero. decimal.js reports +0 as "positive", so never use isPositive() for this check. */
+export function isStrictlyPositive(value: Dec): boolean {
+  return value.gt(0);
+}
+
 export function assertPositive(value: Dec, label: string): void {
-  if (!value.isPositive()) throw new RangeError(`${label} must be positive, got ${value.toString()}`);
+  if (!value.gt(0)) throw new RangeError(`${label} must be positive, got ${value.toString()}`);
 }
 
 /** Serialize for storage or hashing: canonical string form, no exponent. */

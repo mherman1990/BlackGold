@@ -28,6 +28,29 @@ export function openDatabase(path: string, opts: { readOnly?: boolean } = {}): D
   }
   raw.exec("PRAGMA foreign_keys = ON;");
   raw.exec("PRAGMA busy_timeout = 5000;");
+  let depth = 0;
+  const transaction = <T>(fn: () => T): T => {
+    // Nested calls use SAVEPOINTs so a Ledger.append inside a Scheduler transaction (or similar) is atomic
+    // with its parent instead of failing with "cannot start a transaction within a transaction".
+    if (depth === 0) {
+      raw.exec("BEGIN IMMEDIATE;");
+    } else {
+      raw.exec(`SAVEPOINT sp${depth};`);
+    }
+    depth++;
+    try {
+      const result = fn();
+      depth--;
+      if (depth === 0) raw.exec("COMMIT;");
+      else raw.exec(`RELEASE SAVEPOINT sp${depth};`);
+      return result;
+    } catch (err) {
+      depth--;
+      if (depth === 0) raw.exec("ROLLBACK;");
+      else raw.exec(`ROLLBACK TO SAVEPOINT sp${depth}; RELEASE SAVEPOINT sp${depth};`);
+      throw err;
+    }
+  };
   return {
     raw,
     path,
@@ -35,17 +58,7 @@ export function openDatabase(path: string, opts: { readOnly?: boolean } = {}): D
       raw.exec(sql);
     },
     prepare: (sql) => raw.prepare(sql),
-    transaction: <T>(fn: () => T): T => {
-      raw.exec("BEGIN IMMEDIATE;");
-      try {
-        const result = fn();
-        raw.exec("COMMIT;");
-        return result;
-      } catch (err) {
-        raw.exec("ROLLBACK;");
-        throw err;
-      }
-    },
+    transaction,
     close: () => {
       raw.close();
     },

@@ -112,6 +112,32 @@ describe("db", () => {
     restored.close();
     db.close();
   });
+  it("nested transactions are atomic with their parent", () => {
+    const db = openDatabase(":memory:");
+    db.exec("CREATE TABLE t (v TEXT)");
+    db.transaction(() => {
+      db.prepare("INSERT INTO t VALUES ('outer')").run();
+      db.transaction(() => {
+        db.prepare("INSERT INTO t VALUES ('inner')").run();
+      });
+      expect(() =>
+        db.transaction(() => {
+          db.prepare("INSERT INTO t VALUES ('rolled back')").run();
+          throw new Error("boom");
+        }),
+      ).toThrow("boom");
+    });
+    const rows = (db.prepare("SELECT v FROM t ORDER BY v").all() as { v: string }[]).map((r) => r.v);
+    expect(rows).toEqual(["inner", "outer"]);
+    expect(() =>
+      db.transaction(() => {
+        db.prepare("INSERT INTO t VALUES ('never')").run();
+        throw new Error("outer boom");
+      }),
+    ).toThrow("outer boom");
+    expect((db.prepare("SELECT count(*) AS n FROM t").get() as { n: number }).n).toBe(2);
+    db.close();
+  });
   it("journal mode is WAL", () => {
     const dir = mkdtempSync(join(tmpdir(), "bg-"));
     const db = openDatabase(join(dir, "w.sqlite"));
