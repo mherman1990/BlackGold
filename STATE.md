@@ -55,6 +55,8 @@ The **real Anthropic adapter is now built** in a follow-up PR (D-42, branch `cla
 
 **Still deferred, by design — see `docs/PHASE3_REQUIREMENTS_MATRIX.md`:** one live verification run against the real API on the Pi (CR-12/CR-13 — exact wire shape, latency, cache); persistence of the model-call record and running budget; and wiring C1/D1 into the decision loop (prospective, Phase 5). No live trading mode, broker credential, or trading-host egress is added. No LLM output can set a size, choose an account, or form an order.
 
+**Phase 3 completion (branch `claude/phase-03-completion`, being built 2026-09-07):** call archiving + budget persistence (migration `0007` `model_calls`, `research/model-call-log.ts`) and the analyst wiring (`analyst/run-analyst.ts` + a `research analyst` CLI command reading `ANTHROPIC_API_KEY` in `config/load.ts` only) are built and tested with a stub adapter. This closes the "archive everything" criterion. **Still open:** the live CR-12/CR-13 run (needs a key on the Pi), C1/D1 backtest wiring (Phase 5, review-gated), and a deterministic factor classifier (Phase 4). The `research analyst` command fails closed without a key and makes no call.
+
 ## Phase 2 exit criteria
 
 See `docs/PHASE2_REQUIREMENTS_MATRIX.md`. Every criterion verifiable without owner approval and without ingested data is `tested`. One is `blocked`: "predeclared research tests complete and reported" cannot be met, because the charter is DRAFT and no market data exists. That blockage is the honest state, not an oversight - see the matrix's "Why no result exists yet".

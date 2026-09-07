@@ -61,3 +61,23 @@ Deliverable 3's provider half is now built in a follow-up PR: `AnthropicAdapter`
 `runAssessment`. Still **not** `tested`, and impossible without a key: the one live run against the real API
 (CR-12/CR-13 — exact structured-output wire shape, real latency and cache behaviour). Call/budget persistence
 and C1/D1 backtest wiring remain Phase 5.
+
+## Update, 2026-09-07: Phase 3 completion (persistence + analyst wiring)
+
+Two of the "remaining" items above are now built and `tested`:
+
+- **Call archiving + budget persistence** (deliverable 5 / the "archive everything" exit criterion). Migration
+  `0007` adds an append-only `model_calls` log; `research/model-call-log.ts` records each redacted call and
+  derives decimal day/month spend so budgets survive a restart. `runAnalyst`
+  (`analyst/run-analyst.ts`) derives the running budget from the log, runs the assessment, and archives the
+  record; a historical replay is labelled contaminated in the log. Tests: `model-call-log.test.ts`,
+  `run-analyst.test.ts`.
+- **Analyst wiring** — the `research analyst` CLI command builds a point-in-time packet for a candidate,
+  constructs the `AnthropicAdapter` from `ANTHROPIC_API_KEY` (read only in `config/load.ts`, kept off
+  `AppConfig`), and prints the redacted outcome; fail-closed without a key.
+
+Still open, by design: the one **live** CR-12/CR-13 verification run on the Pi (needs a key), and **C1/D1
+backtest wiring** — deferred to Phase 5 because a real C1/D1 run is prospective and a historical wiring yields
+only contaminated diagnostics; it modifies `runBacktest` and belongs under review, not an unattended build.
+A **deterministic factor classifier** (so `factorsTouched` is checked against code rather than a `--factors`
+flag) is a Phase 4 item the CLI will consume when it exists.
