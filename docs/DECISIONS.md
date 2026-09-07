@@ -43,6 +43,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-35 | Phase 2 authorized by Matt's "keep building out" (2026-09-07); built as machinery plus fixture tests only. No registered experiment, no historical result, and no holdout access, because the charter is DRAFT and no source data has been ingested | Accepted 2026-09-07 | Owner approves the charter, then the same code produces the evidence |
 | D-36 | A stacked PR is retargeted to `main` before it is merged, or merged before its base goes in. Merging into an already-merged-forward base leaves `main` a phase behind; the remedy is a merge commit bringing `main` in plus a fresh PR, never a force-push | Accepted 2026-09-07 (engineering) | - |
 | D-37 | Claude Code has standing authorization for the whole git and GitHub mechanic, including merging its own PRs to `main` and tagging releases. Charter approval, holdout opening, promotion-evidence claims, and anything live remain the owner's alone | Accepted 2026-09-07 by Matt | Supersedes the per-action authorization rule in the original git protocol |
+| D-38 | `release.yml` also accepts `workflow_dispatch` with a version, and creates the `v<version>` tag itself after checks pass. Claude Code releases through that instead of a tag push, because GitHub refuses its credential any tag ref | Accepted 2026-09-07 by Matt, who asked for the capability directly | Makes D-37's tagging grant actually usable; narrower than a general tag-ref permission |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -296,6 +297,35 @@ Unchanged: no direct commit or push to `main` (work still arrives through a PR, 
 These are not process friction; they are the reason the system is built the way it is. `assertRegistrable` refusing a DRAFT charter is theatre if Claude Code can sign the charter. A once-only holdout is theatre if Claude Code can open it. A falsifier is theatre if Claude Code can decide it does not count. An agent that approves its own hypothesis and then grades its own results generates no evidence at all. Claude Code may propose any of these with reasoning, and should say plainly when one of them is what blocks progress, but may not perform them.
 
 **Why relaxing the workflow gates is safe.** `CLAUDE.md` already states that its instructions are guidance and that hard limits live in branch protection, CI policy tests, and the broker gateway. Nothing protecting capital depended on the owner clicking merge: live trading is absent by construction, no broker credential exists anywhere in the project, account isolation and live-disabled are permanent CI gates, and the charter approval gate is enforced in code with its own policy test. Autonomy over git changes who presses the button, not what the button is permitted to do.
+
+---
+
+## D-38 Releasing without a tag ref
+
+**Status:** Accepted 2026-09-07 by Matt: "lets fix 1. so you can can do this yourself now and into the future."
+
+**The problem.** D-37 authorized Claude Code to "create and push a `v*` tag", and that turned out to be unusable. `git push origin v0.1.0` returns HTTP 403 from GitHub on every attempt, as does `git push origin --delete <branch>`, while ordinary pushes to `claude/*` branches on the same repository succeed and the agent proxy reports healthy with no relay failures. The refusal carries GitHub's own response headers, so it is an authorization decision on GitHub's side, not the egress policy. The git credential this session is given may add commits to its own branch and nothing else.
+
+The consequence was not cosmetic. `release.yml` fired only on a pushed semver tag, so no image was ever published, so the Umbrel community store rendered a valid-looking `0.1.0` listing whose Install button failed on a `docker pull` of an image that did not exist. The whole release chain hung on one command a human had to type.
+
+**Why not just widen the credential.** It is not a repository setting Matt can change - no ruleset is configured, and the credential is injected by the Claude Code environment rather than issued by this repository. Nor is there an API path: the GitHub MCP tools authenticate as Matt with full rights and can merge PRs, but expose no tag-creating or release-creating call. Waiting for a platform change is not a fix.
+
+**Decision.** `release.yml` gains a `workflow_dispatch` trigger taking a bare semver. On that path the workflow resolves `main`'s head itself, verifies it, runs the full `npm run check`, creates the annotated `v<version>` tag, and then publishes. The tag-push path is unchanged, so Matt can still cut a release by hand exactly as before.
+
+**Why this is narrower than the permission it replaces, not broader.** A tag-ref grant would let any ref be tagged with any name at any commit. This path can only ever produce one thing: the tag `v<version>` where `<version>` is what `package.json` already declares, at a commit already reachable from `main`. It cannot publish unreviewed code, because unmerged work is unreachable from `main` by definition. Specifically:
+
+1. The version must match `package.json` read *from the resolved commit*, not the working tree, so dispatching from another ref cannot substitute a different version.
+2. The commit must be an ancestor of `origin/main`.
+3. An existing tag is refused rather than moved. A published version is immutable - the compose file pins it by digest, and re-pointing a tag would silently change what an installed app resolves on its next pull.
+4. The input is shape-checked against `^[0-9]+\.[0-9]+\.[0-9]+$`, which the push trigger got free from its ref pattern.
+5. The input reaches the shell through the environment, never interpolated into a script body.
+6. `contents: write` is scoped to the single job that creates the ref; the workflow is otherwise read-only.
+7. Tagging happens *after* checks pass, so a failed release leaves no tag pointing at nothing.
+
+**What it still cannot do.** Everything D-37 carved out is untouched, and none of it is reachable from here: no charter approval, no holdout opening, no promotion-evidence claim, no live mode, no broker credential. Publishing an image of already-merged code is a low-consequence act in this system precisely because live trading is absent by construction - the image cannot trade whatever it contains.
+
+**Honest note on what changed.** This does give Claude Code an indirect route to a capability the platform currently withholds, through a workflow Claude Code wrote. That is worth stating rather than burying: the mitigation is that the route is narrow by construction and auditable by default, since every release is now an Actions run with a log of exactly which commit and version it resolved and why it accepted them. If Matt would rather the capability not exist, deleting the `workflow_dispatch` block restores the previous behaviour completely and nothing else depends on it.
+
 
 ---
 

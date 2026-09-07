@@ -18,7 +18,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 | First Alpha Charter | `strategies/etf-trend-vol/charter.yaml` exists and is executable, but is `DRAFT`: unsigned, four open decisions unresolved, XLE undecided. `assertRegistrable` refuses it and a CI gate keeps that true |
 | Registered experiments | None. No experiment has been registered, no result computed, no holdout opened |
 | Umbrel manifests | Written (`umbrel-app-store.yml`, `blackgold-trading/`) and identity-checked; not yet installed anywhere |
-| GHCR image | **None published, and blocked.** `release.yml` publishes only on a pushed `v[0-9]+.[0-9]+.[0-9]+` tag, and this session's credential cannot create tag refs (see Repository state). CI has built `linux/amd64` and `linux/arm64` successfully many times without pushing |
+| GHCR image | **None published yet.** Unblocked as of D-38: dispatching `release.yml` with a version now tags and publishes without needing a tag push. One manual step remains on the first publish - a new GHCR package is private by default and umbrelOS pulls anonymously, so Matt must flip it to public. CI has built `linux/amd64` and `linux/arm64` successfully many times without pushing |
 
 ## Repository state
 
@@ -32,7 +32,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 | Working branch | `claude/black-gold-continued-rxiesj`, merged and reset to `origin/main`. Restart it from `origin/main` for any follow-up work |
 | Stale branches | `claude/phase-00-foundation`, `claude/black-gold-trading-tool-n713ly` and `claude/phase-01-research-kernel`. **Verified safe to delete:** each carries zero non-merge commits absent from `main`, and their only commits beyond it are orphan merge commits left by the D-36 incident. Claude Code cannot delete them (see below); Matt or wider permissions must. Leaving them is what made the D-36 mis-merge easy to repeat |
 | Branch protection | Not configured (needs Matt in GitHub UI) |
-| **Claude Code git permissions** | This session may commit, push to its own `claude/*` branch, open, update and merge PRs. It **cannot create tag refs or delete refs**: `git push origin v0.1.0` and `git push origin --delete <branch>` both return HTTP 403 from GitHub on every attempt, while ordinary branch pushes to the same repo succeed and the agent proxy reports healthy with no relay failures. Not a transient error and not worth retrying. D-37 grants the authority; the credential does not carry it. Anything gated on a tag (the whole release chain) needs Matt or a permissions change |
+| **Claude Code git permissions** | This session may commit, push to its own `claude/*` branch, open, update and merge PRs. It **cannot create tag refs or delete refs**: `git push origin v0.1.0` and `git push origin --delete <branch>` both return HTTP 403 from GitHub on every attempt, while ordinary branch pushes to the same repo succeed and the agent proxy reports healthy with no relay failures. Not a transient error and not worth retrying. **Worked around for releases** by D-38: `release.yml` accepts a `workflow_dispatch` version and creates the tag itself after checks pass, so the release chain no longer needs Matt. Ref *deletion* has no workaround, so merged branches still do |
 | CI | `.github/workflows/ci.yml` green on every PR through #9 (checks plus multi-arch image build). `testTimeout` is 30 s suite-wide after two runs disagreed on identical commits; see `HANDOFF.md` §7 |
 
 ## Decisions
@@ -67,7 +67,7 @@ Verified: 17. Partial: 4. UNVERIFIED: 3 (all Schwab rows, Alpaca duplicate clien
 
 None for code. Everything through Phase 2 plus the Phase 0 seal completion is on `main` and green. The next steps are Matt's, in rough order of what unblocks the most:
 
-1. **Push the `v0.1.0` tag** — `git tag v0.1.0 03bf580 && git push origin v0.1.0` — or widen this session's repository permissions to allow tag refs. `package.json` is at `0.1.0` and `release.yml`'s guard (tag matches version, commit reachable from `main`) would pass. **The entire release chain waits on this one command**: image publish, then digest pinning, then `release-verify.yml`, then anything installable on the Pi.
+1. **Make the GHCR package public** once the first image publishes: github.com/users/mherman1990/packages/container/blackgold/settings -> Change visibility -> Public. A new GHCR package is private by default and umbrelOS pulls anonymously, so the Umbrel install fails with `unauthorized` until this is done. This is now the *only* step in the release chain Claude Code cannot perform; the tag and publish go through a `release.yml` dispatch (D-38).
 2. **Confirm or overrule D-32** (book-slot priority between the entry rule and the hysteresis hold rule). The code resolves it provisionally; the prose charter should state it either way before anything is frozen.
 3. **Resolve the four open decisions inside `strategies/etf-trend-vol/charter.yaml`**, decide XLE, and sign the approval block. `charter show --path strategies/etf-trend-vol/charter.yaml` prints exactly what is missing and refuses until all of it is filled in.
 4. **Provide the data credentials** so an ingest can run: `BLACKGOLD_SEC_USER_AGENT_CONTACT`, `BLACKGOLD_FRED_API_KEY`, `BLACKGOLD_ALPACA_KEY_ID`, `BLACKGOLD_ALPACA_SECRET_KEY`.
