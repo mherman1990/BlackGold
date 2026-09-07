@@ -5,6 +5,7 @@ import type { ExchangeCalendar } from "./calendar/types.ts";
 import { Ledger, sealThroughDate } from "./ledger/ledger.ts";
 import { Scheduler } from "./scheduler/scheduler.ts";
 import { runHealth, type HealthReport } from "./health/health.ts";
+import { runFullVerification } from "./health/integrity.ts";
 import { buildStatusReport } from "./status/model.ts";
 import { renderStatusPage } from "./status/render.ts";
 import { CORE_VERSION } from "./version.ts";
@@ -70,6 +71,20 @@ export function registerPhase0Jobs(scheduler: Scheduler): void {
       }
     },
   });
+
+  scheduler.register({
+    jobId: "verify_integrity",
+    name: "Full ledger + database integrity verification (moved off the health probe's hot path)",
+    // Ten past midnight UTC, after the seal job at :05, so the day just sealed is included in the full check.
+    schedule: { kind: "daily_utc", hh: 0, mm: 10 },
+    deadlineMs: 300_000,
+    handler: (ctx) => {
+      // Runs the whole-store verification (chain + seals + PRAGMA integrity_check) and records the outcome for
+      // the hot path to report. A finding is recorded, not thrown: the job's purpose is to verify and persist
+      // the result, and health surfaces a failure via `full_verification`. See health/integrity.ts / HANDOFF §7.
+      runFullVerification(ctx.db, ctx.ledger, ctx.now);
+    },
+  });
 }
 
 export async function serve(opts: ServeOptions): Promise<ServeHandle> {
@@ -84,6 +99,11 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
     missedLookbackMs: 7 * 24 * 3_600_000,
   });
   registerPhase0Jobs(scheduler);
+
+  // Run one full verification at startup so the hot path has a fresh result immediately, rather than reporting
+  // "no full verification recorded yet" until the first daily job fires (up to a day later). Startup is not the
+  // 60 s hot path, so the full scan here is fine; the daily job maintains it from then on.
+  runFullVerification(opts.db, ledger, clock());
 
   let lastReport: HealthReport | undefined;
   const refreshHealth = (): HealthReport => {
@@ -187,7 +207,8 @@ function renderStatus(r: HealthReport): string {
     `mode: ${r.mode}   liveCapable: ${String(r.liveCapable)}`,
     `as of: ${r.at}`,
     `next session: ${r.nextSession}`,
-    `ledger events: ${r.ledgerEvents}   chain: ${r.ledgerChain.ok ? "ok" : "BROKEN"}`,
+    `ledger events: ${r.ledgerEvents}   chain (unsealed tail): ${r.ledgerChain.ok ? "ok" : "BROKEN"}`,
+    `full verification: ${r.lastFullVerification ? `${r.lastFullVerification.ok ? "clear" : "FAILED"} at ${r.lastFullVerification.at}` : "pending"}`,
     `last seal: ${r.lastSeal ? `${r.lastSeal.date} ${r.lastSeal.rootHash.slice(0, 12)}` : "none"}`,
     `unsealed days: ${r.unsealedDays.length === 0 ? "none" : r.unsealedDays.join(",")}`,
     "",

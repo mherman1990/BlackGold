@@ -119,3 +119,81 @@ describe("Ledger", () => {
     db.close();
   });
 });
+
+describe("Ledger.verifyChainSinceLastSeal", () => {
+  const DAY1 = "2026-09-06";
+  const DAY2 = "2026-09-07";
+  const D1 = utc(`${DAY1}T12:00:00Z`);
+  const D2 = utc(`${DAY2}T12:00:00Z`);
+
+  // Seals day 1 (seq 1..2) and leaves day 2 (seq 3..4) unsealed.
+  function twoDayLedger(): { db: ReturnType<typeof newDb>; ledger: Ledger } {
+    const db = newDb();
+    const ledger = new Ledger(db);
+    ledger.append("d1.a", { n: 1 }, D1);
+    ledger.append("d1.b", { n: 2 }, D1);
+    ledger.sealDaily(isoDate(DAY1), D2);
+    ledger.append("d2.a", { n: 3 }, D2);
+    ledger.append("d2.b", { n: 4 }, D2);
+    return { db, ledger };
+  }
+
+  it("falls back to a full verify when nothing is sealed, catching a tamper anywhere", () => {
+    const db = newDb();
+    const ledger = new Ledger(db);
+    for (let i = 1; i <= 3; i++) ledger.append("e", { i }, D2);
+    db.exec("DROP TRIGGER ledger_events_no_update");
+    db.exec("UPDATE ledger_events SET payload = '{\"i\":99}' WHERE seq = 2");
+    expect(ledger.verifyChainSinceLastSeal()).toEqual({ ok: false, brokenAt: 2, reason: "hash mismatch" });
+    db.close();
+  });
+
+  it("passes when the sealed prefix is frozen and the unsealed tail is intact", () => {
+    const { db, ledger } = twoDayLedger();
+    expect(ledger.verifyChainSinceLastSeal()).toEqual({ ok: true });
+    db.close();
+  });
+
+  it("catches a tamper in the unsealed tail", () => {
+    const { db, ledger } = twoDayLedger();
+    db.exec("DROP TRIGGER ledger_events_no_update");
+    db.exec("UPDATE ledger_events SET payload = '{\"n\":999}' WHERE seq = 4");
+    expect(ledger.verifyChainSinceLastSeal()).toEqual({ ok: false, brokenAt: 4, reason: "hash mismatch" });
+    db.close();
+  });
+
+  it("does not rescan the sealed prefix - a sealed-region tamper is left to the full verify, not this hot path", () => {
+    const { db, ledger } = twoDayLedger();
+    db.exec("DROP TRIGGER ledger_events_no_update");
+    db.exec("UPDATE ledger_events SET payload = '{\"n\":777}' WHERE seq = 1");
+    // The incremental check trusts the frozen prefix, so it stays green here...
+    expect(ledger.verifyChainSinceLastSeal()).toEqual({ ok: true });
+    // ...and the scheduled full verify is what actually catches it.
+    expect(ledger.verifyChain().ok).toBe(false);
+    db.close();
+  });
+
+  it("catches deletion of the anchor (last sealed) event", () => {
+    const { db, ledger } = twoDayLedger();
+    db.exec("DROP TRIGGER ledger_events_no_delete");
+    db.exec("DELETE FROM ledger_events WHERE seq = 2");
+    expect(ledger.verifyChainSinceLastSeal()).toEqual({ ok: false, brokenAt: 2, reason: "sealed anchor event missing" });
+    db.close();
+  });
+
+  it("catches a sequence gap between the seal and the tail", () => {
+    const { db, ledger } = twoDayLedger();
+    db.exec("DROP TRIGGER ledger_events_no_delete");
+    db.exec("DELETE FROM ledger_events WHERE seq = 3");
+    expect(ledger.verifyChainSinceLastSeal()).toEqual({ ok: false, brokenAt: 3, reason: "sequence gap after last seal at 2" });
+    db.close();
+  });
+
+  it("anchors on the last event-bearing seal, ignoring a later empty-day seal", () => {
+    const { db, ledger } = twoDayLedger();
+    // An empty day sealed after day 2 carries a null last_seq and must not become the anchor.
+    ledger.sealDaily(isoDate("2026-09-08"), utc("2026-09-08T00:10:00Z"));
+    expect(ledger.verifyChainSinceLastSeal()).toEqual({ ok: true });
+    db.close();
+  });
+});

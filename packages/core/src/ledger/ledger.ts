@@ -130,6 +130,41 @@ export class Ledger {
     return verifyEventChain(this.events());
   }
 
+  /**
+   * Verify only the chain segment after the last sealed event, anchored on that event's stored hash.
+   *
+   * The health probe runs on every request (the container healthcheck hits it every 60 s); rehashing the whole
+   * ledger there is O(all events) and becomes a restart-loop-class cost once the ledger carries real volume
+   * (`HANDOFF.md` §7). The sealed prefix is already frozen - each sealed day's root is fixed in `ledger_seals`
+   * and re-checked by the scheduled full verification (`verifyChain` + `verifySeals`) - so the probe only needs
+   * to prove the *unsealed tail* is intact and still linked to that frozen prefix. A tamper in the tail is
+   * caught here every call; a tamper in the sealed prefix is caught by the scheduled full check, not this one,
+   * so the detection guarantee is unchanged and only its latency for the sealed region grows from one probe to
+   * one schedule. When nothing is sealed yet the whole chain is the tail, so this degrades to a full
+   * `verifyChain`.
+   */
+  verifyChainSinceLastSeal(): ChainVerdict {
+    const anchorSeq = this.maxSealedSeq();
+    if (anchorSeq === null) return this.verifyChain();
+    const anchor = this.db.prepare("SELECT hash FROM ledger_events WHERE seq = ?").get(anchorSeq) as { hash: string } | undefined;
+    // The anchor is a sealed event; if it is gone, a sealed event was deleted - a tamper the tail check below
+    // cannot see, because there is then nothing to anchor the tail to.
+    if (!anchor) return { ok: false, brokenAt: anchorSeq, reason: "sealed anchor event missing" };
+    const tail = this.events(anchorSeq + 1);
+    const head = tail[0];
+    if (head === undefined) return { ok: true };
+    // Contiguity across the seal boundary: the first unsealed event must be the anchor's immediate successor,
+    // or an event between them was removed.
+    if (head.seq !== anchorSeq + 1) return { ok: false, brokenAt: anchorSeq + 1, reason: `sequence gap after last seal at ${anchorSeq}` };
+    return verifyEventChain(tail, anchor.hash as Sha256Hex);
+  }
+
+  /** Highest event sequence covered by any seal, or null when no seal covers an event. */
+  private maxSealedSeq(): number | null {
+    const row = this.db.prepare("SELECT MAX(last_seq) AS n FROM ledger_seals WHERE last_seq IS NOT NULL").get() as { n: number | null };
+    return row.n;
+  }
+
   /** Events whose `at` falls on the given UTC calendar date, ascending. */
   eventsOnDate(date: IsoDate): LedgerEvent[] {
     const rows = this.db
