@@ -68,6 +68,8 @@ export type EvidenceStatus = {
   resultsViewed: number;
   holdoutsOpened: number;
   promotionEvidenceClaimed: number;
+  /** Archived runtime-LLM analyst calls (append-only; each a redacted record, no packet/secret/account). */
+  modelCalls: number;
 };
 
 type JobRow = { job_id: string; name: string; schedule_kind: string; enabled: number };
@@ -152,6 +154,7 @@ function readEvidence(db: Db): EvidenceStatus {
     resultsViewed: one("SELECT COUNT(*) AS n FROM experiments WHERE results_viewed_at IS NOT NULL"),
     holdoutsOpened: one("SELECT COUNT(*) AS n FROM experiments WHERE holdout_opened_at IS NOT NULL"),
     promotionEvidenceClaimed: one("SELECT COUNT(*) AS n FROM experiments WHERE promotion_evidence_at IS NOT NULL"),
+    modelCalls: one("SELECT COUNT(*) AS n FROM model_calls"),
   };
 }
 

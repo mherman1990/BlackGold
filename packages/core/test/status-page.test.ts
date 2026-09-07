@@ -173,6 +173,23 @@ describe("status page", () => {
     expect(html).toContain("multiple-testing denominator");
     db.close();
   });
+
+  it("reports archived runtime-LLM calls, even with no experiment registered", () => {
+    const { db, config } = fixture();
+    db.prepare(
+      `INSERT INTO model_calls (at, strategy_version, candidate_id, model_id, prompt_version, prompt_hash, schema_hash,
+         packet_hash, input_tokens, output_tokens, cache_read_input_tokens, cost_usd, latency_ms, attempts, outcome, validation)
+       VALUES ('2026-09-05T21:00:00.000Z','etf-trend-vol@1','XLK','claude-haiku-4-5','p1','sha256:x','sha256:y','sha256:z',1000,200,800,'0.05',900,1,'assessed','valid')`,
+    ).run();
+    const report = buildStatusReport(db, runHealth(config, db, calendar, NOW));
+    expect(report.evidence.modelCalls).toBe(1);
+    // Shown regardless of the experiments count (no experiment is registered in this fixture).
+    expect(report.evidence.experiments).toBe(0);
+    const html = renderStatusPage(report);
+    expect(html).toContain("Runtime-LLM analyst calls archived:");
+    expect(html).toContain('<span class="n">1</span>');
+    db.close();
+  });
 });
 
 describe("status page helpers", () => {
