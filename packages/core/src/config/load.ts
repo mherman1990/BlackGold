@@ -67,6 +67,13 @@ export function envToAppConfigInput(env: NodeJS.ProcessEnv): Record<string, unkn
       llmPerDayUsd: get("LLM_BUDGET_PER_DAY_USD"),
       llmPerMonthUsd: get("LLM_BUDGET_PER_MONTH_USD"),
     }),
+    sources: stripUndefined({
+      secUserAgentContact: get("SEC_USER_AGENT_CONTACT"),
+      fredApiKey: get("FRED_API_KEY"),
+      alpacaKeyId: get("ALPACA_KEY_ID"),
+      alpacaSecretKey: get("ALPACA_SECRET_KEY"),
+      artifactBudgetBytes: num("ARTIFACT_BUDGET_BYTES"),
+    }),
     sleeveAccount: stripUndefined({ role, accountRef: get("SLEEVE_ACCOUNT_REF") }),
   });
 }

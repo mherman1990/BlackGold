@@ -56,6 +56,20 @@ const AppConfigInput = z.object({
       llmPerMonthUsd: decString.default("60.00"),
     })
     .default({ llmPerCallUsd: "0.50", llmPerDayUsd: "5.00", llmPerMonthUsd: "60.00" }),
+  /** Public data sources (Phase 1). Credentials come only from the environment and are never logged. */
+  sources: z
+    .object({
+      /** Required by SEC fair-access policy: "BlackGold/<version> (<contact email>)". No default. */
+      secUserAgentContact: z.string().email().optional(),
+      fredApiKey: z.string().min(8).optional(),
+      alpacaKeyId: z.string().min(8).optional(),
+      alpacaSecretKey: z.string().min(8).optional(),
+      /** Per-source-prefix processing delays as ISO-8601 durations; override spec defaults. */
+      processingDelays: z.record(z.string(), z.string().regex(/^P(T\d+[HMS]|\d+D)/)).default({}),
+      /** Storage cap for the raw artifact store in bytes (spec section 9). */
+      artifactBudgetBytes: z.number().int().positive().default(40 * 1024 * 1024 * 1024),
+    })
+    .default({ processingDelays: {}, artifactBudgetBytes: 40 * 1024 * 1024 * 1024 }),
   sleeveAccount: z
     .object({
       role: z.literal(SLEEVE_ROLE),
