@@ -44,4 +44,21 @@ Status values: `implemented`, `tested`, `deferred`, `blocked`, `not applicable`.
 | 2026-09-07 | Codex review of PR #3 (head `d760a51`): 6 P1 + 1 P2 findings | all verified as real and fixed: COT paging, federal-holiday COT release rule (CR-27), trial-label promotion refusal, artifact quarantine on verify failure, processing-delay overrides wired end to end, bitemporal entity map, per-write artifact budget. `npm run check`: lint clean; typecheck clean; 33 test files, 264 tests passed; identity ok; secret scan ok over 194 tracked files |
 | 2026-09-07 | `ci.yml` runs 27 (push) and 28 (pull_request) on PR #3 head `e5c6a70` | both green: checks job (lint, typecheck, 264 tests, identity, secrets, gitleaks full history, manifest parse) and image job (multi-arch build, smoke). Codex code and security reviews completed; all seven threads answered and resolved |
 | 2026-09-07 | `ci.yml` runs 34087278746 (push) and 34087280800 (pull_request) on PR #4 head `b3e08b6` (Phase 1 to `main`) | both green: checks job and multi-arch image job. Tree identical to the reviewed PR #3 head; no review threads |
-| not run | live ingest against SEC, FRED, CFTC, Alpaca | needs credentials from Matt; adapters are fixture-tested only (Phase 5 first live ingest) |
+| **run for FRED** | live ingest against FRED | 2026-09-07 with the owner's key: DGS10, 3 windows, 4 artifacts, 16,880 observations, 5,103 distinct vintages, 0 conflicts. **Found two blocking defects no fixture had caught (CR-28, CR-29)** - see below |
+| not run | live ingest against SEC, CFTC, Alpaca | SEC contact is available; CFTC needs no key; Alpaca needs the owner's keys. Fixture-tested only until then, and FRED shows what that is worth |
+
+## What the first live ingest changed
+
+FRED was fixture-tested and passing before 2026-09-07, and had never been pointed at the real API. The first
+real request failed outright: FRED refuses a real-time period containing more than 2000 vintage dates, and
+DGS10 has 5,103, so **no long-history daily series could be ingested at all**. Fixing it then surfaced a
+second defect that would have been silent rather than loud - FRED clips each row's `realtime_start` to the
+requested window, so chunking naively invents vintage dates later than the truth. That direction is
+conservative for leakage, but it would have filled the point-in-time store with vintages that never existed.
+
+Both are now `Verified` in the capability register (CR-28, CR-29) with the live evidence, and the fix is
+tested both as pure window arithmetic and against the live API.
+
+The generalisable lesson, recorded because it applies to the three adapters still unexercised: **a
+fixture-tested adapter is evidence about the parser, not about the API.** One live probe per source is worth
+more than another fixture, and should happen before the source is marked ready rather than after.

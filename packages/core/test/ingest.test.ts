@@ -18,6 +18,7 @@ const read = (p: string): Uint8Array => new Uint8Array(readFileSync(new URL(p, F
 const fixtures = {
   sec: read("sec/submissions-CIK0000012345.json"),
   fred: read("fred/observations-TESTPCT.json"),
+  fredVintages: read("fred/vintagedates-TESTPCT.json"),
   cot: read("cftc/legacy-futures-three-weeks.json"),
   alpaca1: read("alpaca/bars-1d-page1.json"),
   alpaca2: read("alpaca/bars-1d-page2.json"),
@@ -41,7 +42,10 @@ function harness(overrides: Record<string, unknown> = {}): { db: Db; config: App
     const u = new URL(url);
     let body: Uint8Array;
     if (u.hostname === "data.sec.gov") body = fixtures.sec;
-    else if (u.hostname === "api.stlouisfed.org") body = fixtures.fred;
+    // FRED now needs two endpoints: the vintage listing sets the window boundaries for observations, because
+    // FRED refuses a request spanning more than 2000 vintage dates (CR-28). Routing by hostname alone served
+    // the observations fixture to the listing request and made the parse throw.
+    else if (u.hostname === "api.stlouisfed.org") body = u.pathname.endsWith("/vintagedates") ? fixtures.fredVintages : fixtures.fred;
     else if (u.hostname === "publicreporting.cftc.gov") body = fixtures.cot;
     else if (u.hostname === "data.alpaca.markets") body = u.searchParams.has("page_token") ? fixtures.alpaca2 : fixtures.alpaca1;
     else return Promise.resolve({ status: 404, headers: { get: () => null }, arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)) });
@@ -75,7 +79,10 @@ describe("ingest run", () => {
 
     expect(reports.map((r) => [r.source, r.artifacts, r.observations, r.deduplicated, r.conflicts, r.requestCount])).toEqual([
       ["sec-submissions", 1, 8, 0, 0, 1],
-      ["fred", 1, 4, 0, 0, 1],
+      // FRED is two requests and two artifacts now: the vintage listing, then one windowed observations
+      // request. The listing is kept as audit evidence for the window boundaries even though it yields no
+      // observations of its own - which is why the artifact count below exceeds the observation-bearing one.
+      ["fred", 2, 4, 0, 0, 2],
       ["cot", 1, 3, 0, 0, 1],
       ["alpaca-bars", 2, 5, 0, 0, 2],
     ]);
@@ -84,9 +91,10 @@ describe("ingest run", () => {
     expect(reports[1]?.ingestedAt).toBe(utc("2026-12-01T12:00:00Z"));
 
     const store = new ArtifactStore(h.config.artifactsDir, h.db);
-    expect(store.count()).toBe(5);
+    expect(store.count()).toBe(6);
     const hashes = new Set((h.db.prepare("SELECT hash FROM artifacts").all() as { hash: string }[]).map((r) => r.hash));
     const obsHashes = (h.db.prepare("SELECT DISTINCT raw_content_hash AS h FROM observations").all() as { h: string }[]).map((r) => r.h);
+    // Five of the six artifacts carry observations; the FRED vintage listing is provenance, not data.
     expect(obsHashes.length).toBe(5);
     for (const hsh of obsHashes) {
       expect(hashes.has(hsh)).toBe(true);
@@ -124,7 +132,7 @@ describe("ingest run", () => {
       expect(r.conflicts).toBe(0);
     }
     expect((h.db.prepare("SELECT count(*) AS n FROM observations").get() as { n: number }).n).toBe(before);
-    expect(new ArtifactStore(h.config.artifactsDir, h.db).count()).toBe(5);
+    expect(new ArtifactStore(h.config.artifactsDir, h.db).count()).toBe(6);
     expect(new Ledger(h.db).events().filter((e) => e.kind === "ingest.completed")).toHaveLength(8);
     h.db.close();
   });
