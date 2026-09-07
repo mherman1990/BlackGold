@@ -60,7 +60,7 @@ const AppConfigInput = z.object({
   sources: z
     .object({
       /** Required by SEC fair-access policy: "BlackGold/<version> (<contact email>)". No default. */
-      secUserAgentContact: z.string().email().optional(),
+      secUserAgentContact: z.email().optional(),
       fredApiKey: z.string().min(8).optional(),
       alpacaKeyId: z.string().min(8).optional(),
       alpacaSecretKey: z.string().min(8).optional(),

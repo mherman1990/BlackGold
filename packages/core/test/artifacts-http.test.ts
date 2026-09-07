@@ -56,7 +56,7 @@ describe("AllowlistedHttpClient", () => {
     return Promise.resolve({
       status,
       headers: { get: (n: string) => (n === "etag" ? '"abc"' : n === "content-type" ? "application/json" : null) },
-      arrayBuffer: () => Promise.resolve(new TextEncoder().encode(`{"url":"${url}"}`).buffer as ArrayBuffer),
+      arrayBuffer: () => Promise.resolve(new TextEncoder().encode(`{"url":"${url}"}`).buffer),
     });
   };
   const client = (): AllowlistedHttpClient =>
