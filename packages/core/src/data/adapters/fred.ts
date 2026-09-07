@@ -67,15 +67,77 @@ export function observationsLocator(seriesId: string, realtimeStart: IsoDate, re
   return `fred/series/observations?series_id=${idForSeries(seriesId)}&realtime_start=${realtimeStart}&realtime_end=${realtimeEnd}`;
 }
 
-export async function fetchSeriesVintages(
+/**
+ * Vintage dates FRED will return in one `series/observations` response.
+ *
+ * Verified against the live API on 2026-09-07 (CR-28), not inferred: requesting the full ALFRED range for
+ * `DGS10` is refused outright with
+ *
+ *     HTTP 400 - There are 5103 vintage dates in the specified real-time period: 1776-07-04 to 9999-12-31.
+ *     This exceeds the maximum number of vintage dates allowed for this file type (2000).
+ *
+ * So a long-history daily series cannot be ingested in one request at all, and the previous single-request
+ * implementation could not fetch one. Windowing is mandatory rather than an optimisation.
+ */
+export const FRED_MAX_VINTAGES_PER_REQUEST = 2000;
+
+export type VintageWindow = {
+  start: IsoDate;
+  end: IsoDate;
+  /**
+   * True for every window after the first, meaning `start` is the previous window's `end`.
+   *
+   * Rows reporting `realtime_start === start` must be dropped from such a window: FRED clips a row's
+   * `realtime_start` to the requested window, so a vintage that began earlier and is merely still current at
+   * `start` is reported as if it began at `start`. Verified live (CR-29): the 2020-03-02 observation truly
+   * begins 2020-03-03, but a window opening 2024-01-01 reports `realtime_start: 2024-01-01`.
+   *
+   * Dropping them loses nothing, because the window that shares this boundary as its `end` already returned
+   * those rows with their true start.
+   */
+  sharesPreviousBoundary: boolean;
+};
+
+/**
+ * Split sorted vintage dates into request windows of at most `max` vintages, sharing each boundary date.
+ *
+ * Boundaries are shared rather than adjacent so that no vintage is only ever seen clipped. Every vintage
+ * start falls strictly inside, or at the end of, some window - and a start reported at a window's `end` is
+ * never clipped, because the window contains it.
+ *
+ * Pure and exported so the arithmetic is tested without touching the network: the failure mode this replaces
+ * (a fabricated vintage date) is silent and would corrupt point-in-time reads rather than error.
+ */
+export function vintageWindows(dates: readonly IsoDate[], max: number = FRED_MAX_VINTAGES_PER_REQUEST): VintageWindow[] {
+  if (max < 2) throw new RangeError("a vintage window must hold at least 2 dates to share a boundary");
+  const first = dates[0];
+  if (first === undefined) return [];
+  if (dates.length === 1) return [{ start: first, end: first, sharesPreviousBoundary: false }];
+  const windows: VintageWindow[] = [];
+  let i = 0;
+  while (i < dates.length - 1) {
+    const endIndex = Math.min(i + max - 1, dates.length - 1);
+    const start = dates[i];
+    const end = dates[endIndex];
+    // Both indices are provably in range given the loop bound and the Math.min. Checked rather than
+    // asserted so a future change to that arithmetic fails loudly here instead of emitting an undefined
+    // boundary, which would silently widen a window past FRED's cap.
+    if (start === undefined || end === undefined) throw new RangeError(`vintage window index out of range: ${i}..${endIndex} of ${dates.length}`);
+    windows.push({ start, end, sharesPreviousBoundary: i > 0 });
+    i = endIndex;
+  }
+  return windows;
+}
+
+async function fetchObservationWindow(
   client: AllowlistedHttpClient,
   store: ArtifactStore,
   seriesId: string,
   ctx: FredContext,
-): Promise<FetchOutcome<FredObservationValue>> {
-  const key = requireKey(ctx, seriesId);
-  const realtimeStart = ctx.realtimeStart ?? FRED_REALTIME_MIN;
-  const realtimeEnd = ctx.realtimeEnd ?? FRED_REALTIME_MAX;
+  key: string,
+  realtimeStart: IsoDate,
+  realtimeEnd: IsoDate,
+): Promise<{ ref: ArtifactRef; observations: PointInTimeObservation<FredObservationValue>[] }> {
   const url = new URL(`${BASE}/series/observations`);
   url.searchParams.set("series_id", idForSeries(seriesId));
   url.searchParams.set("api_key", key);
@@ -85,7 +147,49 @@ export async function fetchSeriesVintages(
   const locator = observationsLocator(seriesId, realtimeStart, realtimeEnd);
   const { put, ref } = await fetchAndStore(client, store, url.toString(), { locator, mime: "application/json", retention: "macro", secrets: [key] });
   const observations = parseObservations(store.get(put.hash), { calendar: ctx.calendar, ingestedAt: ctx.ingestedAt, rawContentHash: put.hash, seriesId });
-  return { artifacts: [ref], observations };
+  return { ref, observations };
+}
+
+/**
+ * Fetch every vintage of a series, in as many windowed requests as FRED's 2000-vintage cap requires.
+ *
+ * Asks `series/vintagedates` first, because the window boundaries must be real vintage dates: a boundary that
+ * is merely a calendar date would leave the clipping ambiguous, and the count that FRED enforces is a count
+ * of vintages, not of days.
+ */
+export async function fetchSeriesVintages(
+  client: AllowlistedHttpClient,
+  store: ArtifactStore,
+  seriesId: string,
+  ctx: FredContext,
+): Promise<FetchOutcome<FredObservationValue>> {
+  const key = requireKey(ctx, seriesId);
+  const realtimeStart = ctx.realtimeStart ?? FRED_REALTIME_MIN;
+  const realtimeEnd = ctx.realtimeEnd ?? FRED_REALTIME_MAX;
+
+  const vintages = await fetchVintageDates(client, store, seriesId, ctx);
+  const windows = vintageWindows(vintages.vintageDates);
+
+  // A series with no listed vintages still has current observations (FRED lists vintage dates only from the
+  // point ALFRED began tracking a series). Fall back to the requested window as a single request.
+  if (windows.length === 0) {
+    const single = await fetchObservationWindow(client, store, seriesId, ctx, key, realtimeStart, realtimeEnd);
+    return { artifacts: [...vintages.artifacts, single.ref], observations: single.observations };
+  }
+
+  const artifacts: ArtifactRef[] = [...vintages.artifacts];
+  const observations: PointInTimeObservation<FredObservationValue>[] = [];
+  for (const w of windows) {
+    const got = await fetchObservationWindow(client, store, seriesId, ctx, key, w.start, w.end);
+    artifacts.push(got.ref);
+    for (const obs of got.observations) {
+      // Drop the clipped carry-ins described on VintageWindow.sharesPreviousBoundary. Without this the store
+      // gains a second row for the same period whose vintageAt is later than the truth - a fabricated vintage.
+      if (w.sharesPreviousBoundary && obs.value.realtimeStart === w.start) continue;
+      observations.push(obs);
+    }
+  }
+  return { artifacts, observations };
 }
 
 export async function fetchVintageDates(
@@ -99,7 +203,13 @@ export async function fetchVintageDates(
   url.searchParams.set("series_id", idForSeries(seriesId));
   url.searchParams.set("api_key", key);
   url.searchParams.set("file_type", "json");
-  const locator = `fred/series/vintagedates?series_id=${idForSeries(seriesId)}`;
+  // Bound the listing to the caller's realtime window so a narrowed ingest does not window over vintages it
+  // will not request, and so the locator distinguishes the two.
+  const realtimeStart = ctx.realtimeStart ?? FRED_REALTIME_MIN;
+  const realtimeEnd = ctx.realtimeEnd ?? FRED_REALTIME_MAX;
+  url.searchParams.set("realtime_start", realtimeStart);
+  url.searchParams.set("realtime_end", realtimeEnd);
+  const locator = `fred/series/vintagedates?series_id=${idForSeries(seriesId)}&realtime_start=${realtimeStart}&realtime_end=${realtimeEnd}`;
   const { put, ref } = await fetchAndStore(client, store, url.toString(), { locator, mime: "application/json", retention: "macro", secrets: [key] });
   return { artifacts: [ref], vintageDates: parseVintageDates(store.get(put.hash), seriesId) };
 }

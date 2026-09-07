@@ -14,7 +14,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 | Live trading | Absent by construction. Config loader and gateway both refuse `LIVE_MANUAL` and `LIVE_LIMITED`; CI asserts the image refuses them too |
 | Broker credentials | None exist anywhere in this project. Only the synthetic broker adapter exists |
 | Runtime LLM | Not integrated (Phase 3). The `etf-trend-vol` charter declares no LLM in the signal and only two arms |
-| Data ingestion | Adapters exist and are fixture-tested; **no live ingest has run** (needs SEC contact, FRED key, Alpaca keys from Matt) |
+| Data ingestion | **FRED is live-verified** as of 2026-09-07: DGS10 ingested, 16,880 observations across 5,103 vintages, 0 conflicts. That first live run found two blocking defects fixtures had missed (CR-28 vintage cap, CR-29 realtime clipping), both fixed. SEC, CFTC and Alpaca adapters remain fixture-tested only; Alpaca still needs the owner's keys |
 | First Alpha Charter | `strategies/etf-trend-vol/charter.yaml` exists and is executable, but is `DRAFT`: unsigned, four open decisions unresolved, XLE undecided. `assertRegistrable` refuses it and a CI gate keeps that true |
 | Registered experiments | None. No experiment has been registered, no result computed, no holdout opened |
 | Umbrel manifests | Written (`umbrel-app-store.yml`, `blackgold-trading/`) and identity-checked; not yet installed anywhere |
