@@ -16,7 +16,7 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 ## 3. Current position (2026-09-07)
 
 - PR #1 (Discovery Pack) is open against `main`, awaiting Matt.
-- Phase 0 implementation is complete on `claude/phase-00-foundation` (stacked on the Discovery branch, D-26) with its own PR.
+- Phase 0 implementation is complete on `claude/phase-00-foundation` (stacked on the Discovery branch, D-26) as PR #2.
 - `main` exists but is not yet the default branch and has no protection. Matt does that in GitHub settings.
 - No image has been published. No Umbrel install exists. No credential exists.
 

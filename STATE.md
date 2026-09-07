@@ -25,7 +25,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 | `main` | Exists (bootstrap commit e7fc3d9). Matt must still set it as default branch and apply protection in GitHub settings |
 | PR #1 | Discovery Pack: `claude/black-gold-trading-tool-n713ly` into `main`. Open, awaiting Matt |
 | Phase 0 branch | `claude/phase-00-foundation`, stacked on the Discovery branch (D-26) |
-| Phase 0 PR | Opened by this session against the Discovery branch; retarget to `main` after PR #1 merges |
+| Phase 0 PR | PR #2 against the Discovery branch; retarget to `main` after PR #1 merges |
 | Branch protection | Not configured (needs Matt in GitHub UI) |
 | CI | `.github/workflows/ci.yml` runs on PRs; first run happens on the Phase 0 PR |
 
