@@ -10,12 +10,12 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 |---|---|
 | Phase | Discovery complete (PR #1 open). Phase 0 implementation complete in code and tests; awaiting owner review and the two hardware-dependent exit criteria |
 | Application code | `packages/shared`, `packages/core`, `packages/broker-gateway` (Phase 0 scope only) |
-| Tests | 122 passing across 15 files: unit (shared, core, gateway) and policy projects; `npm run check` green |
+| Tests | 124 passing across 15 files: unit (shared, core, gateway) and policy projects; `npm run check` green locally and in CI |
 | Live trading | Absent by construction. Config loader and gateway both refuse `LIVE_MANUAL` and `LIVE_LIMITED`; CI asserts the image refuses them too |
 | Broker credentials | None exist anywhere in this project. Only the synthetic broker adapter exists |
 | Runtime LLM | Not integrated (Phase 3). Provider decision D-11 accepted |
 | Umbrel manifests | Written (`umbrel-app-store.yml`, `blackgold-trading/`) and identity-checked; not yet installed anywhere |
-| GHCR image | None published. CI builds `linux/amd64` and `linux/arm64` on every PR without pushing |
+| GHCR image | None published. CI built `linux/amd64` and `linux/arm64` successfully on PR #2 without pushing |
 
 ## Repository state
 
@@ -25,9 +25,9 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 | `main` | Exists (bootstrap commit e7fc3d9). Matt must still set it as default branch and apply protection in GitHub settings |
 | PR #1 | Discovery Pack: `claude/black-gold-trading-tool-n713ly` into `main`. Open, awaiting Matt |
 | Phase 0 branch | `claude/phase-00-foundation`, stacked on the Discovery branch (D-26) |
-| Phase 0 PR | PR #2 against the Discovery branch; retarget to `main` after PR #1 merges |
+| Phase 0 PR | PR #2 against the Discovery branch: CI green, Codex findings fixed and resolved, mergeable. Retarget to `main` after PR #1 merges |
 | Branch protection | Not configured (needs Matt in GitHub UI) |
-| CI | `.github/workflows/ci.yml` runs on PRs; first run happens on the Phase 0 PR |
+| CI | `.github/workflows/ci.yml` green on PR #2 (checks + multi-arch image) |
 
 ## Decisions
 
