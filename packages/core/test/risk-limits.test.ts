@@ -70,14 +70,28 @@ describe("evaluateRiskLimits", () => {
     expect(c).not.toContain("CLUSTER_WEIGHT");
   });
 
-  it("rejects too many open positions", () => {
+  it("rejects too many open positions against the stricter charter cap", () => {
+    // The charter's max_positions is 5, stricter than risk.yaml's 10, so six admitted ETFs already breach.
+    const six = codes({ XLF: "0.10", XLV: "0.10", XLU: "0.10", XLP: "0.10", XLI: "0.10", XLK: "0.10" });
+    expect(six).toContain("MAX_OPEN_POSITIONS");
+    // And a book well over both caps still breaches.
     const w: Record<string, string> = {};
     for (const s of ["VTI", "QQQ", "IWM", "VTV", "VUG", "XLK", "XLF", "XLV", "XLI", "XLP", "XLU"]) w[s] = "0.05";
     expect(codes(w)).toContain("MAX_OPEN_POSITIONS");
   });
 
-  it("fails closed on a holding the charter does not classify", () => {
-    // SPY is not a member of this universe, so it has no factor assignment.
-    expect(codes({ SPY: "0.10", XLF: "0.10" })).toContain("UNCLASSIFIED_HOLDING");
+  it("rejects a holding outside the admitted universe, even one the charter classifies", () => {
+    // SPY is not a universe member at all.
+    expect(codes({ SPY: "0.10", XLF: "0.10" })).toContain("NOT_ADMITTED");
+    // XLE IS classified in the charter's factor block, but its conditional entry is not admitted.
+    expect(codes({ XLE: "0.10", XLF: "0.10" })).toContain("NOT_ADMITTED");
+  });
+
+  it("fails closed on an admitted holding the charter has not classified", () => {
+    // Remove an admitted ETF's factor assignment: it stays admitted but its sector cannot be checked.
+    const c = structuredClone(CHARTER);
+    if (c.factors) delete c.factors.assignments["XLF"];
+    const r = evaluateRiskLimits({ policy: POLICY, charter: c, weights: new Map([["XLF", new Dec("0.10")]]), cashWeight: new Dec("0.90") });
+    expect(r.violations.map((x) => x.code)).toContain("UNCLASSIFIED_HOLDING");
   });
 });
