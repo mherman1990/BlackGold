@@ -42,6 +42,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-34 | `charter.yaml` is the only form the code executes, and `assertRegistrable` refuses to freeze an experiment on an unsigned charter, an unresolved open decision, or an undecided conditional universe member | Accepted 2026-09-07 (engineering) | - |
 | D-35 | Phase 2 authorized by Matt's "keep building out" (2026-09-07); built as machinery plus fixture tests only. No registered experiment, no historical result, and no holdout access, because the charter is DRAFT and no source data has been ingested | Accepted 2026-09-07 | Owner approves the charter, then the same code produces the evidence |
 | D-36 | A stacked PR is retargeted to `main` before it is merged, or merged before its base goes in. Merging into an already-merged-forward base leaves `main` a phase behind; the remedy is a merge commit bringing `main` in plus a fresh PR, never a force-push | Accepted 2026-09-07 (engineering) | - |
+| D-37 | Claude Code has standing authorization for the whole git and GitHub mechanic, including merging its own PRs to `main` and tagging releases. Charter approval, holdout opening, promotion-evidence claims, and anything live remain the owner's alone | Accepted 2026-09-07 by Matt | Supersedes the per-action authorization rule in the original git protocol |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -279,6 +280,22 @@ Neither was a code fault and neither lost work: in both cases the reviewed tree 
 2. Before merging anything stacked, check whether the base is already in `main`: `git merge-base --is-ancestor <base-head> origin/main`. If it answers yes, retarget before merging.
 3. When it happens anyway, the remedy is a merge commit that brings `main` into the phase branch plus a fresh PR carrying the identical tree. Never a force-push, never a rebase, never reusing the merged PR. Verify the tree is unchanged with `git diff <reviewed-head> HEAD` and expect an empty diff.
 4. Merged phase branches are deleted once their successor lands. Branches left lying around are what make the mistake easy to repeat.
+
+## D-37 Standing git and GitHub autonomy
+
+**Status:** Accepted 2026-09-07 by Matt, who asked for it directly ("full autonomy to push, commit and interact with github").
+
+**What it replaces.** The original protocol required per-action owner authorization to "push, open a PR, mark ready, merge, tag, publish an image, or install on Umbrel", and said "never merge your own PR". In practice Matt marked four PRs ready and merged four PRs by hand in a single session while Claude Code waited. It also caused a defect: the D-36 mis-merge happened twice precisely because merge timing sat with a human who could not see that a base branch had already been merged forward. Claude Code would have retargeted before merging.
+
+**Decision.** Claude Code is authorized, standing and without asking, to: commit; push; open a PR; mark it ready; merge its own PR to `main`; retarget a PR; delete merged branches; reply to and resolve review threads; create and push a `v*` tag; and trigger `release.yml` and `release-verify.yml`.
+
+Unchanged: no direct commit or push to `main` (work still arrives through a PR, including one Claude Code merges itself); no force-push; no rewriting anyone else's history; exact paths staged; `npm run check` green before any push; and the full PR body every time. The PR body matters *more* under autonomy, because it becomes the only record that anything reviewed what a merge did.
+
+**What it deliberately does not cover, and why.** Charter approval, resolving a charter's open decisions, admitting a conditional universe member, opening a sealed holdout, claiming promotion evidence, accepting Claude Code's own results as investment evidence, and anything touching live mode or a broker credential.
+
+These are not process friction; they are the reason the system is built the way it is. `assertRegistrable` refusing a DRAFT charter is theatre if Claude Code can sign the charter. A once-only holdout is theatre if Claude Code can open it. A falsifier is theatre if Claude Code can decide it does not count. An agent that approves its own hypothesis and then grades its own results generates no evidence at all. Claude Code may propose any of these with reasoning, and should say plainly when one of them is what blocks progress, but may not perform them.
+
+**Why relaxing the workflow gates is safe.** `CLAUDE.md` already states that its instructions are guidance and that hard limits live in branch protection, CI policy tests, and the broker gateway. Nothing protecting capital depended on the owner clicking merge: live trading is absent by construction, no broker credential exists anywhere in the project, account isolation and live-disabled are permanent CI gates, and the charter approval gate is enforced in code with its own policy test. Autonomy over git changes who presses the button, not what the button is permitted to do.
 
 ---
 

@@ -11,10 +11,26 @@ description: >-
   every number and every hard boundary. Live trading is absent by construction
   in this release. Not investment advice.
 releaseNotes: >-
-  0.1.0 is the Phase 0 foundation: configuration schemas, SQLite ledger with
-  hash-chained events and daily seals, exchange calendar, deterministic
-  scheduler, synthetic broker with fault injection, health endpoint, and the
-  release pipeline. No data ingestion, research, or broker connectivity yet.
+  0.1.0 covers Phases 0 through 2. Foundation: configuration schemas, SQLite
+  ledger with hash-chained events and daily seals, exchange calendar computed by
+  rule, deterministic scheduler, synthetic broker with fault injection, health
+  endpoint, release pipeline. Research kernel: point-in-time observation store
+  enforcing the decision-time rule, content-addressed artifact store, read-only
+  allowlisted adapters for SEC EDGAR, FRED/ALFRED, CFTC COT and daily market
+  bars, raw and total-return price series, date-effective universe snapshots,
+  experiment registry with a once-only holdout, decimal NAV accounting,
+  conservative fill simulator, benchmark engine. Deterministic strategy layer:
+  an executable Alpha Charter with a code-enforced approval gate, feature and
+  candidate engines, portfolio construction, leakage audit, coverage report,
+  walk-forward splits, robustness harness and result report.
+
+  What this release does NOT do. Live trading is absent by construction and no
+  broker credential exists anywhere in the project. No market data has been
+  ingested and no strategy result has been computed: the first Alpha Charter is
+  still a draft, and the code refuses to register an experiment against an
+  unapproved charter. The only interface is a read-only plain-text status and
+  health page on port 8479; reporting views arrive in a later phase. Not
+  investment advice.
 developer: Matt Herman
 website: https://github.com/mherman1990/BlackGold
 dependencies: []

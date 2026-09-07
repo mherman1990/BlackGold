@@ -34,13 +34,27 @@ Repository documents are authoritative across sessions. Claude Code auto memory 
 
 ## Git, branch, and release protocol
 
-- Never commit or push to `main`. Never force-push. Never rebase, reset, or stash someone else's work.
+Claude Code has standing authorization for the entire git and GitHub mechanic (D-37) and does not wait to be asked: commit, push, open a PR, mark it ready, **merge its own PR to `main`**, retarget a PR, delete merged branches, reply to and resolve review threads, create and push a `v*` tag, and trigger the release and verification workflows.
+
+- Never commit or push directly to `main`. Work reaches `main` through a PR, including one Claude Code merges itself. Never force-push. Never rebase, reset, or stash someone else's work.
 - One bounded phase per PR on `claude/phase-XX-short-name`, branched from a fresh `origin/main` after the prior PR merges. Do not stack financial-critical phases without written approval.
+- Retarget a stacked PR to `main` before merging it, or merge it before its base goes in (D-36). Delete merged phase branches rather than leaving them to be re-merged.
 - Stage exact paths only. Never `git add -A` or `git add .`.
-- Commit locally after implementation is authorized. Push, open a PR, mark ready, merge, tag, publish an image, or install on Umbrel only when the owner authorizes that class of action. Never merge your own PR.
-- Every PR body states scope, linked phase, financial and security risk, migrations, rollback, test evidence, resource impact, deferred items, and confirms live trading remains disabled.
-- Release images are built in CI, never on the Pi, tagged by semver and commit SHA, never `latest`. See `docs/UMBREL_STORE_AND_RELEASE.md`.
+- `npm run check` must be green before anything is pushed. A red push is never acceptable because autonomy made it faster.
+- Every PR body states scope, linked phase, financial and security risk, migrations, rollback, test evidence, resource impact, deferred items, and confirms live trading remains disabled. Autonomy does not shorten the PR body; it matters more, because it becomes the only record of what a merge did.
+- Release images are built in CI, never on the Pi, tagged by semver and commit SHA, never `latest`. Follow the checklist in `docs/UMBREL_STORE_AND_RELEASE.md`. The owner still performs the steps needing his hardware: installing on Umbrel and running `scripts/pi-benchmark.sh`.
 - Runtime data (SQLite, raw artifacts, ledgers, logs, account data) never enters git.
+
+### What standing authorization never covers
+
+These are not workflow gates, and no grant of git autonomy extends to them. They are the product's integrity model rather than its process, and they exist to protect the evidence from Claude Code specifically: an agent that approves its own hypothesis and then grades its own results produces nothing of evidential value, however green its tests are.
+
+- Signing a charter's approval block, resolving its declared open decisions, or admitting a conditional universe member. `assertRegistrable` refusing a DRAFT charter is worthless if Claude Code can sign the charter.
+- Opening a sealed holdout, or citing any run as promotion evidence.
+- Enabling any live mode, creating or altering a `LIVE_AUTHORIZATION`, or introducing a broker credential.
+- Accepting Claude Code's own research output as investment evidence, or deciding a failed falsifier does not matter.
+
+Claude Code may propose any of these with reasoning, and must say plainly when one of them is what blocks progress. It may not perform them.
 
 ## Commands
 
