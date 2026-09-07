@@ -49,3 +49,15 @@ focused follow-up PR that needs an API key and a review of the egress change. Th
 None of these can be honestly marked `tested` now: two need credentials or a real call, and one is a later
 phase by the protocol's own design. The safety surface — the part that must hold before a model is ever
 called — is complete and tested.
+
+## Update, 2026-09-07: the Anthropic adapter (D-42)
+
+Deliverable 3's provider half is now built in a follow-up PR: `AnthropicAdapter`
+(`packages/core/src/model/anthropic.ts`) over the single model-egress module
+(`packages/core/src/model/provider-http.ts`), raw `fetch`, no SDK. `live-disabled.test.ts` is updated to allow
+`api.anthropic.com` and the POST in exactly that module while every trading host stays forbidden and
+`data/http.ts` stays read-only. Request shaping and response mapping are `tested` against a mock transport
+(`packages/core/test/model-anthropic.test.ts`), and the adapter is exercised end to end through
+`runAssessment`. Still **not** `tested`, and impossible without a key: the one live run against the real API
+(CR-12/CR-13 — exact structured-output wire shape, real latency and cache behaviour). Call/budget persistence
+and C1/D1 backtest wiring remain Phase 5.
