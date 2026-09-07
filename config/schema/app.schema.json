@@ -49,6 +49,12 @@
       "minimum": 5,
       "maximum": 3600
     },
+    "httpPort": {
+      "default": 8479,
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 65535
+    },
     "notifications": {
       "default": {
         "adapter": "stub"

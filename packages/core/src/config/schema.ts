@@ -41,6 +41,8 @@ const AppConfigInput = z.object({
   timezoneDisplay: z.literal("America/Chicago").default("America/Chicago"),
   exchange: z.literal("XNYS").default("XNYS"),
   schedulerPollSeconds: z.number().int().min(5).max(3600).default(60),
+  /** Local read-only status listener used by `serve`; reached only through Umbrel's app_proxy. */
+  httpPort: z.number().int().min(1024).max(65535).default(8479),
   notifications: z
     .object({
       adapter: z.enum(NotificationAdapters).default("stub"),

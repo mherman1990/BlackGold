@@ -8,6 +8,7 @@ import { Ledger } from "./ledger/ledger.ts";
 import { NyseCalendar } from "./calendar/nyse.ts";
 import { Scheduler } from "./scheduler/scheduler.ts";
 import { runHealth } from "./health/health.ts";
+import { serve, registerPhase0Jobs } from "./serve.ts";
 import { CORE_PACKAGE_NAME, CORE_VERSION } from "./version.ts";
 
 /**
@@ -26,6 +27,7 @@ Usage: blackgold-core <command> [args]
   seal [YYYY-MM-DD]      Seal the ledger for a UTC date (default: yesterday UTC)
   verify-chain           Verify the ledger hash chain and seals
   run-jobs               One scheduler tick (missed-run detection, then due runs)
+  serve                  Long-running: local read-only status listener plus the scheduler loop
   version                Print the package version
 
 Configuration comes from BLACKGOLD_* environment variables (see config/schema/README.md).`;
@@ -94,15 +96,7 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
         // Phase 0: a single manual tick. The daily heartbeat may be caught up within the day, so the due
         // window is one day; anything older than that is reported as missed, never run late.
         const scheduler = new Scheduler({ db, ledger, calendar, dueLookbackMs: 24 * 3_600_000, missedLookbackMs: 7 * 24 * 3_600_000 });
-        scheduler.register({
-          jobId: "heartbeat",
-          name: "Daily heartbeat ledger event",
-          schedule: { kind: "daily_utc", hh: 0, mm: 0 },
-          deadlineMs: 60_000,
-          handler: (ctx) => {
-            ctx.ledger.append("heartbeat", { scheduledFor: ctx.scheduledFor, version: CORE_VERSION }, ctx.now);
-          },
-        });
+        registerPhase0Jobs(scheduler);
         const missed = scheduler.detectMissedRuns(now);
         const outcomes = await scheduler.tick(now);
         const failed = outcomes.some((o) => o.status === "failed");
@@ -110,6 +104,30 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
       } finally {
         db.close();
       }
+    }
+    case "serve": {
+      mkdirSync(config.dataDir, { recursive: true });
+      const { db } = openCoreDb(config);
+      const controller = new AbortController();
+      const handle = await serve({ config, db, calendar, shutdownSignal: controller.signal });
+      await new Promise<void>((resolve) => {
+        const stop = (): void => {
+          controller.abort();
+          handle.close().then(
+            () => {
+              db.close();
+              resolve();
+            },
+            () => {
+              db.close();
+              resolve();
+            },
+          );
+        };
+        process.once("SIGTERM", stop);
+        process.once("SIGINT", stop);
+      });
+      return { exitCode: 0, output: "stopped" };
     }
     default:
       return { exitCode: 2, output: `Unknown command: ${command}\n\n${USAGE}` };

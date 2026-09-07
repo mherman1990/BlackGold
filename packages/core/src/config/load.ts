@@ -60,6 +60,7 @@ export function envToAppConfigInput(env: NodeJS.ProcessEnv): Record<string, unkn
     timezoneDisplay: get("TIMEZONE_DISPLAY"),
     exchange: get("EXCHANGE"),
     schedulerPollSeconds: num("SCHEDULER_POLL_SECONDS"),
+    httpPort: num("HTTP_PORT"),
     notifications: stripUndefined({ adapter: get("NOTIFY_ADAPTER"), ntfyTopicUrl: get("NTFY_TOPIC_URL") }),
     budgets: stripUndefined({
       llmPerCallUsd: get("LLM_BUDGET_PER_CALL_USD"),

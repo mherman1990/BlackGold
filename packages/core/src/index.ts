@@ -14,3 +14,4 @@ export * from "./notify/redact.ts";
 export * from "./notify/stub.ts";
 export * from "./notify/ntfy.ts";
 export * from "./health/health.ts";
+export * from "./serve.ts";
