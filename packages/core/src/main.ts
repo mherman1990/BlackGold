@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 import { mkdirSync } from "node:fs";
-import { isoDate, nowUtc, dateOfInstantInZone, addDays, utc, type Db, type IsoDate } from "@blackgold/shared";
-import { loadAppConfig, type AppConfig } from "./config/load.ts";
-import { processingDelayOverridesMs } from "./config/schema.ts";
+import { Dec, isoDate, nowUtc, dateOfInstantInZone, addDays, utc, type Db, type IsoDate } from "@blackgold/shared";
+import { loadAppConfig, loadYamlConfig, readAnthropicApiKey, type AppConfig } from "./config/load.ts";
+import { ModelManifestConfigSchema, processingDelayOverridesMs } from "./config/schema.ts";
+import { AnthropicAdapter } from "./model/anthropic.ts";
+import { CircuitBreaker } from "./model/assess.ts";
+import { pricingFrom, resolveModelEntry } from "./model/manifest.ts";
+import { ANALYST_SYSTEM_PROMPT, runAnalyst } from "./analyst/run-analyst.ts";
 import { verifyArtifacts } from "./data/artifacts/verify.ts";
 import { openCoreDb } from "./db/open.ts";
 import { backupDatabase, verifyRestore } from "./db/backup.ts";
@@ -51,6 +55,11 @@ Phase 2 research (deterministic charters only; computes nothing that a DRAFT cha
   charter plan --path <charter.yaml>        Evaluation plan: design, walk-forward and recent splits, sealed holdout, grid and tiers
   research coverage --path <charter.yaml> --from <date> --to <date>
                                             Point-in-time coverage report for the charter universe
+
+Phase 3 runtime-LLM analyst (requires ANTHROPIC_API_KEY in the environment; abstains fail-closed without it):
+  research analyst --manifest <model-manifest.yaml> --model <id> --candidate <SYMBOL> --at <iso-instant>
+                   --sources <sourceId[:entityId],...> [--factors <name,...>] [--mode historical]
+                                            One analyst decision: seal a point-in-time packet, assess, archive the call
 
 Configuration comes from BLACKGOLD_* environment variables (see config/schema/README.md).`;
 
@@ -230,7 +239,61 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
     }
     case "research": {
       const [sub, ...rest] = args;
-      if (sub !== "coverage") throw new UsageError("research requires the subcommand: coverage");
+      if (sub === "analyst") {
+        const o = parseOptions(rest, {
+          manifest: { type: "string" }, model: { type: "string" }, candidate: { type: "string" }, at: { type: "string" },
+          sources: { type: "string" }, factors: { type: "string" }, "strategy-id": { type: "string" },
+          "strategy-version": { type: "string" }, "prompt-version": { type: "string" }, mode: { type: "string" },
+        });
+        const manifest = o["manifest"];
+        const modelId = o["model"];
+        const candidate = o["candidate"];
+        const at = o["at"];
+        const sourcesCsv = o["sources"];
+        if (typeof manifest !== "string" || typeof modelId !== "string" || typeof candidate !== "string" || typeof at !== "string" || typeof sourcesCsv !== "string") {
+          throw new UsageError("research analyst requires --manifest <path> --model <id> --candidate <SYMBOL> --at <iso-instant> --sources <sourceId[:entityId],...>");
+        }
+        const key = readAnthropicApiKey();
+        if (key === undefined) {
+          return { exitCode: 2, output: "ANTHROPIC_API_KEY is not set; the analyst cannot call the model. Set it in the app environment (never in git), then retry." };
+        }
+        const manifestConfig = loadYamlConfig(manifest, ModelManifestConfigSchema);
+        const entry = resolveModelEntry(manifestConfig, modelId, { now: new Date(now), maxAgeDays: 90 });
+        const sources = sourcesCsv.split(",").map((s) => s.trim()).filter((s) => s !== "").map((s) => {
+          const [sourceId, entityId] = s.split(":");
+          return entityId !== undefined && entityId !== "" ? { sourceId: sourceId ?? s, entityId } : { sourceId: sourceId ?? s };
+        });
+        const factors = new Set((typeof o["factors"] === "string" ? o["factors"] : "").split(",").map((s) => s.trim()).filter((s) => s !== ""));
+        const runMode = o["mode"] === "historical" ? "HISTORICAL_REPLAY" : "PROSPECTIVE";
+        mkdirSync(config.dataDir, { recursive: true });
+        const { db } = openCoreDb(config);
+        try {
+          const outcome = await runAnalyst({
+            db,
+            pit: pitRepository(db, config),
+            adapter: new AnthropicAdapter(entry.modelId, key),
+            breaker: new CircuitBreaker(3),
+            pricing: pricingFrom(entry),
+            budgets: { perCallUsd: new Dec(config.budgets.llmPerCallUsd), perDayUsd: new Dec(config.budgets.llmPerDayUsd), perMonthUsd: new Dec(config.budgets.llmPerMonthUsd) },
+            now,
+            strategyId: typeof o["strategy-id"] === "string" ? o["strategy-id"] : "adhoc",
+            strategyVersion: typeof o["strategy-version"] === "string" ? o["strategy-version"] : "adhoc",
+            candidateId: candidate,
+            decisionAt: utc(at),
+            sources,
+            excerpt: (obs) => JSON.stringify(obs.value).slice(0, 800),
+            deterministicFactors: factors,
+            prompt: { version: typeof o["prompt-version"] === "string" ? o["prompt-version"] : "analyst-1", text: ANALYST_SYSTEM_PROMPT },
+            deadlineMs: 60_000,
+            maxAttempts: 2,
+            runMode,
+          });
+          return { exitCode: 0, output: outcome };
+        } finally {
+          db.close();
+        }
+      }
+      if (sub !== "coverage") throw new UsageError("research requires a subcommand: coverage | analyst");
       const o = parseOptions(rest, { path: { type: "string" }, from: { type: "string" }, to: { type: "string" } });
       const path = o["path"];
       const from = o["from"];

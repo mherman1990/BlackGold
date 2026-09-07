@@ -105,11 +105,15 @@ ${h.checks
 
 function evidenceBlock(r: StatusReport): string {
   const e = r.evidence;
+  const llmNote = `<p class="note">Runtime-LLM analyst calls archived: ${num(e.modelCalls)}. Each is an append-only,
+redacted record - model id, hashes, token counts, cost, latency, outcome - with no packet content, secret, or account.</p>`;
   if (e.experiments === 0) {
-    return empty(
-      "No experiment is registered, so <strong>no result exists</strong> - not a hidden one, not a provisional one. " +
-        "Registering an experiment requires an approved Alpha Charter, and the charter is the operator's to sign. " +
-        "The sealed holdout has never been opened.",
+    return (
+      empty(
+        "No experiment is registered, so <strong>no result exists</strong> - not a hidden one, not a provisional one. " +
+          "Registering an experiment requires an approved Alpha Charter, and the charter is the operator's to sign. " +
+          "The sealed holdout has never been opened.",
+      ) + llmNote
     );
   }
   return `<div class="grid">
@@ -121,7 +125,8 @@ function evidenceBlock(r: StatusReport): string {
   ])}
 </div>
 <p class="note">The trial count is the multiple-testing denominator: it is append-only and includes every trial ever
-run, which is what keeps a favourable result from being quietly reselected.</p>`;
+run, which is what keeps a favourable result from being quietly reselected.</p>
+${llmNote}`;
 }
 
 function jobTable(jobs: JobStatus[]): string {

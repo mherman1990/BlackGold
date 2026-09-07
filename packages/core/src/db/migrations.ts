@@ -223,4 +223,41 @@ WHEN OLD.effective_to IS NOT NULL OR NEW.effective_to IS NULL OR NEW.close_known
 BEGIN SELECT RAISE(ABORT, 'an open symbol range may only be closed, with the instant the close became known'); END;
 `,
   },
+  {
+    id: "0007_model_calls",
+    up: `
+-- Append-only archive of every runtime-LLM call (docs/PRODUCT_SPEC.md section 6, "Archive everything").
+-- Holds only the redacted call record: model and version hashes, token counts, LLM API cost (never a
+-- household dollar total), latency, and the deterministic outcome. No packet content, no secret, no account.
+-- Budgets are derived by summing cost_usd over a day or month, so spend survives a process restart.
+CREATE TABLE model_calls (
+  id                      INTEGER PRIMARY KEY,
+  at                      TEXT NOT NULL,
+  strategy_version        TEXT NOT NULL,
+  candidate_id            TEXT NOT NULL,
+  model_id                TEXT NOT NULL,
+  served_model_id         TEXT,
+  prompt_version          TEXT NOT NULL,
+  prompt_hash             TEXT NOT NULL,
+  schema_hash             TEXT NOT NULL,
+  packet_hash             TEXT NOT NULL,
+  input_tokens            INTEGER NOT NULL,
+  output_tokens           INTEGER NOT NULL,
+  cache_read_input_tokens INTEGER NOT NULL,
+  cost_usd                TEXT NOT NULL,
+  latency_ms              INTEGER NOT NULL,
+  attempts                INTEGER NOT NULL,
+  outcome                 TEXT NOT NULL CHECK (outcome IN ('assessed','abstained')),
+  abstain_code            TEXT,
+  validation              TEXT NOT NULL,
+  contamination_label     TEXT,
+  run_mode                TEXT
+);
+CREATE INDEX model_calls_at ON model_calls (at);
+CREATE TRIGGER model_calls_no_update BEFORE UPDATE ON model_calls
+BEGIN SELECT RAISE(ABORT, 'model call log is append-only'); END;
+CREATE TRIGGER model_calls_no_delete BEFORE DELETE ON model_calls
+BEGIN SELECT RAISE(ABORT, 'model call log is append-only'); END;
+`,
+  },
 ];
