@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { nowUtc, type Db, type UtcInstant } from "@blackgold/shared";
+import { addDays, dateOfInstantInZone, nowUtc, type Db, type UtcInstant } from "@blackgold/shared";
 import type { AppConfig } from "./config/schema.ts";
 import type { ExchangeCalendar } from "./calendar/types.ts";
 import { Ledger } from "./ledger/ledger.ts";
@@ -37,6 +37,35 @@ export function registerPhase0Jobs(scheduler: Scheduler): void {
     deadlineMs: 60_000,
     handler: (ctx) => {
       ctx.ledger.append("heartbeat", { scheduledFor: ctx.scheduledFor, version: CORE_VERSION }, ctx.now);
+    },
+  });
+
+  scheduler.register({
+    jobId: "seal_ledger",
+    name: "Seal every unsealed UTC day up to yesterday",
+    // Five past midnight UTC, after the heartbeat has landed in the new day. Sealing yesterday can never
+    // race the heartbeat's own event, which belongs to today, but the offset keeps the two jobs from
+    // sharing a scheduled instant and makes the log easier to read.
+    schedule: { kind: "daily_utc", hh: 0, mm: 5 },
+    deadlineMs: 120_000,
+    handler: (ctx) => {
+      // Seal the whole unsealed backlog, not just yesterday.
+      //
+      // The scheduler records a run it could not perform as `missed` rather than running it late, so a Pi
+      // that was powered off over a weekend would otherwise leave those days unsealed for good. Working the
+      // backlog means one successful run repairs any such gap. `sealDaily` is idempotent, so re-sealing an
+      // unchanged day is a no-op; a day whose events changed after sealing throws SealMismatchError, which
+      // is the tamper signal and must propagate rather than be swallowed here.
+      const yesterday = addDays(dateOfInstantInZone(ctx.now, "UTC"), -1);
+      const pending = ctx.ledger.unsealedDates(yesterday);
+      const sealed: string[] = [];
+      for (const date of pending) {
+        ctx.ledger.sealDaily(date, ctx.now);
+        sealed.push(date);
+      }
+      if (sealed.length > 0) {
+        ctx.ledger.append("ledger.sealed", { scheduledFor: ctx.scheduledFor, dates: sealed, throughDate: yesterday }, ctx.now);
+      }
     },
   });
 }

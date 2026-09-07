@@ -7,6 +7,7 @@ import {
   utc,
   verifyEventChain,
   addDays,
+  isoDate,
   type ChainVerdict,
   type Db,
   type IsoDate,
@@ -91,6 +92,30 @@ export class Ledger {
       )
       .all(`${date}T00:00:00.000Z`, `${addDays(date, 1)}T00:00:00.000Z`) as EventRow[];
     return rows.map(rowToEvent);
+  }
+
+  /**
+   * Distinct UTC dates that carry at least one event, ascending.
+   *
+   * Read-only. Exists so a caller can find the days that still need sealing without scanning every event:
+   * a day with no events has an empty root and nothing to protect, so only these dates matter.
+   */
+  eventDates(): IsoDate[] {
+    const rows = this.db.prepare("SELECT DISTINCT substr(at, 1, 10) AS d FROM ledger_events ORDER BY d").all() as { d: string }[];
+    return rows.map((r) => isoDate(r.d));
+  }
+
+  /**
+   * Every UTC date at or before `throughDate` that has events but no seal, ascending.
+   *
+   * This is what makes catch-up sealing possible. The scheduler records a run it could not perform as
+   * `missed` rather than running it late, so a Pi that was powered off for three days would otherwise leave
+   * those days permanently unsealed. Sealing the whole unsealed backlog on the next successful run closes
+   * that hole, and is safe because `sealDaily` is idempotent.
+   */
+  unsealedDates(throughDate: IsoDate): IsoDate[] {
+    const sealed = new Set(this.seals().map((s) => s.date));
+    return this.eventDates().filter((d) => d <= throughDate && !sealed.has(d));
   }
 
   /** Root hash for a UTC date: sha256 of the concatenated event hashes (sha256 of "" when the day is empty). */
