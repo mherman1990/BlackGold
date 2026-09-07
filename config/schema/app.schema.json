@@ -100,6 +100,50 @@
         }
       }
     },
+    "sources": {
+      "default": {
+        "processingDelays": {},
+        "artifactBudgetBytes": 42949672960
+      },
+      "type": "object",
+      "properties": {
+        "secUserAgentContact": {
+          "type": "string",
+          "format": "email",
+          "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+        },
+        "fredApiKey": {
+          "type": "string",
+          "minLength": 8
+        },
+        "alpacaKeyId": {
+          "type": "string",
+          "minLength": 8
+        },
+        "alpacaSecretKey": {
+          "type": "string",
+          "minLength": 8
+        },
+        "processingDelays": {
+          "default": {},
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^P(?:\\d+D)?(?:T(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+          }
+        },
+        "artifactBudgetBytes": {
+          "default": 42949672960,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
     "sleeveAccount": {
       "default": {
         "role": "blackgold_sleeve",

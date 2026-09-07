@@ -2,6 +2,8 @@
 import { mkdirSync } from "node:fs";
 import { isoDate, nowUtc, dateOfInstantInZone, addDays, type Db, type IsoDate } from "@blackgold/shared";
 import { loadAppConfig, type AppConfig } from "./config/load.ts";
+import { processingDelayOverridesMs } from "./config/schema.ts";
+import { verifyArtifacts } from "./data/artifacts/verify.ts";
 import { openCoreDb } from "./db/open.ts";
 import { backupDatabase, verifyRestore } from "./db/backup.ts";
 import { Ledger } from "./ledger/ledger.ts";
@@ -10,9 +12,12 @@ import { Scheduler } from "./scheduler/scheduler.ts";
 import { runHealth } from "./health/health.ts";
 import { serve, registerPhase0Jobs } from "./serve.ts";
 import { CORE_PACKAGE_NAME, CORE_VERSION } from "./version.ts";
+import { ArtifactStore } from "./data/artifacts/store.ts";
+import { PointInTimeRepository } from "./data/pit/repository.ts";
+import { INGEST_USAGE, parseIngestArgs, parseOptions, runIngest, UsageError } from "./ingest/run.ts";
 
 /**
- * blackgold-core CLI. Phase 0 surface: operational commands only. No broker, no model, no live path.
+ * blackgold-core CLI. Operational commands plus Phase 1 public-source ingestion. No broker, no model, no live path.
  * Exit code 0 on success, 1 on failure or an unhealthy report, 2 on usage error.
  */
 
@@ -30,9 +35,21 @@ Usage: blackgold-core <command> [args]
   serve                  Long-running: local read-only status listener plus the scheduler loop
   version                Print the package version
 
+Phase 1 research kernel (public sources only; requires BLACKGOLD_SEC_USER_AGENT_CONTACT):
+  ${INGEST_USAGE.split("\n").join("\n  ")}
+  pit count [--source <id>]                 Count stored observations
+  pit latest --source <id> [--entity <id>]  Newest availableAt and the newest row for a source
+  snapshot create --dataset <name> --description <text>
+  artifacts verify [--sample N]             Verify stored artifacts; failures quarantine referencing rows (default sample 100)
+
 Configuration comes from BLACKGOLD_* environment variables (see config/schema/README.md).`;
 
 type CommandResult = { exitCode: number; output: unknown };
+
+/** Every repository the CLI builds carries the configured processing-delay overrides. */
+function pitRepository(db: Db, config: AppConfig): PointInTimeRepository {
+  return new PointInTimeRepository(db, { processingDelayOverrides: processingDelayOverridesMs(config.sources) });
+}
 
 function withDb<T>(config: AppConfig, fn: (db: Db) => T): T {
   mkdirSync(config.dataDir, { recursive: true });
@@ -105,6 +122,61 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
         db.close();
       }
     }
+    case "ingest": {
+      const request = parseIngestArgs(args);
+      mkdirSync(config.dataDir, { recursive: true });
+      const { db } = openCoreDb(config);
+      try {
+        const report = await runIngest({ db, config, calendar }, request);
+        return { exitCode: 0, output: report };
+      } finally {
+        db.close();
+      }
+    }
+    case "pit": {
+      const [sub, ...rest] = args;
+      if (sub === "count") {
+        const o = parseOptions(rest, { source: { type: "string" } });
+        const source = typeof o["source"] === "string" ? o["source"] : undefined;
+        const n = withDb(config, (db) => pitRepository(db, config).count(source));
+        return { exitCode: 0, output: { source: source ?? "*", observations: n } };
+      }
+      if (sub === "latest") {
+        const o = parseOptions(rest, { source: { type: "string" }, entity: { type: "string" } });
+        const source = o["source"];
+        if (typeof source !== "string") throw new UsageError("pit latest requires --source <id>");
+        const entity = typeof o["entity"] === "string" ? o["entity"] : undefined;
+        const out = withDb(config, (db) => {
+          const repo = pitRepository(db, config);
+          const rows = repo.all(source, entity);
+          return { source, entity: entity ?? "*", count: rows.length, latestAvailableAt: repo.latestAvailableAt(source, entity) ?? null, newestRow: rows.at(-1) ?? null };
+        });
+        return { exitCode: 0, output: out };
+      }
+      throw new UsageError("pit requires a subcommand: count | latest");
+    }
+    case "snapshot": {
+      const [sub, ...rest] = args;
+      if (sub !== "create") throw new UsageError("snapshot requires the subcommand: create");
+      const o = parseOptions(rest, { dataset: { type: "string" }, description: { type: "string" } });
+      const dataset = o["dataset"];
+      const description = o["description"];
+      if (typeof dataset !== "string" || typeof description !== "string") throw new UsageError("snapshot create requires --dataset and --description");
+      const snapshot = withDb(config, (db) => pitRepository(db, config).createSnapshot(dataset, description));
+      return { exitCode: 0, output: snapshot };
+    }
+    case "artifacts": {
+      const [sub, ...rest] = args;
+      if (sub !== "verify") throw new UsageError("artifacts requires the subcommand: verify");
+      const o = parseOptions(rest, { sample: { type: "string" } });
+      const sample = typeof o["sample"] === "string" ? Number.parseInt(o["sample"], 10) : 100;
+      if (!Number.isInteger(sample) || sample <= 0) throw new UsageError("--sample must be a positive integer");
+      // Failures quarantine every referencing observation (ARTIFACT_MISSING) and are recorded in the ledger.
+      const result = withDb(config, (db) =>
+        verifyArtifacts({ store: new ArtifactStore(config.artifactsDir, db), repo: pitRepository(db, config), ledger: new Ledger(db) }, { sample }),
+      );
+      return { exitCode: result.failed.length === 0 ? 0 : 1, output: result };
+    }
     case "serve": {
       mkdirSync(config.dataDir, { recursive: true });
       const { db } = openCoreDb(config);
@@ -148,6 +220,6 @@ run(process.argv.slice(2)).then(
   (err: unknown) => {
     const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     print({ ok: false, error: message }, true);
-    process.exitCode = 1;
+    process.exitCode = err instanceof UsageError ? 2 : 1;
   },
 );

@@ -47,6 +47,20 @@ export function envToAppConfigInput(env: NodeJS.ProcessEnv): Record<string, unkn
     const v = get(name);
     return v === undefined ? undefined : Number(v);
   };
+  /** "fred.=PT2H,cftc.=P1D": comma-separated <source-id prefix>=<ISO-8601 duration> pairs. */
+  const delays = (name: string): Record<string, string> | undefined => {
+    const v = get(name);
+    if (v === undefined) return undefined;
+    const out: Record<string, string> = {};
+    for (const part of v.split(",")) {
+      const t = part.trim();
+      if (t === "") continue;
+      const i = t.indexOf("=");
+      if (i <= 0 || i === t.length - 1) throw new ConfigError(`${ENV_PREFIX}${name}: expected <source-prefix>=<ISO-8601 duration>, got "${t}"`);
+      out[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+    }
+    return out;
+  };
 
   const role = get("SLEEVE_ACCOUNT_ROLE") ?? SLEEVE_ROLE;
   if (role !== SLEEVE_ROLE) throw new SleeveRoleError(role);
@@ -66,6 +80,14 @@ export function envToAppConfigInput(env: NodeJS.ProcessEnv): Record<string, unkn
       llmPerCallUsd: get("LLM_BUDGET_PER_CALL_USD"),
       llmPerDayUsd: get("LLM_BUDGET_PER_DAY_USD"),
       llmPerMonthUsd: get("LLM_BUDGET_PER_MONTH_USD"),
+    }),
+    sources: stripUndefined({
+      secUserAgentContact: get("SEC_USER_AGENT_CONTACT"),
+      fredApiKey: get("FRED_API_KEY"),
+      alpacaKeyId: get("ALPACA_KEY_ID"),
+      alpacaSecretKey: get("ALPACA_SECRET_KEY"),
+      processingDelays: delays("PROCESSING_DELAYS"),
+      artifactBudgetBytes: num("ARTIFACT_BUDGET_BYTES"),
     }),
     sleeveAccount: stripUndefined({ role, accountRef: get("SLEEVE_ACCOUNT_REF") }),
   });

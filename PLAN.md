@@ -22,7 +22,7 @@ Tests: unit, property (ledger chain, idempotency), policy, container smoke on bo
 
 ## Phase 1 - Point-in-time research kernel
 
-**Branch:** `claude/phase-01-research-kernel`. **Depends on:** Phase 0 merged; D-09, D-24; CR-01, CR-02, CR-04, CR-05, CR-09 verified.
+**Branch:** `claude/phase-01-research-kernel`, stacked on the Phase 0 branch under D-28 (authorized 2026-09-07). **Depends on:** D-09, D-24, D-29, D-30; CR-01, CR-02, CR-04, CR-05 verified 2026-09-06; CR-09 and CR-24 verified 2026-09-07 (entitlement depth measured with a key in Phase 5).
 
 Deliver: `PointInTimeObservation` contract and repository with the `asOf` rule; artifact store (content-addressed, zstd, outside git); adapters for market data (D-24), FRED/ALFRED, SEC submissions (read-only, rate-limited, User-Agent), CFTC COT; raw and adjusted price series with corporate-action events; date-effective universe snapshots and the survivorship label; data-quality rules and reason codes; experiment registry with freeze/viewed/holdout-opened semantics; total-return NAV accounting with decimal arithmetic; conservative fill/cost simulator; benchmark engine (VTI TR, VTI/T-bill blend, SPY); all 16 temporal fixtures from `docs/DATA_PROVENANCE_SPEC.md`.
 
