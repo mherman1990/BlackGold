@@ -51,3 +51,4 @@ export * from "./research/attribution.ts";
 export * from "./research/backtest.ts";
 export * from "./research/robustness.ts";
 export * from "./research/report.ts";
+export * from "./research/assessment.ts";
