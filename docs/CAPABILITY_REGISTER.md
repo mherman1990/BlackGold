@@ -35,13 +35,28 @@ Detailed per-vendor registers: `docs/capabilities/schwab-api-capabilities.md`, `
 | CR-26 | CFTC Socrata dataset ids for COT futures-only reports (legacy `6dca-aqww`, disaggregated `72hh-3qpy`, TFF `gpe5-46if`) | from memory of publicreporting.cftc.gov; not fetched | - | UNVERIFIED | Phase 5 first live ingest confirms; adapter records the id in the locator | Phase 1 adapter (fixtures only) |
 | CR-27 | CFTC COT release schedule follows the FEDERAL holiday calendar: a federal holiday on the Wed/Thu/Fri of the release week moves the 15:30 ET release to the following Monday; a Monday holiday does not delay it. All 52 published 2026 release dates reproduced by rule (delayed: Jan 5, Jun 22, Jul 6, Nov 16, Nov 30, Dec 28); the exchange calendar is wrong for Veterans Day (Wed 2026-11-11, NYSE open) and Columbus Day. A holiday on the Tuesday itself has no 2026 instance: rule applies the same shift and labels AVAILABLE_AT_ESTIMATED (UNVERIFIED for that case) | https://www.cftc.gov/MarketReports/CommitmentsofTraders/ReleaseSchedule/index.htm | 2026-09-07 | Verified (2026 schedule) | Re-fetch each December for the next year; Phase 5 compares actual release timestamps against the rule | Phase 1 `lag-rules.ts`, `calendar/us-federal.ts` |
 | CR-23 | Form 4 due within two business days of the transaction | statutory (Section 16(a)); not re-fetched | - | Partial | Phase 2: measure empirical acceptance lag distribution | Phase 2 |
+| CR-30 | EDGAR `reportDate` is **not always a period being reported on**. For a proxy statement (`DEF 14A`) it is the scheduled shareholder MEETING date, which is in the future when the proxy is filed: Apple's 2026 proxy was filed 2026-01-08 with `reportDate` 2026-02-24, and 11 of its 772 filings share that shape. Using it as `observedAt` claims a fact effective before it was knowable, which the temporal-inversion guard refuses - blocking SEC ingest outright for any issuer that files a proxy | live probe of data.sec.gov submissions for CIK 320193 | 2026-09-07 | **Verified** (live) | `observedAt` falls back to `filingDate` when `reportDate > filingDate`, flagged `FORWARD_DATED_REPORT`, raw `reportDate` preserved in the value. Live re-run: 1,590 observations, 11 flagged, all `DEF 14A`, 0 inverted rows | Phase 1 |
 | CR-28 | FRED `series/observations` refuses a real-time period containing more than **2000 vintage dates**: `HTTP 400 - There are 5103 vintage dates in the specified real-time period: 1776-07-04 to 9999-12-31. This exceeds the maximum number of vintage dates allowed for this file type (2000).` So a long-history daily series cannot be fetched in one request; `series/vintagedates` reports the count (5103 for DGS10) and the window boundaries | live probe against api.stlouisfed.org with the owner's key | 2026-09-07 | **Verified** (live) | Ingested DGS10 in 3 windows: 4 artifacts, 16,880 observations, 5,103 distinct vintages, 0 conflicts | Phase 1 |
 | CR-29 | FRED **clips** each observation row's `realtime_start` (and `realtime_end`) to the requested real-time window. Period 2020-03-02 truly begins 2020-03-03, but a window opening 2024-01-01 reports `realtime_start: 2024-01-01`. Naive chunking therefore fabricates later-than-true vintage dates rather than erroring - conservative for leakage, but it pollutes the store with vintages that never existed | live probe, two overlapping windows on DGS10 compared | 2026-09-07 | **Verified** (live) | `vintageWindows` shares each boundary date and drops rows reporting `realtime_start === windowStart` on every window after the first; live ingest preserved the true 2020-03-03 vintage | Phase 1 |
 
 ## Re-verification schedule
 
 - Before Phase 0: CR-14, CR-15, CR-16, CR-17, CR-20, CR-21.
-- Before Phase 1: CR-01, CR-02, CR-04, CR-05, CR-09. CR-28 and CR-29 were found *by* the first live ingest rather than before it, which is the lesson: a fixture-tested adapter had never once been pointed at the real API, and the very first attempt failed outright. Prefer one live probe per source over another fixture.
+- Before Phase 1: CR-01, CR-02, CR-04, CR-05, CR-09 - all now exercised against the live APIs on 2026-09-07.
+
+**All four ingest adapters are live-verified as of 2026-09-07.** Two of the four failed on their very first
+real request, and both failures were invisible to a green fixture suite:
+
+| Source | First live result | Defect found |
+|---|---|---|
+| FRED | **failed** | CR-28 (2000-vintage cap), then CR-29 (realtime clipping) |
+| SEC EDGAR | **failed** | CR-30 (forward-dated `reportDate` on proxies) |
+| CFTC COT | passed | none; 34 weekly observations |
+| Alpaca bars | passed | none; 340 bars, DST-correct session closes |
+
+That is a 50% first-request failure rate on adapters that were all passing their tests. The lesson is not
+about these adapters: **a fixture-tested adapter is evidence about the parser, not about the API.** One live
+probe per source belongs before a source is called ready, not after.
 - Before Phase 3: CR-11, CR-12, CR-13.
 - Before Phase 5: CR-06, CR-07, CR-08.
 - Before Phase 6: CR-10 in full, with Matt present for authenticated access.

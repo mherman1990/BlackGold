@@ -211,9 +211,23 @@ export function parseSubmissions(bytes: Uint8Array, ctx: ParseContext): PointInT
       sizeBytes: r.size?.[i] ?? null,
     };
     const common = { sourceLocator: accessionNumber, entityId, availableAt: lag.availableAt, value };
+
+    // EDGAR's reportDate is not always a period being reported on. For a proxy statement (DEF 14A) it is the
+    // scheduled shareholder MEETING date, which is in the future when the proxy is filed - Apple's 2026 proxy
+    // was filed 2026-01-08 for a 2026-02-24 meeting, and 11 of its 772 filings have the same shape. Using it
+    // as observedAt claims a fact effective after it was knowable, which the temporal-inversion guard
+    // correctly refuses, and which blocked SEC ingest outright for any issuer that files a proxy.
+    //
+    // A forward reportDate describes what a document announces, not when the document became true. The
+    // document became true when it was filed, so observedAt falls back to the filing date and the row carries
+    // FORWARD_DATED_REPORT. The raw reportDate is untouched in the value, so nothing is lost and the
+    // substitution is visible rather than silent.
+    const forwardDated = reportDate !== null && reportDate > filingDate;
+    const observedDate = reportDate === null ? null : forwardDated ? filingDate : reportDate;
+    const submissionFlags = forwardDated ? [...flags, "FORWARD_DATED_REPORT" as const] : flags;
     out.push(
       baseObservation(
-        { sourceId: SEC_SUBMISSIONS_SOURCE_ID, ...common, ...(reportDate === null ? {} : { observedAt: midnightUtc(reportDate) }), qualityFlags: flags },
+        { sourceId: SEC_SUBMISSIONS_SOURCE_ID, ...common, ...(observedDate === null ? {} : { observedAt: midnightUtc(observedDate) }), qualityFlags: submissionFlags },
         ctx,
         VERSIONS,
       ),

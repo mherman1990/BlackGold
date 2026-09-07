@@ -20,6 +20,7 @@ export const QUALITY_CODES = [
   "UNKNOWN_ENTITY",
   "SURVIVORSHIP_BIASED",
   "OPTIMISTIC_DELAY",
+  "FORWARD_DATED_REPORT",
 ] as const;
 export type QualityCode = (typeof QUALITY_CODES)[number];
 
@@ -51,6 +52,9 @@ export const QUALITY_RULES: Readonly<Record<QualityCode, QualityRule>> = {
   UNKNOWN_ENTITY: { severity: "error", decisionAllowed: false, promotionEvidenceAllowed: false },
   SURVIVORSHIP_BIASED: { severity: "label", decisionAllowed: true, promotionEvidenceAllowed: false },
   OPTIMISTIC_DELAY: { severity: "label", decisionAllowed: true, promotionEvidenceAllowed: false },
+  // Info rather than warn: the row is fully usable and nothing is lost. The filing's own reportDate stays
+  // in the value, and the flag exists so the substitution is visible in the store rather than silent.
+  FORWARD_DATED_REPORT: { severity: "info", decisionAllowed: true, promotionEvidenceAllowed: true },
 };
 
 export function isQualityCode(s: string): s is QualityCode {

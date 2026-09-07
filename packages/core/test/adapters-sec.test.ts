@@ -230,3 +230,73 @@ describe("SEC fetchers", () => {
     expect(() => primaryDocumentUrl("12345", "0000012345-26-000022", "../etc/passwd")).toThrow(TypeError);
   });
 });
+
+// Found by the first live SEC ingest, which failed outright: EDGAR's reportDate is not always a period
+// being reported on. For a proxy statement it is the scheduled shareholder MEETING date, in the future when
+// the proxy is filed, so using it as observedAt claimed a fact effective before it was knowable and the
+// temporal-inversion guard refused the whole run (CR-30).
+describe("forward-dated reportDate", () => {
+  const submissions = (rows: { form: string; filingDate: string; reportDate: string; accession: string }[]): Uint8Array =>
+    new TextEncoder().encode(
+      JSON.stringify({
+        cik: "320193",
+        name: "Apple Inc.",
+        filings: {
+          recent: {
+            accessionNumber: rows.map((r) => r.accession),
+            form: rows.map((r) => r.form),
+            filingDate: rows.map((r) => r.filingDate),
+            reportDate: rows.map((r) => r.reportDate),
+            acceptanceDateTime: rows.map((r) => `${r.filingDate}T21:31:36.000Z`),
+            primaryDocument: rows.map(() => "d.htm"),
+          },
+        },
+      }),
+    );
+
+  const parse = (bytes: Uint8Array): ReturnType<typeof parseSubmissions> =>
+    parseSubmissions(bytes, { calendar, ingestedAt, rawContentHash: "sha256:test" });
+
+  it("substitutes the filing date and flags it when reportDate is after filingDate", () => {
+    // Apple's real 2026 proxy: filed 2026-01-08 for a 2026-02-24 meeting.
+    const out = parse(submissions([{ form: "DEF 14A", filingDate: "2026-01-08", reportDate: "2026-02-24", accession: "0001308179-26-000008" }]));
+    const row = out.find((o) => o.sourceId === "sec.edgar.submissions");
+    expect(row?.observedAt).toBe("2026-01-08T00:00:00.000Z");
+    expect(row?.qualityFlags).toContain("FORWARD_DATED_REPORT");
+    // The raw reportDate must survive untouched: the substitution is about when the fact became true, not
+    // about discarding what the filing said.
+    expect(row?.value.reportDate).toBe("2026-02-24");
+  });
+
+  it("never produces an observedAt later than availableAt", () => {
+    // The invariant the guard enforces, asserted directly so a future change to the substitution cannot
+    // reintroduce an inversion without failing here.
+    const out = parse(submissions([{ form: "DEF 14A", filingDate: "2026-01-08", reportDate: "2026-02-24", accession: "0001308179-26-000008" }]));
+    for (const o of out) {
+      if (o.observedAt === undefined) continue;
+      expect(Date.parse(o.observedAt), o.sourceId).toBeLessThanOrEqual(Date.parse(o.availableAt));
+    }
+  });
+
+  it("leaves a normal reportDate alone and does not flag it", () => {
+    // The over-correction case. A 10-K's reportDate is a real period end before the filing date and must
+    // survive as observedAt, or every fundamentals read silently shifts to the filing date.
+    const out = parse(submissions([{ form: "10-K", filingDate: "2025-10-31", reportDate: "2025-09-27", accession: "0000320193-25-000073" }]));
+    const row = out.find((o) => o.sourceId === "sec.edgar.submissions");
+    expect(row?.observedAt).toBe("2025-09-27T00:00:00.000Z");
+    expect(row?.qualityFlags).not.toContain("FORWARD_DATED_REPORT");
+  });
+
+  it("treats reportDate equal to filingDate as normal, not forward-dated", () => {
+    // Boundary: same-day is not in the future, so it must not be flagged or substituted.
+    const out = parse(submissions([{ form: "8-K", filingDate: "2026-05-01", reportDate: "2026-05-01", accession: "0000320193-26-000050" }]));
+    const row = out.find((o) => o.sourceId === "sec.edgar.submissions");
+    expect(row?.observedAt).toBe("2026-05-01T00:00:00.000Z");
+    expect(row?.qualityFlags).not.toContain("FORWARD_DATED_REPORT");
+  });
+
+  it("keeps the flag off rows that have no reportDate at all", () => {
+    const out = parse(submissions([{ form: "4", filingDate: "2026-06-01", reportDate: "", accession: "0000320193-26-000060" }]));
+    for (const o of out) expect(o.qualityFlags).not.toContain("FORWARD_DATED_REPORT");
+  });
+});

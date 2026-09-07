@@ -44,12 +44,15 @@ Status values: `implemented`, `tested`, `deferred`, `blocked`, `not applicable`.
 | 2026-09-07 | Codex review of PR #3 (head `d760a51`): 6 P1 + 1 P2 findings | all verified as real and fixed: COT paging, federal-holiday COT release rule (CR-27), trial-label promotion refusal, artifact quarantine on verify failure, processing-delay overrides wired end to end, bitemporal entity map, per-write artifact budget. `npm run check`: lint clean; typecheck clean; 33 test files, 264 tests passed; identity ok; secret scan ok over 194 tracked files |
 | 2026-09-07 | `ci.yml` runs 27 (push) and 28 (pull_request) on PR #3 head `e5c6a70` | both green: checks job (lint, typecheck, 264 tests, identity, secrets, gitleaks full history, manifest parse) and image job (multi-arch build, smoke). Codex code and security reviews completed; all seven threads answered and resolved |
 | 2026-09-07 | `ci.yml` runs 34087278746 (push) and 34087280800 (pull_request) on PR #4 head `b3e08b6` (Phase 1 to `main`) | both green: checks job and multi-arch image job. Tree identical to the reviewed PR #3 head; no review threads |
-| **run for FRED** | live ingest against FRED | 2026-09-07 with the owner's key: DGS10, 3 windows, 4 artifacts, 16,880 observations, 5,103 distinct vintages, 0 conflicts. **Found two blocking defects no fixture had caught (CR-28, CR-29)** - see below |
-| not run | live ingest against SEC, CFTC, Alpaca | SEC contact is available; CFTC needs no key; Alpaca needs the owner's keys. Fixture-tested only until then, and FRED shows what that is worth |
+| **tested (live)** | live ingest against FRED | DGS10: 3 windows, 4 artifacts, 16,880 observations, 5,103 distinct vintages matching FRED's own count, 0 conflicts. **Found CR-28 and CR-29** |
+| **tested (live)** | live ingest against SEC EDGAR | CIK 320193: 1,590 observations across `sec.edgar.submissions` and `sec.edgar.form4`, 11 rows flagged `FORWARD_DATED_REPORT`, 0 inverted rows. **Found CR-30**, which blocked the run entirely on first attempt |
+| **tested (live)** | live ingest against CFTC COT | legacy futures market 099741, Jan-Aug 2026: 34 weekly observations, 0 conflicts. Passed first time |
+| **tested (live)** | live ingest against Alpaca bars | SPY + VTI, 2026 YTD on the free IEX feed: 340 bars over 170 sessions, prices stored as decimal strings, `availableAt` one hour after each close, 0 leakage and 0 OHLC violations. Session closes correctly follow DST (21:00 UTC in Jan/Feb, 20:00 from April) - the calendar behaviour R-07 required. Passed first time |
 
 ## What the first live ingest changed
 
-FRED was fixture-tested and passing before 2026-09-07, and had never been pointed at the real API. The first
+Two of the four adapters failed on their very first real request. FRED was fixture-tested and passing, and
+had never been pointed at the real API. The first
 real request failed outright: FRED refuses a real-time period containing more than 2000 vintage dates, and
 DGS10 has 5,103, so **no long-history daily series could be ingested at all**. Fixing it then surfaced a
 second defect that would have been silent rather than loud - FRED clips each row's `realtime_start` to the
@@ -62,3 +65,14 @@ tested both as pure window arithmetic and against the live API.
 The generalisable lesson, recorded because it applies to the three adapters still unexercised: **a
 fixture-tested adapter is evidence about the parser, not about the API.** One live probe per source is worth
 more than another fixture, and should happen before the source is marked ready rather than after.
+
+SEC then failed the same way for a different reason: EDGAR's `reportDate` is the scheduled *meeting* date on a
+proxy statement, so it can be in the future, and using it as `observedAt` produced a fact effective before it
+was knowable. The temporal-inversion guard refused the whole run - correctly, and loudly. That guard earning
+its keep on the first real filing set is the strongest evidence yet that the point-in-time discipline is
+enforced rather than aspirational.
+
+CFTC and Alpaca passed first time. Alpaca is worth one note in its favour: session closes came back at 21:00
+UTC in January and February and 20:00 UTC from April, which is 16:00 Eastern on both sides of the DST
+boundary. That is the exact failure R-07 rejected wall-clock scheduling to avoid, and the calendar handled it
+without prompting.
