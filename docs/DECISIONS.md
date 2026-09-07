@@ -591,7 +591,16 @@ network). It encodes the two load-bearing restricted-list rules (D-14): **additi
 ETF, or theme on the list restricts on the same decision) and **removals wait a cooling period** (an item in
 `pendingRemovals` stays restricted until its `eligibleAt`, so a quick add-then-remove cannot free a name).
 Blackout windows block only new risk; a stale list fails closed (blocks new risk) rather than being trusted.
-Themes are checked against the candidate's supplied exposures. 6 tests.
+Themes are checked against the candidate's supplied exposures. 10 tests.
+
+The Codex code review on PR #32 caught six genuine gaps, all fixed before merge, and they sharpened the model:
+compliance gates **new sleeve exposure only** (a reduction or exit of a restricted holding is always
+compliance-clear, so a newly-restricted position is never trapped); unknown ETF look-through
+(`themeExposures: undefined`) blocks new risk rather than defaulting to empty; a stale list blocks only new
+risk; the cooling period runs to the LATER of `eligibleAt` and `requestedAt + coolingPeriodDays` (a too-early
+`eligibleAt` cannot shorten it); `maxListAgeDays` is required so the staleness check cannot be silently
+skipped; and matching is by entity identity across all known tickers/aliases (`EntityMap.symbolsFor`), so a
+ticker change cannot admit a restricted entity.
 
 **What Claude Code did not do, and why.** The restricted list's *content* - the employer, suppliers, and
 themes tied to the operator's professional life - is nonpublic and is the owner's compliance policy to set
