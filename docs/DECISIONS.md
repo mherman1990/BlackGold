@@ -44,6 +44,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-36 | A stacked PR is retargeted to `main` before it is merged, or merged before its base goes in. Merging into an already-merged-forward base leaves `main` a phase behind; the remedy is a merge commit bringing `main` in plus a fresh PR, never a force-push | Accepted 2026-09-07 (engineering) | - |
 | D-37 | Claude Code has standing authorization for the whole git and GitHub mechanic, including merging its own PRs to `main` and tagging releases. Charter approval, holdout opening, promotion-evidence claims, and anything live remain the owner's alone | Accepted 2026-09-07 by Matt | Supersedes the per-action authorization rule in the original git protocol |
 | D-38 | `release.yml` also accepts `workflow_dispatch` with a version, and creates the `v<version>` tag itself after checks pass. Claude Code releases through that instead of a tag push, because GitHub refuses its credential any tag ref | Accepted 2026-09-07 by Matt, who asked for the capability directly | Makes D-37's tagging grant actually usable; narrower than a general tag-ref permission |
+| D-39 | The `etf-trend-vol` charter's four open decisions resolved and the XLE condition settled: look-through applies and XLE is excluded (12-ETF risk universe), BIL is the cash instrument, `risk.yaml` defaults approved as written with ADV participation at 1%, and Alpaca free/IEX approved as the market-data source | Accepted 2026-09-07 by Matt | Removes four of the nine blockers on charter registration; the approval block remains unsigned and is his alone |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -325,6 +326,69 @@ The consequence was not cosmetic. `release.yml` fired only on a pushed semver ta
 **What it still cannot do.** Everything D-37 carved out is untouched, and none of it is reachable from here: no charter approval, no holdout opening, no promotion-evidence claim, no live mode, no broker credential. Publishing an image of already-merged code is a low-consequence act in this system precisely because live trading is absent by construction - the image cannot trade whatever it contains.
 
 **Honest note on what changed.** This does give Claude Code an indirect route to a capability the platform currently withholds, through a workflow Claude Code wrote. That is worth stating rather than burying: the mitigation is that the route is narrow by construction and auditable by default, since every release is now an Actions run with a log of exactly which commit and version it resolved and why it accepted them. If Matt would rather the capability not exist, deleting the `workflow_dispatch` block restores the previous behaviour completely and nothing else depends on it.
+
+
+---
+
+## D-39 The etf-trend-vol charter's open decisions
+
+**Status:** Accepted 2026-09-07 by Matt, answering each of the four questions the charter itself declared.
+
+This record exists so `approval.approval_ref` has something citable. A decision made in a chat session is not
+a written owner decision; this is.
+
+### OD-1 Diversified-ETF look-through, and XLE
+
+**Look-through applies. XLE is not admitted.** The risk universe is 12 ETFs, not 13. XLI and XLP stay
+look-through flagged and are admitted.
+
+XLE holds refiners with direct RFS and 45Z exposure, which is a restricted theme for an operator whose
+professional role is advocacy on exactly those policies. The reasoning recorded at the time of the decision
+was asymmetry rather than certainty: wrongly holding XLE is a professional conflict question, wrongly
+excluding it costs marginal diversification in a sleeve that is not trading. The option chosen is the one
+reversible in the safe direction.
+
+**This is interim.** D-14 still records counsel review as outstanding, and this decision is precisely what
+that review is for. Counsel may widen the rule; narrowing it, or admitting XLE later, is a new charter
+version and does not inherit this charter's evidence.
+
+### OD-2 Cash instrument
+
+**BIL**, as the frozen universe already assumed, so no universe change. Chosen over SGOV because depth and
+spread matter more on a sleeve of this size than roughly five basis points of expense, and over plain cash
+because short-rate carry on idle cash is not worth forgoing at current rates.
+
+### OD-3 The risk.yaml defaults, and a discrepancy found while approving them
+
+**Approved as they stand in `config/examples/risk.yaml`:** `maxSingleEtfWeightPct` 0.20, `minCashPct` 0.02,
+`maxAdvParticipationPct` 0.01, `targetAnnualizedVolPct` 0.10.
+
+Worth recording because it nearly went through unnoticed: **OD-3's own question text said "0.5% ADV
+participation" while the file said 1%.** Three of the four cited numbers matched the file; that one was
+double. Approving it as written would have produced an approval citing a number that was not in the
+configuration it approved. The owner resolved it in favour of the file, and the question text in
+`charter.yaml` is corrected to 1%.
+
+The general lesson, since the charter cites configuration values in prose: **a document that restates numbers
+from a file will drift from that file.** A check that the cited values match the configuration would be worth
+having before the next charter version.
+
+### OD-4 Market-data source
+
+**Approved: Alpaca free tier, IEX feed, daily bars.** D-24 required a capability probe first; it was run live
+on 2026-09-07 - 340 bars for SPY and VTI, prices stored as decimal strings, `availableAt` one hour after each
+close, DST-correct session times (21:00 UTC in January, 20:00 from April), zero OHLC violations.
+
+The CR-09 limitation is accepted rather than waved away: IEX is not the consolidated SIP tape, so reported
+volume is a fraction of consolidated volume and ADV estimates read low. That makes the 1% ADV cap bind
+earlier than it would on full-tape volume, which is conservative for execution and therefore acceptable for
+research and paper trading. A live phase should revisit whether consolidated data is required.
+
+### What this decision does not do
+
+It does not approve the charter. Four of the nine registration blockers are cleared; the five that remain are
+the approval block itself - `state`, `approved_by`, `approval_date`, `code_commit`, `approval_ref` - and
+signing it is the owner's act. `assertRegistrable` still refuses this charter, correctly.
 
 
 ---
