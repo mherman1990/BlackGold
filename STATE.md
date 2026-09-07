@@ -2,7 +2,7 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-09-07 by Claude Code (after PR #25 merged: Phase 3 completion — call archiving, budget persistence, analyst wiring, status-page visibility).
+**Last updated:** 2026-09-07 by Claude Code (Phase 4 started, D-43: the deterministic factor classifier, on `claude/phase-04-factor-classifier`).
 
 ## Product state
 
@@ -55,7 +55,13 @@ The **real Anthropic adapter is now built** in a follow-up PR (D-42, branch `cla
 
 **Still deferred, by design — see `docs/PHASE3_REQUIREMENTS_MATRIX.md`:** one live verification run against the real API on the Pi (CR-12/CR-13 — exact wire shape, latency, cache); persistence of the model-call record and running budget; and wiring C1/D1 into the decision loop (prospective, Phase 5). No live trading mode, broker credential, or trading-host egress is added. No LLM output can set a size, choose an account, or form an order.
 
-**Phase 3 completion (merged to `main` at `9238e94`, [PR #25](https://github.com/mherman1990/BlackGold/pull/25), 2026-09-07):** call archiving + budget persistence (migration `0007` `model_calls`, `research/model-call-log.ts`), the analyst wiring (`analyst/run-analyst.ts` + a `research analyst` CLI command reading `ANTHROPIC_API_KEY` in `config/load.ts` only), and operator visibility of the archived-call count on the read-only status page (`EvidenceStatus.modelCalls`, count-only within the page's A3/T-22 constraints) are built and tested with a stub adapter. This closes the "archive everything" criterion. Unlike PR #9, this PR got an independent pass: the Codex security review completed on `ce4c41c` with no findings. **Still open:** the live CR-12/CR-13 run (needs a key on the Pi), C1/D1 backtest wiring (Phase 5, review-gated), and a deterministic factor classifier (Phase 4). The `research analyst` command fails closed without a key and makes no call.
+**Phase 3 completion (merged to `main` at `9238e94`, [PR #25](https://github.com/mherman1990/BlackGold/pull/25), 2026-09-07):** call archiving + budget persistence (migration `0007` `model_calls`, `research/model-call-log.ts`), the analyst wiring (`analyst/run-analyst.ts` + a `research analyst` CLI command reading `ANTHROPIC_API_KEY` in `config/load.ts` only), and operator visibility of the archived-call count on the read-only status page (`EvidenceStatus.modelCalls`, count-only within the page's A3/T-22 constraints) are built and tested with a stub adapter. This closes the "archive everything" criterion. Unlike PR #9, this PR got an independent pass: the Codex security review completed on `ce4c41c` with no findings. **Still open:** the live CR-12/CR-13 run (needs a key on the Pi) and C1/D1 backtest wiring (Phase 5, review-gated). The `research analyst` command fails closed without a key and makes no call.
+
+## Phase 4 status (2026-09-07)
+
+Phase 4 (household-minimum, compliance, restricted list, portfolio construction, sizing, risk engine) was authorized by Matt (D-43) and is being built as a sequence of bounded PRs, unblocked pieces first, because several deliverables depend on `risk.yaml` approval and the sleeve account (D-12).
+
+**First Phase 4 PR — the deterministic factor classifier (branch `claude/phase-04-factor-classifier`):** a `factors` block in the charter schema (`taxonomy` + per-symbol `assignments`, hash-covered) is the code-side authority the Analyst's `factorsTouched` is checked against; `packages/core/src/strategy/factors.ts` classifies a candidate and the `research analyst` CLI now derives the factor set from the charter and refuses an unclassified candidate (unknown classification blocks new risk), replacing the `--factors` flag. The etf-trend-vol charter carries a **conservative starting map that is Matt's to review/edit before signing** — the factor values are not owner-approved, and editing them is his act, like signing. **Still to come in Phase 4:** exposure flags + ETF look-through, the restricted list + compliance engine, the deterministic portfolio constructor + sizing, and the risk engine with halt states — each a further bounded PR, gated on `risk.yaml` approval and the sleeve account where it depends on them.
 
 ## Phase 2 exit criteria
 

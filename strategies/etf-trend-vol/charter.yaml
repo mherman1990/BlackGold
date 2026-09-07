@@ -81,6 +81,43 @@ posture:
   regular_session_only: true
   max_gross_exposure: "0.98"
 
+# Deterministic factor classification (docs/PRODUCT_SPEC.md sections 6 and 11): the code-side authority the
+# Analyst's `factorsTouched` is checked against. STARTING POINT FOR OWNER REVIEW - these are conservative,
+# widely-agreed long-only exposures, not yet owner-approved; edit them before the charter is signed. A symbol
+# left unassigned is unclassified and fails closed (blocks new risk); changing any tag is a new charter
+# version. XLE is classified though it is not yet admitted, so admitting it later needs no new factor edit.
+factors:
+  taxonomy:
+    - market
+    - size
+    - value
+    - growth
+    - momentum
+    - rates
+    - sector_technology
+    - sector_financials
+    - sector_healthcare
+    - sector_industrials
+    - sector_staples
+    - sector_utilities
+    - sector_discretionary
+    - sector_energy
+  assignments:
+    VTI: [market]
+    QQQ: [market, growth, sector_technology]
+    IWM: [market, size]
+    VTV: [market, value]
+    VUG: [market, growth]
+    XLK: [market, growth, sector_technology]
+    XLF: [market, value, sector_financials]
+    XLV: [market, sector_healthcare]
+    XLI: [market, sector_industrials]
+    XLP: [market, value, sector_staples]
+    XLU: [market, value, sector_utilities]
+    XLY: [market, growth, sector_discretionary]
+    XLE: [market, value, sector_energy]
+    BIL: [rates]
+
 # ALPHA_CHARTER.md section 6.1.
 features:
   momentum_lookback_sessions: 252

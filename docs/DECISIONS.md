@@ -481,6 +481,37 @@ running budget, and wiring C1/D1 into the decision loop, remain Phase 5.
 
 ---
 
+## D-43 Phase 4 authorization and the deterministic factor classifier
+
+**Status:** Accepted 2026-09-07 by Matt ("I authorize phase 4"). The factor-map location was his explicit
+choice among three options: factor assignments live **in the signed charter YAML**.
+
+**Scope note.** Phase 4 (household-minimum, compliance, restricted list, portfolio construction, sizing, risk
+engine) is large and several of its deliverables depend on unresolved inputs - `risk.yaml` approval and the
+sleeve account (D-12) - so it is built as a sequence of bounded PRs, unblocked pieces first. This decision
+covers the first: the deterministic factor classifier.
+
+**What was built (first Phase 4 PR).** A `factors` block in the charter schema (`taxonomy` + per-symbol
+`assignments`) with structural validation (assignment keys must be universe members; every tag must be in the
+taxonomy; no duplicates). `packages/core/src/strategy/factors.ts` classifies a candidate from the charter and
+`unclassifiedRiskEtfs` reports gaps. The `research analyst` CLI now derives `factorsTouched`'s deterministic
+counterpart from the charter and **refuses an unclassified candidate** ("unknown factor classification blocks
+new risk", `docs/PRODUCT_SPEC.md` section 11), replacing the operator `--factors` flag. The etf-trend-vol
+charter carries a conservative starting map for owner review.
+
+**Why the charter, not a side file.** Factor assignments are the code-side authority the model's
+`factorsTouched` is checked against (T-05); a change to them is a data transform, which `CLAUDE.md` already
+treats as a new strategy version. Putting them under the charter hash makes that automatic: a factor edit
+changes the hash, so it cannot silently alter what a registered experiment was graded against.
+
+**What still needs Matt.** The factor *values* in the charter are a starting point for his review, not
+owner-approved numbers, and editing them (like signing the charter) is his act. The rest of Phase 4 - exposure
+flags and look-through, the restricted list and compliance engine, the deterministic portfolio constructor and
+sizing, and the risk engine with halt states - follows as further bounded PRs, gated on `risk.yaml` approval
+and the sleeve account where it depends on them.
+
+---
+
 ## Rejected
 
 - **R-01** Postgres/Kafka/Kubernetes/vector DB: no measured need; violates the one-owner maintainability constraint.
