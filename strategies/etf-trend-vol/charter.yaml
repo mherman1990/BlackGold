@@ -1,13 +1,14 @@
 # Machine-readable companion to ALPHA_CHARTER.md. The prose charter is the specification a human reads;
 # this file is the only form the code executes.
 #
-# STATUS: DRAFT, with all four open decisions now resolved by the owner (D-39) and the XLE condition settled.
-# What remains unsigned is the approval block itself: state, approved_by, approval_date, code_commit and
-# approval_ref. That is the owner's act and Claude Code may not perform it - see "What standing authorization
-# never covers" in CLAUDE.md. Resolved decisions are NOT an approved charter. `assertRegistrable` (packages/core/src/strategy/charter.ts) refuses to freeze an experiment on
-# this file while approval.state is DRAFT, any open decision is unresolved, or any conditional universe member
-# is undecided. Signing the block below changes the charter hash, which is the point: the approved charter is
-# a different artifact from this draft.
+# STATUS: APPROVED. The owner signed the approval block below on 2026-09-08 (D-48) - Claude Code did not; that
+# is the owner's act, and the carve-out ("What standing authorization never covers" in CLAUDE.md) held. All four
+# open decisions are resolved (D-39), the XLE condition is settled (excluded), and D-32 (book-slot priority) is
+# owner-confirmed via the ALPHA_CHARTER.md section 8 "Book-slot priority" row. `assertRegistrable`
+# (packages/core/src/strategy/charter.ts) now passes: approval.state is APPROVED, every open decision is
+# resolved, and no conditional universe member is undecided. Signing changed the charter hash, which was the
+# point: the approved charter is a different artifact from the draft it came from. A registered result still
+# needs ingested market data.
 
 strategy_id: etf-trend-vol
 charter_version: 0.1.0
@@ -82,10 +83,12 @@ posture:
   max_gross_exposure: "0.98"
 
 # Deterministic factor classification (docs/PRODUCT_SPEC.md sections 6 and 11): the code-side authority the
-# Analyst's `factorsTouched` is checked against. STARTING POINT FOR OWNER REVIEW - these are conservative,
-# widely-agreed long-only exposures, not yet owner-approved; edit them before the charter is signed. A symbol
-# left unassigned is unclassified and fails closed (blocks new risk); changing any tag is a new charter
-# version. XLE is classified though it is not yet admitted, so admitting it later needs no new factor edit.
+# Analyst's `factorsTouched` is checked against. These assignments are HASH-COVERED, so they are part of the
+# charter the owner signed on 2026-09-08 (D-48) and are frozen into the approved charter - the earlier
+# "edit before signing" advisory is overtaken. They are conservative, widely-agreed long-only exposures; the
+# owner may still revise them, but changing any tag is now a new charter version at DRAFT. A symbol left
+# unassigned is unclassified and fails closed (blocks new risk). XLE is classified though not yet admitted, so
+# admitting it later needs no new factor edit.
 factors:
   taxonomy:
     - market

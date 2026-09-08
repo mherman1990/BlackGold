@@ -34,7 +34,7 @@ The build order is: repository foundation and safe simulations; point-in-time re
 | 12 | Capability register and vendor registers | `docs/CAPABILITY_REGISTER.md`, `docs/capabilities/*.md` | Complete; Schwab entirely unverified |
 | 13 | Data provenance spec | `docs/DATA_PROVENANCE_SPEC.md` | Complete |
 | 14 | Experiment protocol | `docs/EXPERIMENT_PROTOCOL.md` | Complete |
-| 15 | Draft Alpha Charters | `strategies/etf-trend-vol/`, `strategies/form4-insider-cluster/`, `strategies/filing-change-challenger/`, `strategies/README.md` | Draft; not approved |
+| 15 | Draft Alpha Charters | `strategies/etf-trend-vol/`, `strategies/form4-insider-cluster/`, `strategies/filing-change-challenger/`, `strategies/README.md` | Drafts at Discovery; `etf-trend-vol` since signed/APPROVED (D-48, 2026-09-08), the other two remain drafts |
 | 16 | Automation and live gates | `docs/AUTOMATION_AND_LIVE_GATES.md` | Complete |
 | 17 | Resource budget | `docs/RESOURCE_BUDGET.md` | Proposed numbers pending Pi measurement |
 | 18 | Repository tree and core interfaces | `docs/PROPOSED_REPOSITORY_TREE.md`, `docs/CORE_INTERFACES.md` | Proposal |

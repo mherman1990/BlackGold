@@ -1,21 +1,23 @@
 # Alpha Charter: `etf-trend-vol`
 
-**Status: DRAFT - not approved; do not implement**
+**Status: this specification is frozen** — its values are the ones in the owner-signed, executable `strategies/etf-trend-vol/charter.yaml` (APPROVED 2026-09-08, D-48), which is the binding approval and the only form the code executes. The `PROPOSED default` labels throughout this prose mark each value's origin as a Discovery proposal; all are now frozen into the signed charter, and changing any is a new charter version.
 
 | Field | Value |
 |---|---|
 | Strategy ID | `etf-trend-vol` |
-| Charter version | `0.1.0-draft` |
-| Companion schema | `strategies/etf-trend-vol/charter.yaml` (generated at registration; not yet written) |
+| Charter version | `0.1.0` (the executed `charter.yaml`; this prose file was drafted as `0.1.0-draft`) |
+| Companion schema | `strategies/etf-trend-vol/charter.yaml` (written and signed — the only form the code executes) |
 | Owner | Matt Herman |
 | Author of draft | Black Gold Discovery Pack |
-| Approval state | DRAFT. Owner approval: not given. Registration hash: none. |
+| Approval state | APPROVED in `charter.yaml` (approved_by Matt Herman, 2026-09-08, D-48); D-32 owner-confirmed (§8). Registration hash assigned at experiment registration. |
 | Intended phase | Phase 2 (first deterministic Alpha Charter), then Phase 5 shadow/paper |
 | Runtime LLM in signal | No |
 
-Every number in this document is a PROPOSED default. Proposals are frozen at registration and may not be tuned after any result is viewed. A change to any frozen value after registration is a new charter version and a new experiment (see `docs/EXPERIMENT_PROTOCOL.md`).
+Every number in this document was a PROPOSED default and is now FROZEN into the owner-signed `charter.yaml` (D-48); the `PROPOSED` labels below mark origin, not that a value is still open. A change to any frozen value is a new charter version and a new experiment (see `docs/EXPERIMENT_PROTOCOL.md`), and may not be made to tune the strategy after a result is viewed.
 
 ## Owner approval block
+
+> **The binding approval is the signed `approval:` block in `charter.yaml`** — state `APPROVED`, approved_by `Matt Herman`, approval_date `2026-09-08`, code_commit `474d0dc`, approval_ref `docs/DECISIONS.md#D-39` (recorded as D-48). That block is the only form the code executes and the one `assertRegistrable` checks. The template below is a non-binding human mirror of that signature; Claude Code did not fill it in (signing is the owner's act), and the owner may countersign it here but need not.
 
 ```
 Charter:        etf-trend-vol 0.1.0-draft
@@ -161,7 +163,7 @@ The decision is fully determined by the frozen list, the rule table above, and p
 
 1. Let S be the set of ETFs to hold after applying entry, hold and exit rules (at most 5).
 2. Raw weight: `w_i = (1 / vol_i) / sum_j (1 / vol_j)` over S.
-3. Cap: no `w_i` above 20% of NAV (ETF cap from the proposed `risk.yaml`). Redistribute excess pro rata to uncapped members; repeat until stable; any residual goes to cash.
+3. Cap: no `w_i` above 20% of NAV (ETF cap from the approved `risk.yaml`). Redistribute excess pro rata to uncapped members; repeat until stable; any residual goes to cash.
 4. Correlated-cluster cap: cluster A = {VTI, QQQ, VUG, XLK, XLY}. At most 3 members of cluster A may be held; if the rank order selects more, the lowest-ranked extra members are skipped and the next eligible non-cluster ETFs (up to rank 7) fill the slots.
 5. Volatility scaling: ex-ante portfolio volatility `sigma_p = sqrt(w' cov w)` annualized. Scale factor `k = min(1, 0.10 / sigma_p)`. Final `w_i = k * w_i`.
 6. Cash weight = `1 - sum(w_i)`, held in BIL, never below 2% of NAV.

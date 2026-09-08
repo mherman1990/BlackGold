@@ -37,14 +37,14 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-29 | Market data: fetch raw Alpaca IEX daily bars and compute all adjustments in Black Gold code; corporate actions for the ETF universe vendored as observations until an issuer/vendor feed is verified | Accepted 2026-09-07 (engineering) | Phase 2 |
 | D-30 | Data provenance defaults adopted: processing delays (15 min EDGAR/market, 60 min macro, 24 h batch), storage budgets (spec section 9), 13F research-context only, AVAILABLE_AT_ESTIMATED defaults | Accepted 2026-09-07 (covered by the 2026-09-06 blanket acceptance of recommended defaults) | - |
 | D-31 | CFTC COT availability uses a by-rule U.S. federal holiday calendar (CR-27), not the NYSE calendar; entity map is bitemporal (`knownFrom`/`closeKnownFrom`); migration `0006_entity_symbols` amended in place because it had never run outside test databases | Accepted 2026-09-07 (engineering, from PR #3 review) | - |
-| D-32 | Book-slot conflict between the charter's entry rule and its hysteresis hold rule resolves in favour of the incumbent; the correlated-cluster cap stays strictly rank-ordered | Accepted 2026-09-07 (engineering, provisional) | **Owner confirmation required before the charter is frozen** |
+| D-32 | Book-slot conflict between the charter's entry rule and its hysteresis hold rule resolves in favour of the incumbent; the correlated-cluster cap stays strictly rank-ordered | Accepted 2026-09-07 (engineering, provisional); **owner-confirmed 2026-09-08** (`ALPHA_CHARTER.md` §8 `Book-slot priority` row, `13d637a`) | - |
 | D-33 | An entity priced behind the rest of the cross-section at a decision is excluded from that decision entirely (`STALE_ANCHOR`), rather than ranked on its last good bar | Accepted 2026-09-07 (engineering) | - |
 | D-34 | `charter.yaml` is the only form the code executes, and `assertRegistrable` refuses to freeze an experiment on an unsigned charter, an unresolved open decision, or an undecided conditional universe member | Accepted 2026-09-07 (engineering) | - |
-| D-35 | Phase 2 authorized by Matt's "keep building out" (2026-09-07); built as machinery plus fixture tests only. No registered experiment, no historical result, and no holdout access, because the charter is DRAFT and no source data has been ingested | Accepted 2026-09-07 | Owner approves the charter, then the same code produces the evidence |
+| D-35 | Phase 2 authorized by Matt's "keep building out" (2026-09-07); built as machinery plus fixture tests only. No registered experiment, no historical result, and no holdout access — at the time because the charter was DRAFT and no source data had been ingested | Accepted 2026-09-07 | Charter since approved (D-48) and D-32 confirmed; once market data is ingested, the same code produces the evidence |
 | D-36 | A stacked PR is retargeted to `main` before it is merged, or merged before its base goes in. Merging into an already-merged-forward base leaves `main` a phase behind; the remedy is a merge commit bringing `main` in plus a fresh PR, never a force-push | Accepted 2026-09-07 (engineering) | - |
 | D-37 | Claude Code has standing authorization for the whole git and GitHub mechanic, including merging its own PRs to `main` and tagging releases. Charter approval, holdout opening, promotion-evidence claims, and anything live remain the owner's alone | Accepted 2026-09-07 by Matt | Supersedes the per-action authorization rule in the original git protocol |
 | D-38 | `release.yml` also accepts `workflow_dispatch` with a version, and creates the `v<version>` tag itself after checks pass. Claude Code releases through that instead of a tag push, because GitHub refuses its credential any tag ref | Accepted 2026-09-07 by Matt, who asked for the capability directly | Makes D-37's tagging grant actually usable; narrower than a general tag-ref permission |
-| D-39 | The `etf-trend-vol` charter's four open decisions resolved and the XLE condition settled: look-through applies and XLE is excluded (12-ETF risk universe), BIL is the cash instrument, `risk.yaml` defaults approved as written with ADV participation at 1%, and Alpaca free/IEX approved as the market-data source | Accepted 2026-09-07 by Matt | Removes four of the nine blockers on charter registration; the approval block remains unsigned and is his alone |
+| D-39 | The `etf-trend-vol` charter's four open decisions resolved and the XLE condition settled: look-through applies and XLE is excluded (12-ETF risk universe), BIL is the cash instrument, `risk.yaml` defaults approved as written with ADV participation at 1%, and Alpaca free/IEX approved as the market-data source | Accepted 2026-09-07 by Matt | Removes four of the nine blockers on charter registration; the approval block was still unsigned then, and was signed later (D-48, 2026-09-08) |
 | D-40 | Granary (separate product `mherman1990/Granary`) owns the household / personal-finance / capital-allocation layer and sits above Black Gold in the hierarchy, reading Black Gold data read-only. Black Gold takes no dependency on Granary and stops growing an in-house household planner | **Proposed** 2026-09-07 by Claude Code | Phase 4 (household scope) |
 | D-41 | Phase 3 authorized (Matt, 2026-09-07, ordering "2 → 1 → 3"). Built as the provider-agnostic analyst pipeline and its safety surface, tested with a deterministic stub; the real Anthropic adapter, the POST egress change, and live CR-11/12/13 re-verification are a separate follow-up PR needing an API key | Accepted 2026-09-07 by Matt | Provider wiring, call/budget persistence, and prospective C1/D1 backtest wiring remain (credentials / Phase 5) |
 | D-42 | The Anthropic model adapter (raw `fetch`, no SDK) as its own PR: a second egress module `packages/core/src/model/provider-http.ts` is the only outbound POST and the only reference to `api.anthropic.com`; `live-disabled.test.ts` is updated to allow exactly that while trading hosts stay forbidden and `data/http.ts` stays POST-free. The key is passed in from the environment, never in git, code, or the image | Accepted 2026-09-07 by Matt ("keep building… put the key in when things are connected") | Live CR-12/CR-13 verification against the real API is Matt's one run on the Pi; call/budget persistence and C1/D1 wiring still Phase 5 |
@@ -236,7 +236,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 
 ## D-32 Book-slot priority between the entry rule and the hysteresis hold rule
 
-**Status:** Accepted 2026-09-07 (engineering, provisional). **Owner confirmation required before `etf-trend-vol` is frozen.**
+**Status:** Accepted 2026-09-07 (engineering, provisional); **owner-confirmed 2026-09-08.** Matt confirmed the incumbent-priority reading by adding the `Book-slot priority` row to `ALPHA_CHARTER.md` §8 (commit `13d637a`); it matches `candidates.ts`, so no code change was needed, and the charter is frozen with this reading.
 
 **The ambiguity.** `strategies/etf-trend-vol/ALPHA_CHARTER.md` section 8 says to enter any ETF ranked 1 to 5 that is not held, and to keep a held ETF while it stays eligible and ranked 1 to 7. With five eligible newcomers and a held name at rank 6, those two rules name six ETFs for a five-slot book. Section 9 step 1 says only "at most 5" and does not say which rule yields.
 
@@ -244,7 +244,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 
 **Decision.** An eligible incumbent inside the hold band keeps its slot; the lowest-ranked newcomer is the one left out. The correlated-cluster cap is treated differently and stays strictly rank-ordered, because section 9 step 4 is explicit that "the lowest-ranked extra members are skipped" - so an incumbent does not hold a cluster slot against a higher-ranked name, only a book slot. Implemented as four ordered passes in `packages/core/src/strategy/candidates.ts` and pinned by `packages/core/test/strategy-candidates.test.ts`.
 
-**What the owner should confirm.** Whether incumbent priority is the intended reading. If it is, section 8 of the prose charter should say so before the charter is frozen. If it is not, the alternative is a narrower hold band (hold rank equal to entry rank), which removes the hysteresis rather than reversing the priority.
+**What the owner confirmed (2026-09-08).** Incumbent priority is the intended reading; section 8 now states it via the `Book-slot priority` row (`13d637a`). The alternative that had been on the table — a narrower hold band (hold rank equal to entry rank), removing the hysteresis rather than reversing the priority — was not chosen; revisiting it later would be a new charter version at DRAFT.
 
 ## D-33 An entity priced behind the cross-section is excluded from the decision
 
@@ -266,7 +266,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 
 **Decision.** Phase 2 was authorized by Matt's instruction to keep building (2026-09-07) and was built as machinery plus fixture tests only: the charter loader and approval gate, feature engine, candidate engine, portfolio construction, leakage audit, coverage report, walk-forward splitter, statistics, attribution, backtest runner, robustness harness, and result report.
 
-**What was deliberately not done.** No experiment was registered, no historical result was computed, and the holdout was not opened. Two independent reasons: the charter is `DRAFT` with four unresolved open decisions, and no market data has been ingested from any source (no credentials exist yet). Registering an experiment on unapproved numbers, or viewing a result before the charter is frozen, would consume information that cannot be given back - the viewed-results rule in `docs/EXPERIMENT_PROTOCOL.md` section 3 makes it irreversible. The machinery is therefore complete and tested, and the same code produces the evidence once the charter is approved and data is ingested.
+**What was deliberately not done.** No experiment was registered, no historical result was computed, and the holdout was not opened. Two independent reasons at the time: the charter was `DRAFT` with four unresolved open decisions, and no market data had been ingested from any source (no credentials existed yet). Registering an experiment on unapproved numbers, or viewing a result before the charter is frozen, would consume information that cannot be given back - the viewed-results rule in `docs/EXPERIMENT_PROTOCOL.md` section 3 makes it irreversible. The machinery is therefore complete and tested, and the same code produces the evidence once data is ingested. *(Update: the charter is since signed and D-32-confirmed — D-48, 2026-09-08 — so market-data ingestion is now the sole remaining blocker.)*
 
 ## D-36 Stacked-PR merge order
 
@@ -497,15 +497,17 @@ taxonomy; no duplicates). `packages/core/src/strategy/factors.ts` classifies a c
 `unclassifiedRiskEtfs` reports gaps. The `research analyst` CLI now derives `factorsTouched`'s deterministic
 counterpart from the charter and **refuses an unclassified candidate** ("unknown factor classification blocks
 new risk", `docs/PRODUCT_SPEC.md` section 11), replacing the operator `--factors` flag. The etf-trend-vol
-charter carries a conservative starting map for owner review.
+charter carries a conservative starting map, now frozen into the signed charter (hash-covered, D-48); revising any tag is a new charter version.
 
 **Why the charter, not a side file.** Factor assignments are the code-side authority the model's
 `factorsTouched` is checked against (T-05); a change to them is a data transform, which `CLAUDE.md` already
 treats as a new strategy version. Putting them under the charter hash makes that automatic: a factor edit
 changes the hash, so it cannot silently alter what a registered experiment was graded against.
 
-**What still needs Matt.** The factor *values* in the charter are a starting point for his review, not
-owner-approved numbers, and editing them (like signing the charter) is his act. The rest of Phase 4 - exposure
+**The factor values are frozen by the signature.** The factor *values* are hash-covered, so the owner's
+2026-09-08 signature (D-48) froze them into the approved charter; the earlier "starting point for his review,
+edit before signing" framing is overtaken. Whether he reviewed the specific conservative defaults before signing
+is his to say; revising any tag is now a new charter version at DRAFT. The rest of Phase 4 - exposure
 flags and look-through, the restricted list and compliance engine, the deterministic portfolio constructor and
 sizing, and the risk engine with halt states - follows as further bounded PRs, gated on `risk.yaml` approval
 and the sleeve account where it depends on them.
@@ -544,8 +546,8 @@ section 9.2), so an owner re-arm cannot skip the intermediate state.
 
 **What still needs Matt / is deferred.** Resolving OD-3 (approving risk.yaml) is his act; the engine is built
 and tested, but the policy it consumed was not yet approved when this was written, so nothing could register or
-run for real. *(OD-3 has since been resolved — Matt signed risk.yaml on 2026-09-08, D-48. A registered result
-remains gated on ingested data and owner confirmation of D-32.)* Deferred
+run for real. *(OD-3 has since been resolved — Matt signed risk.yaml on 2026-09-08, D-48; D-32 was owner-confirmed the same
+day. A registered result now remains gated on ingested data.)* Deferred
 to further Phase 4 PRs: the risk-limit/caps engine (position, sector, cluster, gross, ADV) with reason codes;
 the compliance engine and restricted list; exposure flags and look-through; and wiring the halt state into a
 decision or gateway loop (Phase 5). No live path, broker credential, or order forms here.
@@ -683,26 +685,26 @@ plus a fail-closed guard the other way (PR #36), and update STATE.md / HANDOFF.m
 
 **What this unlocks, and what it does not.** `assertRegistrable` now passes and `charter show` reports
 `registrable: true` — code-registrability, not permission to register. It does **not** register anything, compute
-any result, or enable any live or paper mode. A registered result still needs ingested market data, **owner
-confirmation of D-32** (see below and `HANDOFF.md` §5 step 4), and the registry call — all owner-gated;
-`registrable: true` is necessary but not sufficient, because `assertRegistrable` checks the approval block, not
-D-32. Any live path additionally needs an expiring `LIVE_AUTHORIZATION` bound to the account, versions,
-instruments, caps, and executable hash.
+any result, or enable any live or paper mode. D-32 (book-slot priority) was owner-confirmed on
+2026-09-08 (see below), so the registration preconditions are met except ingested data. A registered result
+still needs ingested market data and the registry call (owner-gated). Any live path additionally needs an
+expiring `LIVE_AUTHORIZATION` bound to the account, versions, instruments, caps, and executable hash.
 
-**D-32 is not resolved by this signature.** The charter is now frozen with D-32's provisional book-slot
-resolution (incumbent priority) baked into it, but the approval block references D-39, not D-32, and Matt did not
-separately confirm the incumbent-priority reading — which D-32 asked for *before* the charter was frozen. So the
-charter was frozen ahead of that confirmation. D-32 remains an outstanding owner item (STATE.md and HANDOFF.md
-still list it): Matt should either confirm incumbent priority explicitly (a one-sentence addition to
-`ALPHA_CHARTER.md` section 8) or, if he intended the narrower hold band, treat it as a charter change and a new
-charter version at DRAFT.
-
-**Until confirmed, D-32 blocks registration — it is a precondition, not just a note.** `charter show` reporting
-`registrable: true` is necessary but not sufficient here: `assertRegistrable` checks the approval block, not
-D-32, so the code cannot enforce this and the procedure must. `HANDOFF.md` §5 step 4 now stops registration
-until the owner confirms D-32, and STATE.md and HANDOFF.md list D-32 alongside ingestion as a blocker to a
-registered result. Registering first would freeze the provisional incumbent-priority reading — the irreversible
-outcome D-32 exists to prevent — so it waits on the owner, surfaced and gated rather than silently accepted.
+**D-32 is now resolved — owner-confirmed 2026-09-08.** When the charter was signed, its approval block
+referenced D-39, not D-32, and D-32's provisional book-slot reading (incumbent priority) had not been separately
+confirmed — so for the interim the registration procedure gated on it, a precondition `assertRegistrable` cannot
+enforce (it checks the approval block, not D-32). Matt has since confirmed it: he added the `Book-slot priority`
+row to `ALPHA_CHARTER.md` section 8 (commit `13d637a`), stating that when the entry and hold rules together name
+more than five ETFs, an eligible held ETF ranked 1..7 keeps its book slot ahead of any newcomer and the
+lowest-ranked newcomers are left out until the book holds five, with the section 9 step 4 correlated-cluster cap
+left strictly rank-ordered. That is exactly what the repo's single implementation
+(`candidates.ts` — pass 3 fills incumbents-first; pass 2 applies the cluster cap strictly by rank) already does,
+so no code change was needed: the confirmed prose and that implementation agree. This does **not** by itself
+discharge the §8 acceptance test that *two independent* implementations produce identical weights — only one
+implementation exists, so that criterion stays open — but the confirmation removes the ambiguity that would have
+made two implementations disagree. The D-32 registration precondition is satisfied; the operational blocker to a
+registered result is now ingested data. Had Matt intended the narrower hold band (hold rank equal to entry rank)
+instead, that would have been a new charter version at DRAFT.
 
 ---
 
