@@ -6,6 +6,7 @@ Operator procedures for Black Gold. Phase 0 provides the local-development and c
 |---|---|---|
 | `local-dev.md` | 0 | Available |
 | `backup-and-restore.md` | 0 | Available |
+| `first-ingestion.md` | 1 → 2 | Available |
 | `umbrel-install-update-remove.md` | 0 (design) / first release | Draft until first published image |
 | Startup, shutdown, reboot, missed jobs | 5 | Not yet written |
 | Provider outage, token expiry, stale data, disk full | 5–6 | Not yet written |
