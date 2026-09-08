@@ -2,7 +2,7 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-09-07 by Claude Code (Phase 4: compliance engine + restricted list, D-46, on `claude/phase-04-compliance-restricted`).
+**Last updated:** 2026-09-08 by Claude Code (Phase 5: deterministic decision gate, D-47, on `claude/phase-05-decision-gate`).
 
 ## Product state
 
@@ -10,7 +10,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 |---|---|
 | Phase | Discovery, Phase 0, Phase 1 and Phase 2 all merged to `main` at `03bf580` on 2026-09-07 (PR #1, #2, #4, #6, #8, #9). **Phase 3 machinery** (runtime-LLM analyst overlay) merged 2026-09-07 (PR #22, #23, #25; `main` at `9238e94`). Phase 2 and Phase 3 are both **machinery** complete in code and tests; **no Phase 2 result and no LLM/live call exists**, and no result may exist until the charter is approved and data is ingested (D-35) |
 | Application code | `packages/shared`, `packages/core` (Phase 0 foundation, Phase 1 data/market/universe/research, Phase 2 strategy/research), `packages/broker-gateway` |
-| Tests | 622 passing across 58 files. `npm run check` green locally and in CI on `ce4c41c` (PR #25 head) |
+| Tests | 692 passing. `npm run check` green locally on the Phase 5 decision-gate branch |
 | Live trading | Absent by construction. Config loader and gateway both refuse `LIVE_MANUAL` and `LIVE_LIMITED`; CI asserts the image refuses them too |
 | Broker credentials | None exist anywhere in this project. Only the synthetic broker adapter exists |
 | Runtime LLM | **Phase 3 machinery merged to `main`** (PR #22, #23, #25): provider-agnostic analyst pipeline + safety surface, the Anthropic adapter behind the single egress module, call archiving/budget persistence, the `research analyst` CLI, and status-page visibility. **No live call has been made** — no key is on the Pi and the one CR-12/CR-13 verification run is still pending. The `etf-trend-vol` charter declares no LLM in the signal and only two arms, so nothing wires the analyst into a decision |
@@ -70,6 +70,14 @@ Phase 4 (household-minimum, compliance, restricted list, portfolio construction,
 **Fourth Phase 4 PR — the compliance engine (D-46, branch `claude/phase-04-compliance-restricted`):** `packages/core/src/compliance/engine.ts` (`evaluateCompliance`) is the deterministic compliance verdict — admit/reject a candidate against the restricted list with reason codes, pure. It encodes the D-14 rules: additions immediate, removals wait a cooling period (`pendingRemovals` until `eligibleAt`); blackout windows block only new risk; a stale list fails closed. Themes are checked against supplied exposures. 6 tests. **The restricted-list *content* is Matt's**, not Claude Code's: it encodes his nonpublic professional restrictions (employer, suppliers, themes), so `config/examples/restricted-list.yaml` keeps fake placeholders and populating the real list is the owner's act (like approving `risk.yaml`). ETF **look-through** (deriving an ETF's restricted-theme exposures) is a deferred Phase 4 piece — the engine takes exposures as input.
 
 **Still to come in Phase 4:** ETF look-through + exposure flags, the deferred limit engines (factor concentration once the cap-bearing tags are decided; liquidity/order-level/per-position-risk), and wiring the research/compliance/risk/limit verdicts + construction into the decision loop (Phase 5) — each a further bounded PR, gated on `risk.yaml` approval (OD-3), the real restricted list, and the sleeve account (D-12) where it depends on them.
+
+## Phase 5 status (2026-09-08)
+
+Phase 5 (composing the deterministic verdicts into one go/no-go and, downstream, the prospective decision loop) was authorized by Matt (D-47) and is being built as bounded PRs, deterministic composition first.
+
+**First Phase 5 PR — the deterministic decision gate (D-47, branch `claude/phase-05-decision-gate`):** `packages/core/src/decision/gate.ts` (`evaluateDecisionGate`) is the single place that composes the three independent Phase 4 verdicts into one go/no-go for **new risk**: new risk may proceed iff the halt state is `NORMAL` **and** the proposed target book respects every risk limit **and** every candidate newly taking risk clears compliance. Fail-closed by construction — any single block makes `newRiskAllowed` false, and the blocking reasons are flattened into `blockedBy` for the decision record. It forms no order and never re-sizes; it decides only whether the deterministically-constructed target may be acted on. Compliance is always evaluated as **new risk** for each candidate (the gate fixes `isNewRisk: true`), because the gate's whole question is whether new exposure may be added. **Compliance coverage is enforced, not trusted** (Codex P1): the gate takes the current book too and derives the holdings taking new/increased risk (`target > current`); an increase with no supplied compliance evaluation fails closed (`MISSING_COMPLIANCE`), while a held-flat or reduced position needs no candidate. Coverage binds each increasing holding to its candidate by canonical key, not by the candidate's alias set (a second Codex P1 on the fix), so one clean candidate can't cover another holding it merely lists as an identifier. Pure and under `decision/`, composing only `risk/` and `compliance/`, so no model output can reach it (T-05). 9 composition tests. The equivalent guards run again in the broker gateway; this is the core-side gate.
+
+**Still to come in Phase 5:** wiring construction + the analyst overlay (C1/D1) into the gate to produce a persisted counterfactual decision ledger; the prospective paper/shadow run (needs the charter approved and paper keys); production ingestion scheduling; the reconciler/steward and incident records; and cost monitoring — each a further bounded PR, gated on `risk.yaml` approval (OD-3), the charter signature, the real restricted list, and credentials (D-12) where it depends on them.
 
 ## Phase 2 exit criteria
 
