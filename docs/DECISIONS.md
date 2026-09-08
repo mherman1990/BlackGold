@@ -633,7 +633,16 @@ Fail-closed by construction: a single block from any engine makes `newRiskAllowe
 flattened for the decision ledger. It forms no order and never re-sizes. Purely deterministic - it composes
 only the risk and compliance engines (under `risk/` and `compliance/`, which the analyst layer may not import),
 so no model output can reach the decision (T-05). Compliance is fixed to new-risk for each candidate, since the
-gate's whole question is whether new exposure may be added. 6 composition tests.
+gate's whole question is whether new exposure may be added.
+
+Compliance **coverage is enforced, not trusted** (Codex P1 on PR #35). The gate takes the current book as well
+as the target and derives the holdings taking new or increased risk (`target > current`); every one must be
+covered by a supplied compliance evaluation or the gate fails closed (`MISSING_COMPLIANCE`). Trusting the caller
+to list every increasing holding was a fail-open hole - a caller passing `[]` would have been admitted with the
+restricted list never consulted - which is exactly the failure mode this gate exists to prevent. Holdings held
+flat or reduced are not new risk and need no candidate, so a restricted position stays windable-down. Halt-fault
+reasons keep each fault's detail rather than only its code (Codex P2), matching the limit/compliance shape.
+8 composition tests, including a regression test for the uncovered-increase hole.
 
 **What is gated on Matt, and therefore deferred in Phase 5.** Production ingestion on the allowlist needs the
 four `BLACKGOLD_*` data credentials; the Alpaca paper adapter and paper-fill reconciliation need paper broker
