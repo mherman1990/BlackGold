@@ -124,6 +124,10 @@
           "type": "string",
           "minLength": 8
         },
+        "tiingoApiKey": {
+          "type": "string",
+          "minLength": 8
+        },
         "processingDelays": {
           "default": {},
           "type": "object",

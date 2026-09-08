@@ -8,6 +8,7 @@ import { AllowlistedHttpClient, PUBLIC_SOURCE_HOSTS, PUBLIC_SOURCE_RATES, type F
 import { PointInTimeRepository } from "../data/pit/repository.ts";
 import type { FetchOutcome } from "../data/adapters/common.ts";
 import { fetchDailyBars } from "../data/adapters/alpaca-bars.ts";
+import { fetchTiingoDaily } from "../data/adapters/tiingo.ts";
 import { COT_DATASETS, fetchCot, type CotDataset } from "../data/adapters/cftc-cot.ts";
 import { fetchSeriesVintages } from "../data/adapters/fred.ts";
 import { fetchSubmissions } from "../data/adapters/sec-edgar.ts";
@@ -27,10 +28,11 @@ export type IngestRequest =
   | { source: "fred"; seriesId: string; realtimeStart?: IsoDate | undefined; realtimeEnd?: IsoDate | undefined }
   | { source: "cot"; dataset: CotDataset; marketCode?: string | undefined; from?: IsoDate | undefined; to?: IsoDate | undefined }
   | { source: "alpaca-bars"; symbols: string[]; start: IsoDate; end: IsoDate }
+  | { source: "tiingo-bars"; symbols: string[]; start: IsoDate; end: IsoDate }
   | { source: "corporate-actions"; file: string; dataset?: string | undefined };
 
 export type IngestSource = IngestRequest["source"];
-export const INGEST_SOURCES: readonly IngestSource[] = ["sec-submissions", "fred", "cot", "alpaca-bars", "corporate-actions"];
+export const INGEST_SOURCES: readonly IngestSource[] = ["sec-submissions", "fred", "cot", "alpaca-bars", "tiingo-bars", "corporate-actions"];
 
 export type IngestReport = {
   source: IngestSource;
@@ -137,6 +139,8 @@ async function dispatch(
       return fetchCot(getClient(), store, { ...ctx, dataset: request.dataset, marketCode: request.marketCode, from: request.from, to: request.to });
     case "alpaca-bars":
       return fetchDailyBars(getClient(), store, { ...ctx, keyId: s.alpacaKeyId, secretKey: s.alpacaSecretKey, symbols: request.symbols, start: request.start, end: request.end });
+    case "tiingo-bars":
+      return fetchTiingoDaily(getClient(), store, { ...ctx, apiKey: s.tiingoApiKey, symbols: request.symbols, start: request.start, end: request.end });
     case "corporate-actions": {
       // Vendored actions (D-29): a local file, no network. Read the bytes here at the CLI boundary; the adapter
       // stores them as an artifact and parses into observations.
@@ -205,6 +209,7 @@ export const INGEST_USAGE = `ingest sec-submissions --cik <cik>
 ingest fred --series <SERIES_ID> [--realtime-start YYYY-MM-DD] [--realtime-end YYYY-MM-DD]
 ingest cot --dataset <${COT_DATASETS.join("|")}> [--market <code>] [--from YYYY-MM-DD] [--to YYYY-MM-DD]
 ingest alpaca-bars --symbols A,B,C --start YYYY-MM-DD --end YYYY-MM-DD
+ingest tiingo-bars --symbols A,B,C --start YYYY-MM-DD --end YYYY-MM-DD
 ingest corporate-actions --file <path.json> [--dataset <name>]`;
 
 export function parseIngestArgs(args: readonly string[]): IngestRequest {
@@ -226,6 +231,14 @@ export function parseIngestArgs(args: readonly string[]): IngestRequest {
       return { source, dataset, marketCode: str(o["market"]), from: date(o["from"], "from"), to: date(o["to"], "to") };
     }
     case "alpaca-bars": {
+      const o = parseOptions(rest, { symbols: { type: "string" }, start: { type: "string" }, end: { type: "string" } });
+      const symbols = required(str(o["symbols"]), "symbols").split(",").map((x) => x.trim()).filter((x) => x.length > 0);
+      const start = date(o["start"], "start");
+      const end = date(o["end"], "end");
+      if (start === undefined || end === undefined) throw new UsageError("--start and --end are required");
+      return { source, symbols, start, end };
+    }
+    case "tiingo-bars": {
       const o = parseOptions(rest, { symbols: { type: "string" }, start: { type: "string" }, end: { type: "string" } });
       const symbols = required(str(o["symbols"]), "symbols").split(",").map((x) => x.trim()).filter((x) => x.length > 0);
       const start = date(o["start"], "start");

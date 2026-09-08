@@ -194,6 +194,7 @@ export const PUBLIC_SOURCE_HOSTS: readonly string[] = [
   "api.bls.gov",
   "apps.bea.gov",
   "data.alpaca.markets",
+  "api.tiingo.com",
 ];
 
 /** Per-host rate limits. SEC fair-access guidance is 10 requests/second across all Black Gold processes. */
@@ -203,4 +204,5 @@ export const PUBLIC_SOURCE_RATES: Readonly<Record<string, number>> = {
   "api.stlouisfed.org": 2,
   "publicreporting.cftc.gov": 2,
   "data.alpaca.markets": 3,
+  "api.tiingo.com": 3,
 };
