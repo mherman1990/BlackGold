@@ -3,8 +3,8 @@
 # Percentages and money are DECIMAL STRINGS ("0.05" = 5%) so no binary float enters a limit.
 # Schema: config/schema/risk.schema.json
 version: "0.1.0"
-approvedBy: null
-approvedAt: null
+approvedBy: "Matt Herman"
+approvedAt: "2026-09-08T00:00:00Z"
 
 sleeve:
   maxPctOfLiquidInvestableAssets: "0.05"
