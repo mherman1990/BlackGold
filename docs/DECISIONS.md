@@ -691,8 +691,14 @@ separately confirm the incumbent-priority reading — which D-32 asked for *befo
 charter was frozen ahead of that confirmation. D-32 remains an outstanding owner item (STATE.md and HANDOFF.md
 still list it): Matt should either confirm incumbent priority explicitly (a one-sentence addition to
 `ALPHA_CHARTER.md` section 8) or, if he intended the narrower hold band, treat it as a charter change and a new
-charter version at DRAFT. Until then, a first experiment would freeze around the provisional reading — surfaced,
-not silently accepted.
+charter version at DRAFT.
+
+**Until confirmed, D-32 blocks registration — it is a precondition, not just a note.** `charter show` reporting
+`registrable: true` is necessary but not sufficient here: `assertRegistrable` checks the approval block, not
+D-32, so the code cannot enforce this and the procedure must. `HANDOFF.md` §5 step 4 now stops registration
+until the owner confirms D-32, and STATE.md and HANDOFF.md list D-32 alongside ingestion as a blocker to a
+registered result. Registering first would freeze the provisional incumbent-priority reading — the irreversible
+outcome D-32 exists to prevent — so it waits on the owner, surfaced and gated rather than silently accepted.
 
 ---
 
