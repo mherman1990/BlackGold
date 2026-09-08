@@ -680,10 +680,12 @@ sign, updating this test is part of that act") from asserting DRAFT to asserting
 plus a fail-closed guard the other way (PR #36), and update STATE.md / HANDOFF.md.
 
 **What this unlocks, and what it does not.** `assertRegistrable` now passes and `charter show` reports
-`registrable: true`, so an experiment *may* be registered. It does **not** register anything, compute any result,
-or enable any live or paper mode: a registered result still needs ingested market data plus the registry call
-(both owner-gated), and any live path additionally needs an expiring `LIVE_AUTHORIZATION` bound to the account,
-versions, instruments, caps, and executable hash.
+`registrable: true` — code-registrability, not permission to register. It does **not** register anything, compute
+any result, or enable any live or paper mode. A registered result still needs ingested market data, **owner
+confirmation of D-32** (see below and `HANDOFF.md` §5 step 4), and the registry call — all owner-gated;
+`registrable: true` is necessary but not sufficient, because `assertRegistrable` checks the approval block, not
+D-32. Any live path additionally needs an expiring `LIVE_AUTHORIZATION` bound to the account, versions,
+instruments, caps, and executable hash.
 
 **D-32 is not resolved by this signature.** The charter is now frozen with D-32's provisional book-slot
 resolution (incumbent priority) baked into it, but the approval block references D-39, not D-32, and Matt did not
