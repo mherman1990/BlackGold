@@ -20,13 +20,13 @@ const STALE = utc("2026-12-01T14:00:00Z");
 
 // Defaults: a new-risk decision, identity resolved to the symbol alone, known-empty look-through, generous age.
 function check(over: Partial<ComplianceInput> & { symbol: string }): string[] {
-  const input: ComplianceInput = { restrictedList: RL, now: MID, isNewRisk: true, maxListAgeDays: 120, themeExposures: [], identifiers: [over.symbol], ...over };
+  const input: ComplianceInput = { restrictedList: RL, now: MID, isNewRisk: true, maxListAgeDays: 120, themeExposures: [], identifiers: [over.symbol], entityId: undefined, ...over };
   return evaluateCompliance(input).violations.map((v) => v.code);
 }
 
 describe("evaluateCompliance", () => {
   it("admits a candidate on no list, with a known-empty look-through, outside any blackout", () => {
-    const input: ComplianceInput = { symbol: "VTI", identifiers: ["VTI"], restrictedList: RL, now: MID, isNewRisk: true, maxListAgeDays: 120, themeExposures: [] };
+    const input: ComplianceInput = { symbol: "VTI", identifiers: ["VTI"], entityId: undefined, restrictedList: RL, now: MID, isNewRisk: true, maxListAgeDays: 120, themeExposures: [] };
     const r = evaluateCompliance(input);
     expect(r.admitted).toBe(true);
     expect(r.violations).toEqual([]);
@@ -76,7 +76,7 @@ describe("evaluateCompliance", () => {
       pendingRemovals: [{ item: "SHADY", requestedAt: "2026-09-01T00:00:00Z", eligibleAt: "2026-09-01T00:00:01Z", reason: "too-early eligibility" }],
     });
     // 10 days after the request is still inside the 30-day interval, despite the tiny eligibleAt.
-    const codes = evaluateCompliance({ symbol: "SHADY", identifiers: ["SHADY"], restrictedList: rl, now: utc("2026-09-11T00:00:00Z"), isNewRisk: true, maxListAgeDays: 120, themeExposures: [] }).violations.map((v) => v.code);
+    const codes = evaluateCompliance({ symbol: "SHADY", identifiers: ["SHADY"], entityId: undefined, restrictedList: rl, now: utc("2026-09-11T00:00:00Z"), isNewRisk: true, maxListAgeDays: 120, themeExposures: [] }).violations.map((v) => v.code);
     expect(codes).toContain("RESTRICTED_COOLING");
   });
 

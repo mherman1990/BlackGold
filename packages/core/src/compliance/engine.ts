@@ -43,11 +43,12 @@ export type ComplianceInput = {
    */
   identifiers: readonly string[];
   /**
-   * The stable entity id (docs/DATA_PROVENANCE_SPEC.md section 6a), when the candidate resolves to one. Folded
-   * into the match set because `symbolsFor` returns only tickers, so a restricted list keyed on the entity id
-   * would otherwise be missed. Omit only for an ad-hoc symbol with no resolved entity.
+   * The stable entity id (docs/DATA_PROVENANCE_SPEC.md section 6a) folded into the match set, because
+   * `symbolsFor` returns only tickers so a restricted list keyed on the entity id would otherwise be missed.
+   * REQUIRED but nullable: a caller must pass the resolved id, or an explicit `undefined` for an ad-hoc symbol
+   * with no resolved entity - it cannot be silently omitted, which would recreate the ticker-change bypass.
    */
-  entityId?: string;
+  entityId: string | undefined;
   /** Restricted themes the candidate is exposed to. `undefined` means ETF look-through has NOT run (unknown state, blocks new risk); `[]` means known-empty. */
   themeExposures?: readonly string[] | undefined;
   restrictedList: RestrictedListConfig;
