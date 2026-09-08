@@ -683,9 +683,16 @@ plus a fail-closed guard the other way (PR #36), and update STATE.md / HANDOFF.m
 `registrable: true`, so an experiment *may* be registered. It does **not** register anything, compute any result,
 or enable any live or paper mode: a registered result still needs ingested market data plus the registry call
 (both owner-gated), and any live path additionally needs an expiring `LIVE_AUTHORIZATION` bound to the account,
-versions, instruments, caps, and executable hash. Signing froze the charter, so D-32's provisional book-slot
-resolution now stands as accepted-by-signing; the one-sentence prose clarification in `ALPHA_CHARTER.md` is still
-worth adding but no longer blocks anything.
+versions, instruments, caps, and executable hash.
+
+**D-32 is not resolved by this signature.** The charter is now frozen with D-32's provisional book-slot
+resolution (incumbent priority) baked into it, but the approval block references D-39, not D-32, and Matt did not
+separately confirm the incumbent-priority reading — which D-32 asked for *before* the charter was frozen. So the
+charter was frozen ahead of that confirmation. D-32 remains an outstanding owner item (STATE.md and HANDOFF.md
+still list it): Matt should either confirm incumbent priority explicitly (a one-sentence addition to
+`ALPHA_CHARTER.md` section 8) or, if he intended the narrower hold band, treat it as a charter change and a new
+charter version at DRAFT. Until then, a first experiment would freeze around the provisional reading — surfaced,
+not silently accepted.
 
 ---
 
