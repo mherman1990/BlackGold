@@ -1,9 +1,11 @@
 # First ingestion — from four credentials to a first coverage report
 
 **Phase 1 → Phase 2. Run this the afternoon the four Stage 1 credentials land.** It takes the repository from
-"machinery delivered, no data" to "market data ingested and coverage measured", which is the single step that
-`docs/ACCESS_AND_CREDENTIALS.md` names as the one remaining blocker to a first result. It also performs the
-CR-09 historical-depth measurement that the capability register still lists as unmeasured.
+"machinery delivered, no data" to "market data ingested and coverage measured". `docs/ACCESS_AND_CREDENTIALS.md`
+frames the four credentials as the remaining blocker to a first result; that is necessary but not sufficient —
+a *correct* result also needs the **corporate-action ledger** for the same symbols (see the next section), which
+D-29 supplies as vendored observations until an issuer feed is verified. This runbook covers both, and also
+performs the CR-09 historical-depth measurement that the capability register still lists as unmeasured.
 
 Nothing here opens the sealed holdout, registers an experiment, or computes a result a DRAFT charter could
 cite — those are separate, and the last two are owner-gated (`charter.yaml` is already `APPROVED`, so
@@ -13,10 +15,25 @@ at). This runbook stops at a coverage report.
 ## What this charter's first result actually needs
 
 The `etf-trend-vol` charter runs price-only arms (`arms: [B0_PASSIVE, B1_DETERMINISTIC]`,
-`runtime_llm_in_signal: false`). Its features — 252-session momentum, 200-session trend SMA, 63-session
-volatility, 20-session ADV — are all derived from daily bars. So the only source a first Phase 2 result needs
-is **Alpaca daily bars**. `research coverage` confirms this: it reports against `alpaca.iex.bars.1d` and no
-other source.
+`runtime_llm_in_signal: false`). Two data inputs are required for a first result, and both are market data —
+no macro, filings, or positioning:
+
+1. **Raw daily bars** (`alpaca.iex.bars.1d`) for every symbol. These drive execution simulation directly.
+2. **The corporate-action ledger** (`corporate_action.*` observations — `CASH_DIVIDEND`, `SPLIT`, `SPINOFF`, …)
+   for every symbol. The charter's features (252-session momentum, 200-session trend SMA, 63-session volatility)
+   and all performance/benchmark comparison run on the **adjusted total-return series**, which Black Gold
+   recomputes from the raw bars *plus* this ledger — it never trusts a provider's adjusted column
+   (`docs/DATA_PROVENANCE_SPEC.md` §4). Raw bars alone yield a price-return series with unhandled dividends and
+   splits, which is materially wrong (U.S. equity ETFs distribute ~1.5–3%/yr), so bars-only is **not** a ready
+   dataset.
+
+The `alpaca-bars` adapter pulls `adjustment=raw` and emits only bars — it does **not** produce corporate
+actions, and there is currently **no ingest-CLI source** for them. Per **D-29** they are *vendored as
+observations* (loaded via the point-in-time repository) until an issuer distribution feed is verified;
+`docs/PHASE2_REQUIREMENTS_MATRIX.md` tracks "corporate-action records for the 14 ETFs, reconciled across two
+sources" as a tier-2 (after-credentials) requirement, with the XLF/XLRE 2016 spin-off as the acceptance case.
+If no corporate-action observations are present when you reach Step 3, that vendoring is an open prerequisite —
+flag it; it is a data/code gap, not something raw-bar ingestion fills.
 
 FRED, CFTC COT, and SEC submissions are **not required for this charter's first result**. They feed the Phase 3
 LLM evidence packets, not the Phase 2 deterministic computation. Ingest them when Phase 3 begins, not now.
@@ -94,8 +111,9 @@ present.
 ```bash
 node packages/core/dist/main.js pit count --source alpaca.iex.bars.1d
 node packages/core/dist/main.js pit latest --source alpaca.iex.bars.1d --entity VTI
+node packages/core/dist/main.js pit latest --source alpaca.iex.bars.1d --entity SPY   # SPY is NOT a charter universe member, so coverage never checks it — verify it here
 
-# Coverage for the design split — read leadingAbsent / coverageRatio per entity
+# Coverage for the design split — read leadingAbsent / coverageRatio / actionCounts per entity
 node packages/core/dist/main.js research coverage \
   --path strategies/etf-trend-vol/charter.yaml \
   --from 2007-06-01 --to 2018-12-31
@@ -107,6 +125,24 @@ node packages/core/dist/main.js research coverage \
 
 node packages/core/dist/main.js artifacts verify --sample 100
 ```
+
+Two things the coverage report does **not** gate, so check them by hand before calling the dataset ready:
+
+- **Corporate actions.** Coverage reports `actionCounts` per entity but never adds their absence to `uncovered`,
+  `belowMinimum`, or `promotionBlockingCodes` — those reflect *bar* coverage and bar quality only. An entity
+  with full bars and an empty `actionCounts` therefore looks "adequate" while silently carrying no dividends or
+  splits. Confirm the ledger is populated over the window (quarterly dividends should appear):
+
+  ```bash
+  node packages/core/dist/main.js pit count --source corporate_action.CASH_DIVIDEND
+  node packages/core/dist/main.js pit latest --source corporate_action.CASH_DIVIDEND --entity VTI
+  ```
+
+  If these are empty, the D-29 vendoring in the section above has not been done — the dataset is not ready and a
+  first result would be a price-return artifact. Stop and flag it.
+- **SPY.** The secondary benchmark is outside the charter universe, so it appears in no coverage report. The
+  `pit latest … --entity SPY` line above, over the evaluable span, is the only check that it is present and
+  current.
 
 From the design-split report, record the earliest actually-served session per entity (window start +
 `leadingAbsent` sessions). Update **CR-09** in `docs/CAPABILITY_REGISTER.md` from Partial to Verified with that
@@ -133,8 +169,10 @@ Claude Code can prepare the options and the numbers; the choice among them is th
 
 ## Step 5 — snapshot, then stop
 
-Once coverage over the evaluable span is adequate (`uncovered` empty, `belowMinimum` empty, no
-`promotionBlockingCodes`), create a reproducibility snapshot and stop:
+Only once the dataset is actually ready — which is more than bar coverage: `uncovered` empty, `belowMinimum`
+empty, no `promotionBlockingCodes`, **and** the corporate-action ledger populated over the span (non-empty
+`actionCounts` / `pit count` on `corporate_action.CASH_DIVIDEND`), **and** SPY present and current — create a
+reproducibility snapshot and stop:
 
 ```bash
 node packages/core/dist/main.js snapshot create --dataset prices_daily --description "first ETF pull <date>"
@@ -153,6 +191,8 @@ guards against.
 | Ingest bars | Alpaca key + secret, SEC UA contact | No |
 | Coverage report | Ingested bars | No |
 | Close CR-09 | The design-split coverage numbers above | No (record the measured date) |
+| Adjusted total-return series (features + performance) | The corporate-action ledger, vendored per D-29 (no ingest-CLI source yet) | No, but a data/code prerequisite |
+| A *ready* dataset | Bar coverage **and** corporate-action ledger **and** SPY present | No |
 | Choose the design-window disposition if depth < 2007 | The coverage numbers | **Yes** |
-| Register an experiment | Adequate coverage, `registrable: true` charter | Deliberate Phase 2 stop point |
+| Register an experiment | A ready dataset, `registrable: true` charter | Deliberate Phase 2 stop point |
 | Open the sealed holdout | The holdout protocol | **Yes — once only, logged** |
