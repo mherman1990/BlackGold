@@ -10,7 +10,7 @@
 # a different artifact from this draft.
 
 strategy_id: etf-trend-vol
-charter_version: 0.1.0-draft
+charter_version: 0.1.0
 prose_charter: strategies/etf-trend-vol/ALPHA_CHARTER.md
 runtime_llm_in_signal: false
 arms: [B0_PASSIVE, B1_DETERMINISTIC]
