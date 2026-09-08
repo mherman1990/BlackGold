@@ -102,6 +102,20 @@ describe("evaluateDecisionGate", () => {
     expect(v.blockedBy.some((b) => b.startsWith("compliance XLF MISSING_COMPLIANCE"))).toBe(false);
   });
 
+  it("binds coverage to the canonical holding, not to a candidate's alias identifiers", () => {
+    // One clean XLF candidate that also lists XLV among its identifiers must NOT cover an increased XLV: XLV's
+    // own look-through / themeExposures were never evaluated, so it fails closed rather than riding on XLF's.
+    const v = evaluateDecisionGate({
+      halt: halt(snapshot(100)),
+      limits: book({ XLF: "0.19", XLV: "0.19" }),
+      currentWeights: new Map(), // both new risk
+      newRiskCandidates: [candidate("XLF", { identifiers: ["XLF", "XLV"] })],
+    });
+    expect(v.newRiskAllowed).toBe(false);
+    expect(v.blockedBy.some((b) => b.startsWith("compliance XLV MISSING_COMPLIANCE"))).toBe(true);
+    expect(v.blockedBy.some((b) => b.startsWith("compliance XLF MISSING_COMPLIANCE"))).toBe(false);
+  });
+
   it("does not require or run new-risk compliance for a restricted holding that is only held, not increased", () => {
     // XLK is on the restricted list but held flat (current == target), so it is not new risk. Only XLF is new.
     const rl = RestrictedListConfigSchema.parse({ asOf: "2026-09-01", etfs: ["XLK"] });

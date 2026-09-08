@@ -48,8 +48,10 @@ export type DecisionGateInput = {
   currentWeights: ReadonlyMap<string, Dec>;
   /**
    * Compliance inputs for the holdings taking new or increased risk this decision. Each is checked as new-risk
-   * compliance. Coverage is enforced against the target/current delta: every increasing holding must be
-   * represented here (matched by symbol, entity id, or any resolved identifier) or the gate fails closed.
+   * compliance. Coverage is enforced against the target/current delta: every increasing holding must have its
+   * own candidate here, bound by canonical key (entity id, or symbol when there is no separate entity id, keyed
+   * as `limits.weights` is), or the gate fails closed. A candidate covers only the one book line that is its
+   * canonical identity, never another holding it happens to list as an identifier.
    */
   newRiskCandidates: readonly Omit<ComplianceInput, "isNewRisk">[];
 };
@@ -75,26 +77,32 @@ export function evaluateDecisionGate(input: DecisionGateInput): DecisionGateVerd
   const halt = evaluateHaltState(input.halt);
   const limits = evaluateRiskLimits(input.limits);
 
-  // Evaluate every supplied candidate as new risk, and index it under all of its resolved identifiers so a
-  // holding keyed in the book by entity id is matched by a candidate carrying that id as symbol, entityId, or
-  // any identifier. First writer wins; a duplicate id does not overwrite an earlier candidate.
-  const byId = new Map<string, CandidateCompliance>();
+  // Evaluate every supplied candidate as new risk, and index it under its CANONICAL key only - the way
+  // `limits.weights` is keyed: the candidate's entity id, or its symbol when it has no separate entity id.
+  // Coverage binds to that key alone, deliberately NOT to the candidate's `identifiers`/`entityId` alias set.
+  // Those aliases exist so `evaluateCompliance` can match this candidate against a restricted entry filed under
+  // an old ticker; they are not proof that some OTHER holding's own compliance data (its look-through, its
+  // themeExposures) was evaluated. Binding coverage to the alias set would let one clean candidate that lists a
+  // second holding as an identifier mark that second holding covered while its distinct look-through went
+  // unchecked - a fail-open. First writer wins; a duplicate canonical key does not overwrite an earlier one.
+  const byCanonical = new Map<string, CandidateCompliance>();
   const compliance: CandidateCompliance[] = input.newRiskCandidates.map((c) => {
     const entry: CandidateCompliance = { symbol: c.symbol, verdict: evaluateCompliance({ ...c, isNewRisk: true }) };
-    const ids = new Set<string>([c.symbol, ...c.identifiers, ...(c.entityId === undefined ? [] : [c.entityId])]);
-    for (const id of ids) if (!byId.has(id)) byId.set(id, entry);
+    const canonical = c.entityId ?? c.symbol;
+    if (!byCanonical.has(canonical)) byCanonical.set(canonical, entry);
     return entry;
   });
 
   // The holdings taking new or increased risk this decision: target weight strictly above current weight.
   // A brand-new position (current absent => zero) and an increase both count; a hold or reduction does not.
+  // Each must be covered by a candidate whose canonical key IS that book line, or it fails closed.
   const increasedRisk: string[] = [];
   const uncovered: string[] = [];
   for (const [id, target] of input.limits.weights) {
     const current = input.currentWeights.get(id) ?? ZERO;
     if (target.gt(current)) {
       increasedRisk.push(id);
-      if (!byId.has(id)) uncovered.push(id);
+      if (!byCanonical.has(id)) uncovered.push(id);
     }
   }
   increasedRisk.sort();

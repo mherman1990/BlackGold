@@ -640,9 +640,13 @@ as the target and derives the holdings taking new or increased risk (`target > c
 covered by a supplied compliance evaluation or the gate fails closed (`MISSING_COMPLIANCE`). Trusting the caller
 to list every increasing holding was a fail-open hole - a caller passing `[]` would have been admitted with the
 restricted list never consulted - which is exactly the failure mode this gate exists to prevent. Holdings held
-flat or reduced are not new risk and need no candidate, so a restricted position stays windable-down. Halt-fault
+flat or reduced are not new risk and need no candidate, so a restricted position stays windable-down. Coverage
+binds each increasing holding to a candidate by CANONICAL key (its entity id, or symbol when there is none, keyed
+as the book is) rather than to the candidate's alias/identifier set (Codex P1 on the fix): the alias set is for
+restricted-list matching inside `evaluateCompliance`, and letting one clean candidate cover another holding it
+merely lists as an identifier - whose own look-through was never evaluated - was a second fail-open. Halt-fault
 reasons keep each fault's detail rather than only its code (Codex P2), matching the limit/compliance shape.
-8 composition tests, including a regression test for the uncovered-increase hole.
+9 composition tests, including regressions for the uncovered-increase hole and for alias coverage.
 
 **What is gated on Matt, and therefore deferred in Phase 5.** Production ingestion on the allowlist needs the
 four `BLACKGOLD_*` data credentials; the Alpaca paper adapter and paper-fill reconciliation need paper broker
