@@ -21,6 +21,7 @@ export const QUALITY_CODES = [
   "SURVIVORSHIP_BIASED",
   "OPTIMISTIC_DELAY",
   "FORWARD_DATED_REPORT",
+  "UNVERIFIED_SINGLE_SOURCE",
 ] as const;
 export type QualityCode = (typeof QUALITY_CODES)[number];
 
@@ -55,6 +56,10 @@ export const QUALITY_RULES: Readonly<Record<QualityCode, QualityRule>> = {
   // Info rather than warn: the row is fully usable and nothing is lost. The filing's own reportDate stays
   // in the value, and the flag exists so the substitution is visible in the store rather than silent.
   FORWARD_DATED_REPORT: { severity: "info", decisionAllowed: true, promotionEvidenceAllowed: true },
+  // A vendored corporate action reconciled against fewer than two distinct sources (D-29). Like survivorship
+  // bias: the row still participates in a computation (dropping a real dividend would be worse), but a run that
+  // touched unreconciled data can never be promotion evidence.
+  UNVERIFIED_SINGLE_SOURCE: { severity: "label", decisionAllowed: true, promotionEvidenceAllowed: false },
 };
 
 export function isQualityCode(s: string): s is QualityCode {

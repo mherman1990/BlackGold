@@ -60,9 +60,26 @@ account. They go in the app environment, never in the repo, the image, or a log.
      --symbols XLV,XLI,XLP,XLU,XLY,BIL,SPY --start 2006-04-01 --end 2026-09-06
    ```
 
-   **Single writer:** SQLite is single-writer, and `serve`'s scheduler also writes. Run the bulk pull as a
-   deliberate one-off; a scheduler tick that overlaps retries under the busy timeout, but for a large first load
-   the calm choice is to run it when no session is due, or stop the app's core for the duration and restart after.
+   **Single writer:** SQLite is single-writer, and `serve`'s scheduler also writes. `docker exec` runs inside the
+   **running** container, so keep the app up for the commands above; a scheduler tick that overlaps a write
+   retries under the 5-second busy timeout, which comfortably absorbs the occasional overlap of a bounded daily-bar
+   load. If you would rather guarantee a sole writer, do **not** stop the app and then `docker exec` (exec needs a
+   running container) — instead stop the app and run a one-off container against the same data volume, which needs
+   no charter for the pull:
+
+   ```bash
+   IMG="ghcr.io/mherman1990/blackgold:<version>@sha256:<digest>"   # the tag+digest this app is pinned to
+   docker run --rm --user 1000:1000 \
+     -e BLACKGOLD_DATA_DIR=/data \
+     -e BLACKGOLD_SEC_USER_AGENT_CONTACT="$BLACKGOLD_SEC_USER_AGENT_CONTACT" \
+     -e BLACKGOLD_ALPACA_KEY_ID="$BLACKGOLD_ALPACA_KEY_ID" \
+     -e BLACKGOLD_ALPACA_SECRET_KEY="$BLACKGOLD_ALPACA_SECRET_KEY" \
+     -v ~/umbrel/app-data/blackgold-trading/data:/data "$IMG" \
+     packages/core/dist/main.js ingest alpaca-bars \
+     --symbols VTI,QQQ,IWM,VTV,VUG,XLK,XLF --start 2006-04-01 --end 2026-09-06
+   ```
+
+   Restart the app afterward. Either path is fine; pick one and stay on it for a given load.
 
 4. **Confirm the bars landed** (no charter needed):
 
