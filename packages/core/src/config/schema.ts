@@ -64,6 +64,8 @@ const AppConfigInput = z.object({
       fredApiKey: z.string().min(8).optional(),
       alpacaKeyId: z.string().min(8).optional(),
       alpacaSecretKey: z.string().min(8).optional(),
+      /** Tiingo EOD daily bars (deeper history than Alpaca free IEX). Read-only market data. */
+      tiingoApiKey: z.string().min(8).optional(),
       /** Per-source-prefix processing delays as ISO-8601 durations; override spec defaults. */
       processingDelays: z
         .record(
