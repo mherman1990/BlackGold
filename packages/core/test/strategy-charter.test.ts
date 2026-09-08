@@ -74,25 +74,32 @@ describe("charter.yaml", () => {
 });
 
 describe("registrability gate", () => {
-  it("refuses the tracked draft charter, and now only because it is unsigned", () => {
-    // The owner resolved all four open decisions and settled the XLE condition on 2026-09-07 (D-39), so this
-    // test no longer asserts OD-1 and XLE among the reasons - they are gone, which is the point.
-    //
-    // What remains is the approval block, and asserting it exactly is deliberate. If the tracked charter ever
-    // becomes registrable, this test fails and forces that to be a visible, reviewed change rather than
-    // something that slips in - which matters because signing the approval block is the one act CLAUDE.md
-    // puts beyond any grant of autonomy. When the owner does sign, updating this test is part of that act.
+  it("now accepts the tracked charter: the owner signed the approval block", () => {
+    // The owner resolved all four open decisions and settled the XLE condition on 2026-09-07 (D-39), then signed
+    // the approval block on 2026-09-08 (state APPROVED, charter_version 0.1.0, code_commit 474d0dc, ref
+    // docs/DECISIONS.md#D-39). This was the tripwire that forced signing to be a visible, reviewed change; now
+    // that the signature exists it asserts the signed, registrable state, and it still guards the other
+    // direction - unsigning the charter must fail closed again. Signing is the owner's act, beyond any grant of
+    // autonomy in CLAUDE.md; reconciling this test to a signature the owner already made is not.
     const c = loaded();
-    expect(isRegistrable(c)).toBe(false);
-    expect(registrabilityReasons(c)).toEqual([
-      "approval.state is DRAFT; only APPROVED may be registered",
-      "approval.approved_by is unsigned",
-      "approval.approval_date is empty",
-      "approval.code_commit is empty",
-      "approval.approval_ref is empty: the written owner decision must be citable",
-    ]);
+    expect(c.approval.state).toBe("APPROVED");
+    expect(c.approval.approved_by).not.toBeNull();
+    expect(c.approval.approval_date).not.toBeNull();
+    expect(c.approval.code_commit).not.toBeNull();
+    expect(c.approval.approval_ref).not.toBeNull();
+    expect(registrabilityReasons(c)).toEqual([]);
+    expect(isRegistrable(c)).toBe(true);
     expect(() => {
       assertRegistrable(c);
+    }).not.toThrow();
+
+    // The gate must still bite the other way: reverting the signature makes the tracked charter unregistrable.
+    const unsigned = structuredClone(c);
+    unsigned.approval.state = "DRAFT";
+    unsigned.approval.approved_by = null;
+    expect(isRegistrable(unsigned)).toBe(false);
+    expect(() => {
+      assertRegistrable(unsigned);
     }).toThrow(CharterNotRegistrableError);
   });
 
