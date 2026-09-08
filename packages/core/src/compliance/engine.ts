@@ -20,19 +20,26 @@ import type { RestrictedListConfig } from "../config/schema.ts";
  * - **Unknown ETF look-through blocks.** `themeExposures` of `undefined` means look-through has not run - an
  *   unknown state that blocks new risk (spec section 7). A known-empty exposure set is `[]`.
  * - **A stale restricted list blocks.** Older than the allowed age is treated as unknown, not trusted.
- * - **Identity is by entity, not by string.** Matching uses every known identifier of the entity
- *   (`symbolAliases`, from `EntityMap.symbolsFor`), so a restricted company cannot be admitted under a new
- *   ticker (docs/DATA_PROVENANCE_SPEC.md section 6a).
+ * - **Identity is by entity, not by string.** Matching uses the entity's complete resolved identifier set
+ *   (`identifiers`, from `EntityMap.symbolsFor`), so a restricted company cannot be admitted under a new
+ *   ticker (docs/DATA_PROVENANCE_SPEC.md section 6a). The set is REQUIRED: the engine cannot query the entity
+ *   map itself, so an optional alias list would let a caller silently reintroduce the bypass. A caller with no
+ *   ticker history passes the current symbol alone, asserting that identity is resolved.
  */
 
 export type ComplianceViolation = { code: string; detail: string };
 export type ComplianceVerdict = { admitted: boolean; violations: ComplianceViolation[] };
 
 export type ComplianceInput = {
-  /** Candidate identifier (ticker for an ETF, or the restricted-name identifier for an equity). */
+  /** Candidate identifier for human-readable detail (ticker for an ETF, or the restricted-name id for an equity). */
   symbol: string;
-  /** Every identifier this entity is known by - current and historical tickers, restricted-name id - from `EntityMap.symbolsFor`. `symbol` is always included. */
-  symbolAliases?: readonly string[];
+  /**
+   * The entity's COMPLETE resolved identifier set - current and historical tickers and the restricted-name id,
+   * from `EntityMap.symbolsFor`. Required, and matching is done against it (plus `symbol` defensively): the
+   * engine cannot resolve identity itself, so an optional set would let a caller reintroduce the ticker-change
+   * bypass. Pass the current symbol alone only when identity is genuinely resolved to it.
+   */
+  identifiers: readonly string[];
   /** Restricted themes the candidate is exposed to. `undefined` means ETF look-through has NOT run (unknown state, blocks new risk); `[]` means known-empty. */
   themeExposures?: readonly string[] | undefined;
   restrictedList: RestrictedListConfig;
@@ -61,7 +68,7 @@ export function evaluateCompliance(input: ComplianceInput): ComplianceVerdict {
   const rl = input.restrictedList;
   const nowMs = Date.parse(input.now);
   const nowDate = input.now.slice(0, 10);
-  const ids = new Set<string>([input.symbol, ...(input.symbolAliases ?? [])]);
+  const ids = new Set<string>([input.symbol, ...input.identifiers]);
 
   // Fail closed on a stale list: an unknown restriction picture blocks new risk rather than trusting old data.
   const age = ageDays(input.now, rl.asOf);

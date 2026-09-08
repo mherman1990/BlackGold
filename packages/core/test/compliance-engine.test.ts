@@ -18,15 +18,15 @@ const AFTER_COOLING = utc("2026-09-25T14:00:00Z");
 const IN_BLACKOUT = utc("2026-10-05T14:00:00Z");
 const STALE = utc("2026-12-01T14:00:00Z");
 
-// Defaults: a new-risk decision with a known-empty look-through and a generous staleness limit.
+// Defaults: a new-risk decision, identity resolved to the symbol alone, known-empty look-through, generous age.
 function check(over: Partial<ComplianceInput> & { symbol: string }): string[] {
-  const input: ComplianceInput = { restrictedList: RL, now: MID, isNewRisk: true, maxListAgeDays: 120, themeExposures: [], ...over };
+  const input: ComplianceInput = { restrictedList: RL, now: MID, isNewRisk: true, maxListAgeDays: 120, themeExposures: [], identifiers: [over.symbol], ...over };
   return evaluateCompliance(input).violations.map((v) => v.code);
 }
 
 describe("evaluateCompliance", () => {
   it("admits a candidate on no list, with a known-empty look-through, outside any blackout", () => {
-    const input: ComplianceInput = { symbol: "VTI", restrictedList: RL, now: MID, isNewRisk: true, maxListAgeDays: 120, themeExposures: [] };
+    const input: ComplianceInput = { symbol: "VTI", identifiers: ["VTI"], restrictedList: RL, now: MID, isNewRisk: true, maxListAgeDays: 120, themeExposures: [] };
     const r = evaluateCompliance(input);
     expect(r.admitted).toBe(true);
     expect(r.violations).toEqual([]);
@@ -43,9 +43,11 @@ describe("evaluateCompliance", () => {
     expect(check({ symbol: "FAKE_EMPLOYER_CO" })).toContain("RESTRICTED_NAME");
   });
 
-  it("matches a restricted entity under any of its known aliases (ticker change)", () => {
-    // A company changed ticker; the restricted list still carries the old id, supplied as an alias.
-    expect(check({ symbol: "NEWTICK", symbolAliases: ["NEWTICK", "FAKE_EMPLOYER_CO"] })).toContain("RESTRICTED_NAME");
+  it("matches a restricted entity under any of its resolved identifiers (ticker change)", () => {
+    // A company changed ticker; the restricted list still carries the old id, in the resolved identifier set.
+    expect(check({ symbol: "NEWTICK", identifiers: ["NEWTICK", "FAKE_EMPLOYER_CO"] })).toContain("RESTRICTED_NAME");
+    // And an identifier set resolved to only the new ticker does not match the old id: identity is the caller's to resolve.
+    expect(check({ symbol: "NEWTICK", identifiers: ["NEWTICK"] })).not.toContain("RESTRICTED_NAME");
   });
 
   it("rejects a candidate exposed to a restricted theme", () => {
@@ -69,7 +71,7 @@ describe("evaluateCompliance", () => {
       pendingRemovals: [{ item: "SHADY", requestedAt: "2026-09-01T00:00:00Z", eligibleAt: "2026-09-01T00:00:01Z", reason: "too-early eligibility" }],
     });
     // 10 days after the request is still inside the 30-day interval, despite the tiny eligibleAt.
-    const codes = evaluateCompliance({ symbol: "SHADY", restrictedList: rl, now: utc("2026-09-11T00:00:00Z"), isNewRisk: true, maxListAgeDays: 120, themeExposures: [] }).violations.map((v) => v.code);
+    const codes = evaluateCompliance({ symbol: "SHADY", identifiers: ["SHADY"], restrictedList: rl, now: utc("2026-09-11T00:00:00Z"), isNewRisk: true, maxListAgeDays: 120, themeExposures: [] }).violations.map((v) => v.code);
     expect(codes).toContain("RESTRICTED_COOLING");
   });
 
