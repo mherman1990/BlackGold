@@ -616,6 +616,34 @@ than computing them. Wiring compliance into the decision loop is Phase 5.
 
 ---
 
+## D-47 Phase 5 authorization and the deterministic decision gate
+
+**Status:** Accepted 2026-09-07 by Matt ("then phase 5", after directing the Phase 4 compliance work). Phase 5
+(prospective shadow and paper operations) is authorized; it is built as bounded PRs, and most of it is gated on
+Matt's inputs (see below), so the first piece is the one that needs none of them.
+
+**What was built (first Phase 5 PR).** `packages/core/src/decision/gate.ts` (`evaluateDecisionGate`), the single
+place that composes the three independent Phase 4 verdicts into one go/no-go for new risk - the "100% hard-rule
+enforcement" of PLAN.md Phase 5:
+
+> new risk may proceed == halt state is NORMAL AND the proposed book respects every limit AND every candidate
+> newly taking risk clears compliance
+
+Fail-closed by construction: a single block from any engine makes `newRiskAllowed` false, and every reason is
+flattened for the decision ledger. It forms no order and never re-sizes. Purely deterministic - it composes
+only the risk and compliance engines (under `risk/` and `compliance/`, which the analyst layer may not import),
+so no model output can reach the decision (T-05). Compliance is fixed to new-risk for each candidate, since the
+gate's whole question is whether new exposure may be added. 6 composition tests.
+
+**What is gated on Matt, and therefore deferred in Phase 5.** Production ingestion on the allowlist needs the
+four `BLACKGOLD_*` data credentials; the Alpaca paper adapter and paper-fill reconciliation need paper broker
+keys; a real prospective shadow run needs the charter approved (OD-3 and the rest) and real time to pass; the
+counterfactual decision ledger, reconciler/steward, cost monitoring, incident records, and runbooks follow as
+bounded PRs, several depending on D-17, D-18, D-25. The decision gate needs none of these and composes what
+Phase 4 already built, which is why it is first.
+
+---
+
 ## Rejected
 
 - **R-01** Postgres/Kafka/Kubernetes/vector DB: no measured need; violates the one-owner maintainability constraint.

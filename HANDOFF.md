@@ -7,13 +7,13 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 622 tests, identity check, and secret scan must pass before you change anything.
+4. `npm ci && npm run check`. All of lint, typecheck, 692 tests, identity check, and secret scan must pass before you change anything.
 
 ## 2. Repository guard
 
 If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not create Black Gold files anywhere else.
 
-## 3. Current position (2026-09-07)
+## 3. Current position (2026-09-08)
 
 - Everything through Phase 2, plus release prep (PR #8) and the Phase 0 seal completion (PR #9), is merged to `main` at `03bf580`.
 - Phase 2 machinery took two PRs to land: PR #5 merged into `claude/phase-01-research-kernel` twelve seconds after PR #4 had merged that branch forward, so it never reached `main`, and PR #6 carried the same tree there (D-36). When resuming, verify rather than assume: `git merge-base --is-ancestor <branch> origin/main`, and check `git diff origin/main <branch>` is empty.
@@ -32,6 +32,8 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 - **Phase 4, third PR (D-45): the risk-limit/caps engine is built.** `packages/core/src/risk/limits.ts` (`evaluateRiskLimits`) is the deterministic `RiskEngine` verdict — an independent re-check of a target book against the `risk.yaml` caps + charter, admit/reject with reason codes, never re-sizes; pure (T-05). Checks per-instrument weight, open positions, gross/net, cash floor, sector concentration, cluster weight+membership, long-only; fail-closed on an unclassified holding. **Deferred, one being a real owner question:** factor concentration (the `market` tag is on every holding — which factor tags are cap-bearing is a policy/charter decision, so `maxFactorWeightPct` is not enforced rather than enforced wrongly); liquidity, order-level, and per-position-risk-budget limits need order/price/ADV data. Construction (`strategy/construct.ts`) still enforces its own subset during sizing; this engine is the independent guard.
 
 - **Phase 4, fourth PR (D-46): the compliance engine is built.** `packages/core/src/compliance/engine.ts` (`evaluateCompliance`) admit/rejects a candidate against the restricted list with reason codes; pure. Encodes D-14: additions immediate, removals wait a cooling period (`pendingRemovals` until `eligibleAt`); blackouts block only new risk; a stale list fails closed; themes checked against supplied exposures. **The restricted-list content is Matt's** (nonpublic professional restrictions) — `config/examples/restricted-list.yaml` stays fake; Claude Code did not author real names. **Deferred:** ETF look-through (deriving an ETF's restricted-theme exposures) — the engine takes exposures as input.
+
+- **Phase 5 has started (D-47): the deterministic decision gate is built** (first bounded Phase 5 PR, branch `claude/phase-05-decision-gate`). `packages/core/src/decision/gate.ts` (`evaluateDecisionGate`) composes the three Phase 4 verdicts into one go/no-go for **new risk**: `newRiskAllowed` is true iff the halt state is `NORMAL` **and** `evaluateRiskLimits` admits the proposed book **and** every candidate clears `evaluateCompliance` (evaluated as new risk — the gate fixes `isNewRisk: true`). Fail-closed; the blocking reasons are flattened into `blockedBy` for the decision record. It forms no order and never re-sizes. Pure and under `decision/`, composing only `risk/` and `compliance/` (T-05). The equivalent guards re-run in the broker gateway; this is the core-side gate. **Still to come in Phase 5** (bounded PRs, gated where noted): wiring construction + the C1/D1 overlay into the gate to persist a counterfactual decision ledger; the prospective paper/shadow run (charter approved + paper keys); production ingestion scheduling; the reconciler/steward + incident records; cost monitoring.
 
 ## 4. What Matt does next
 
