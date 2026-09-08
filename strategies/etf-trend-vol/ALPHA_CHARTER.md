@@ -148,6 +148,7 @@ Rule enforced in code and tested: no feature at `decisionAt` may read a bar whos
 | Eligibility | `trend_i = 1` AND `mom_i > mom_cash` AND `adv_i >= 50M USD` |
 | Entry rule | Rank eligible ETFs by `mom_i` descending. Enter any ETF ranked 1..5 that is not held. |
 | Hold rule (hysteresis) | Keep a held ETF while it remains eligible AND ranked 1..7. |
+| Book-slot priority | When the entry and hold rules together name more than 5 ETFs, every eligible held ETF ranked 1..7 keeps its book slot ahead of any newcomer and the lowest-ranked newcomers are left out until the book holds 5; this priority governs the book slot only and does not extend to the section 9 step 4 correlated-cluster cap, which stays strictly rank-ordered. |
 | Exit rule | Exit at the next decision if `trend_i = 0`, OR `mom_i <= mom_cash`, OR rank > 7, OR compliance restriction added, OR the charter is paused. No price stop: volatility scaling and the trend flag are the loss control. |
 | Holding period | Not fixed; expected median 8 to 20 weeks, minimum one week by construction |
 | Rebalance rule | Compute targets weekly (section 9). Trade a line only if the absolute weight gap exceeds 2.0 percentage points of NAV, or on entry/exit. Cash leg absorbs residual. |
