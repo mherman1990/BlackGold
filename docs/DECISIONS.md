@@ -543,7 +543,9 @@ and recovery from `HOLD_ONLY` is staged one step at a time (`HOLD_ONLY` -> `HALT
 section 9.2), so an owner re-arm cannot skip the intermediate state.
 
 **What still needs Matt / is deferred.** Resolving OD-3 (approving risk.yaml) is his act; the engine is built
-and tested, but the policy it consumes is not yet approved, so nothing may register or run for real. Deferred
+and tested, but the policy it consumed was not yet approved when this was written, so nothing could register or
+run for real. *(OD-3 has since been resolved — Matt signed risk.yaml on 2026-09-08, D-48. A registered result
+remains gated on ingested data and owner confirmation of D-32.)* Deferred
 to further Phase 4 PRs: the risk-limit/caps engine (position, sector, cluster, gross, ADV) with reason codes;
 the compliance engine and restricted list; exposure flags and look-through; and wiring the halt state into a
 decision or gateway loop (Phase 5). No live path, broker credential, or order forms here.

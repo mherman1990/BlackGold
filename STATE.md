@@ -81,7 +81,7 @@ Phase 5 (composing the deterministic verdicts into one go/no-go and, downstream,
 
 ## Phase 2 exit criteria
 
-See `docs/PHASE2_REQUIREMENTS_MATRIX.md`. Every criterion verifiable without owner approval and without ingested data is `tested`. One is `blocked`: "predeclared research tests complete and reported" cannot be met — the charter is now signed and registrable, but no market data has been ingested, so no result may be computed yet. That blockage is the honest state, not an oversight - see the matrix's "Why no result exists yet".
+See `docs/PHASE2_REQUIREMENTS_MATRIX.md`. Every criterion verifiable without owner approval and without ingested data is `tested`. One is `blocked`: "predeclared research tests complete and reported" cannot be met — the charter is now signed and registrable, but no market data has been ingested and D-32 (book-slot priority) is not yet owner-confirmed, so no result may be computed yet. That blockage is the honest state, not an oversight - see the matrix's "Why no result exists yet".
 
 ## Phase 1 exit criteria
 
