@@ -217,7 +217,8 @@ export function selectCandidates(input: SelectInput): CandidateSet {
   // and fill the book before any rank-6 or rank-7 incumbent is reached. That contradicts the band's stated
   // purpose and the charter's own turnover expectation (section 21: 15 to 40 entries or exits per year), so
   // an eligible incumbent inside the hold band keeps its slot and the lowest-ranked newcomer is the one left
-  // out. Recorded as D-32 for the owner to confirm or overrule before the charter is frozen.
+  // out. Recorded as D-32, owner-confirmed 2026-09-08 via the ALPHA_CHARTER.md section 8 "Book-slot priority"
+  // row; the charter is now frozen with this reading.
   // ------------------------------------------------------------------------------------------
   const incumbents = clusterCleared.filter((r) => held.has(r.entityId));
   const newcomers = clusterCleared.filter((r) => !held.has(r.entityId));

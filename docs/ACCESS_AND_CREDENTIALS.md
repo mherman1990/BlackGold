@@ -33,23 +33,22 @@ a brokerage account or moves a dollar.
 Verify with `node packages/core/dist/main.js ingest ...`; the run refuses before any network call if a
 required credential is absent, so a missing key fails fast rather than half-ingesting.
 
-## Stage 1 also needs three things only the owner can decide
+## Stage 1's three owner-only decisions — all now done (2026-09-08)
 
-Not credentials, but they gate results just as hard, and no amount of code removes them. Recorded here
-because "waiting on data" is the wrong diagnosis if these are the real blockers.
+These were not credentials, but they gated results just as hard, and no amount of code removed them. All three
+are now complete, so "waiting on data" is now the correct diagnosis — the credentials above are the one thing left.
 
-1. **Sign the Alpha Charter** - `strategies/etf-trend-vol/charter.yaml`. It is `DRAFT`: four declared open
-   decisions unresolved, XLE undecided, approval block unsigned. `charter show --path <file>` prints exactly
-   what is missing. `assertRegistrable` refuses a DRAFT charter and a CI gate keeps that true, so **no
-   experiment can be registered and no result can exist** until this is done.
-2. **Confirm or overrule D-32** - book-slot priority between the entry rule and the hysteresis hold rule. The
-   prose charter is genuinely ambiguous; the code resolves it in favour of the incumbent and explains why.
-3. **Approve `risk.yaml`** - `config/examples/risk.yaml` is an example, not an approved configuration. Phase 4
-   depends on an approved one.
+1. ~~Sign the Alpha Charter~~ **Done 2026-09-08** - `strategies/etf-trend-vol/charter.yaml` is signed and
+   `APPROVED` (D-48); the four open decisions are resolved (D-39), XLE is excluded, and `charter show` reports
+   `registrable: true`.
+2. ~~Confirm or overrule D-32~~ **Done 2026-09-08** - Matt confirmed incumbent priority (book-slot priority
+   between the entry and hold rules) by adding the `Book-slot priority` row to `ALPHA_CHARTER.md` §8 (`13d637a`);
+   it matches the code.
+3. ~~Approve `risk.yaml`~~ **Done 2026-09-08** - `config/examples/risk.yaml` is owner-signed (D-48).
 
-Claude Code may not do any of these. That is deliberate and is not workflow friction: an agent that signs the
-charter it wrote, then grades its own results against it, produces nothing of evidential value. See "What
-standing authorization never covers" in `CLAUDE.md`.
+Claude Code did none of these — it prepared the exact edits, but the owner applied each. That is deliberate and
+is not workflow friction: an agent that signs the charter it wrote, then grades its own results against it,
+produces nothing of evidential value. See "What standing authorization never covers" in `CLAUDE.md`.
 
 ## Stage 2: the LLM overlay (Phase 3)
 
@@ -106,10 +105,10 @@ nothing time-sensitive gets coded against a guess.
 
 ## Order of operations, shortest path first
 
-1. Four Stage 1 credentials (an afternoon at most, all free).
-2. Sign the charter, confirm D-32, approve `risk.yaml`.
-3. → Phase 2 produces its first real result. **Everything downstream is currently waiting on 1 and 2, not on
-   code.**
+1. Four Stage 1 credentials (an afternoon at most, all free) — **the one remaining blocker to a first result.**
+2. ~~Sign the charter, confirm D-32, approve `risk.yaml`.~~ **Done 2026-09-08** (D-48; §8 `Book-slot priority` row `13d637a`).
+3. → With step 2 done, Phase 2 produces its first real result as soon as step 1's data is ingested. **Everything
+   downstream is now waiting on the credentials (step 1) — not on code, and no longer on any owner decision.**
 4. Start the Schwab developer application in parallel with everything above, because approval is calendar time.
 5. Anthropic key when Phase 3 begins.
 6. Answer the T-01 token-scope question before Phase 6 is sized.

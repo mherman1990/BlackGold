@@ -117,6 +117,6 @@ PR #9 changed the ledger's integrity model and **no external review covered it**
 
 That is a thinner evidence base than the ledger deserves. It did not block the merge (CI green, fail-closed in direction, no order/account/credential/live path touched, and no capital depends on this build), but a fresh pair of eyes on `packages/core/src/ledger/ledger.ts` and the `seal_ledger` job is worth having before any phase writes at volume.
 
-Phase 3 requires explicit authorization and is not started. Only after 1 to 3 can a registered experiment produce a Phase 2 result; `HANDOFF.md` section 5 is the ordered procedure for that, marking which steps are reversible and which one is not.
+A registered experiment now waits only on ingested market data (step 4 above) — the charter is signed and D-32-confirmed, so the old owner gates (steps 2 and 3) are cleared. `HANDOFF.md` section 5 is the ordered procedure for producing a Phase 2 result, marking which steps are reversible and which one is not.
 
 **Merge order matters in this repository.** Twice a phase PR was merged into a base branch that had already been merged forward, leaving `main` a phase behind (PR #3 for Phase 1, PR #5 for Phase 2). A stacked PR must be retargeted to `main` *before* it is merged, or merged before its base goes in. D-36 records the rule.

@@ -12,7 +12,7 @@ One blocker remains to a registered result:
 
 The owner gates that used to sit alongside it are cleared: the charter's four open decisions are resolved (D-39), the approval block and `risk.yaml` are signed (D-48), and D-32 (book-slot priority) was owner-confirmed on 2026-09-08 (the `ALPHA_CHARTER.md` §8 `Book-slot priority` row, matching `candidates.ts`). `charter show` reports `registrable: true`; ingestion is the sole thing left.
 
-Computing and viewing a result before the charter is frozen would be irreversible. `docs/EXPERIMENT_PROTOCOL.md` section 3 makes viewing a result consume information: after a view, any change to the hypothesis, rules, grid, boundaries, metrics or costs is a new experiment with a parent, and the trial count for multiple-testing purposes is cumulative across the chain. A result viewed now, on numbers the owner never approved, would permanently spend a clean first look at the design period and would put every later registration downstream of it. So the machinery runs on deterministic synthetic fixtures instead, where a rule change shows up as a failing assertion rather than as a plausible-looking number.
+Computing and viewing a result before the charter is frozen would be irreversible. `docs/EXPERIMENT_PROTOCOL.md` section 3 makes viewing a result consume information: after a view, any change to the hypothesis, rules, grid, boundaries, metrics or costs is a new experiment with a parent, and the trial count for multiple-testing purposes is cumulative across the chain. A result viewed before registration freezes the definition would permanently spend a clean first look at the design period and would put every later registration downstream of it. So the machinery runs on deterministic synthetic fixtures instead, where a rule change shows up as a failing assertion rather than as a plausible-looking number.
 
 ## Deliverables
 
@@ -51,7 +51,7 @@ Computing and viewing a result before the charter is frozen would be irreversibl
 | No fill precedes its own decision | tested | `BacktestResult.executionOrderViolations` must be empty; asserted per decision |
 | The holdout stays sealed | tested | CI gate; `splitPlan` has no `HOLDOUT` split and rejects an overlapping schedule |
 | A result that cannot be cited says so | tested | `citableAsEvidence` is false with reasons for a DRAFT charter, a zero-delay run (`OPTIMISTIC_DELAY`), a survivorship label, or synthetic missing data |
-| Predeclared research tests complete and **reported** | blocked | The tests are implemented and exercised; the report has no real numbers to carry until the charter is frozen and data is ingested |
+| Predeclared research tests complete and **reported** | blocked | The tests are implemented and exercised; the report has no real numbers to carry until data is ingested (the charter is now signed, D-32-confirmed, and frozen) |
 
 ## Known limitations in this tree
 
