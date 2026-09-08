@@ -504,8 +504,10 @@ charter carries a conservative starting map for owner review.
 treats as a new strategy version. Putting them under the charter hash makes that automatic: a factor edit
 changes the hash, so it cannot silently alter what a registered experiment was graded against.
 
-**What still needs Matt.** The factor *values* in the charter are a starting point for his review, not
-owner-approved numbers, and editing them (like signing the charter) is his act. The rest of Phase 4 - exposure
+**The factor values are frozen by the signature.** The factor *values* are hash-covered, so the owner's
+2026-09-08 signature (D-48) froze them into the approved charter; the earlier "starting point for his review,
+edit before signing" framing is overtaken. Whether he reviewed the specific conservative defaults before signing
+is his to say; revising any tag is now a new charter version at DRAFT. The rest of Phase 4 - exposure
 flags and look-through, the restricted list and compliance engine, the deterministic portfolio constructor and
 sizing, and the risk engine with halt states - follows as further bounded PRs, gated on `risk.yaml` approval
 and the sleeve account where it depends on them.

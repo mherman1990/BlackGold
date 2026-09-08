@@ -83,10 +83,12 @@ posture:
   max_gross_exposure: "0.98"
 
 # Deterministic factor classification (docs/PRODUCT_SPEC.md sections 6 and 11): the code-side authority the
-# Analyst's `factorsTouched` is checked against. STARTING POINT FOR OWNER REVIEW - these are conservative,
-# widely-agreed long-only exposures, not yet owner-approved; edit them before the charter is signed. A symbol
-# left unassigned is unclassified and fails closed (blocks new risk); changing any tag is a new charter
-# version. XLE is classified though it is not yet admitted, so admitting it later needs no new factor edit.
+# Analyst's `factorsTouched` is checked against. These assignments are HASH-COVERED, so they are part of the
+# charter the owner signed on 2026-09-08 (D-48) and are frozen into the approved charter - the earlier
+# "edit before signing" advisory is overtaken. They are conservative, widely-agreed long-only exposures; the
+# owner may still revise them, but changing any tag is now a new charter version at DRAFT. A symbol left
+# unassigned is unclassified and fails closed (blocks new risk). XLE is classified though not yet admitted, so
+# admitting it later needs no new factor edit.
 factors:
   taxonomy:
     - market
