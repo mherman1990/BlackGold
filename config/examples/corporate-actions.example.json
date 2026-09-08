@@ -1,0 +1,40 @@
+{
+  "dataset": "example",
+  "notes": "FORMAT EXAMPLE ONLY - values are illustrative and are NOT reconciled against any source. Do not ingest this file as evidence-grade data. A real vendored set (D-29) must reconcile every action across at least two independent public sources (issuer distribution notices, exchange corporate-action feeds), name them in each entry's `sources`, and use its own `dataset` name. Each `action` object is exactly the stored form in docs/DATA_PROVENANCE_SPEC.md section 5, validated on ingest by the same parser the read path uses. `announcedAt` is optional; the repository forbids availableAt earlier than the ex/effective date, so an announcement before the ex-date is clamped up to the ex-date start and absent means 'available at the ex-date start'. An entry naming fewer than two sources is flagged UNVERIFIED_SINGLE_SOURCE on ingest.",
+  "actions": [
+    {
+      "action": {
+        "kind": "SPINOFF",
+        "parent": "XLF",
+        "child": "XLRE",
+        "ratio": "0.139146",
+        "exDate": "2015-10-08",
+        "childFirstClose": "30.00"
+      },
+      "sources": ["issuer:ssga-corporate-actions", "exchange:nyse-arca-notices"]
+    },
+    {
+      "action": {
+        "kind": "CASH_DIVIDEND",
+        "entityId": "VTI",
+        "amount": "0.7500",
+        "exDate": "2018-12-24",
+        "payDate": "2018-12-27",
+        "qualified": true
+      },
+      "announcedAt": "2018-12-20T14:30:00Z",
+      "sources": ["issuer:vanguard-distributions", "exchange:nasdaq-corporate-actions"]
+    },
+    {
+      "action": {
+        "kind": "CASH_DIVIDEND",
+        "entityId": "BIL",
+        "amount": "0.1200",
+        "exDate": "2019-01-02",
+        "payDate": "2019-01-07",
+        "qualified": false
+      },
+      "sources": ["issuer:ssga-distributions"]
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { isoDate, nowUtc, type Db, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import type { ExchangeCalendar } from "../calendar/types.ts";
@@ -10,6 +11,7 @@ import { fetchDailyBars } from "../data/adapters/alpaca-bars.ts";
 import { COT_DATASETS, fetchCot, type CotDataset } from "../data/adapters/cftc-cot.ts";
 import { fetchSeriesVintages } from "../data/adapters/fred.ts";
 import { fetchSubmissions } from "../data/adapters/sec-edgar.ts";
+import { ingestCorporateActions } from "../data/adapters/corporate-actions.ts";
 import { MissingSourceCredentialError } from "../errors.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { CORE_VERSION } from "../version.ts";
@@ -24,10 +26,11 @@ export type IngestRequest =
   | { source: "sec-submissions"; cik: string }
   | { source: "fred"; seriesId: string; realtimeStart?: IsoDate | undefined; realtimeEnd?: IsoDate | undefined }
   | { source: "cot"; dataset: CotDataset; marketCode?: string | undefined; from?: IsoDate | undefined; to?: IsoDate | undefined }
-  | { source: "alpaca-bars"; symbols: string[]; start: IsoDate; end: IsoDate };
+  | { source: "alpaca-bars"; symbols: string[]; start: IsoDate; end: IsoDate }
+  | { source: "corporate-actions"; file: string; dataset?: string | undefined };
 
 export type IngestSource = IngestRequest["source"];
-export const INGEST_SOURCES: readonly IngestSource[] = ["sec-submissions", "fred", "cot", "alpaca-bars"];
+export const INGEST_SOURCES: readonly IngestSource[] = ["sec-submissions", "fred", "cot", "alpaca-bars", "corporate-actions"];
 
 export type IngestReport = {
   source: IngestSource;
@@ -78,17 +81,21 @@ export async function runIngest(deps: IngestDeps, request: IngestRequest): Promi
   const budget = deps.config.sources.artifactBudgetBytes;
   // The store enforces the cap on every write, so a multi-page fetch cannot overrun it page by page.
   const store = new ArtifactStore(deps.config.artifactsDir, deps.db, clock, { budgetBytes: budget });
-  const client = buildPublicSourceClient(deps.config, deps.fetchImpl);
+  // The HTTP client is built lazily: the file-based `corporate-actions` source needs no network and no SEC
+  // User-Agent contact, so it must not be forced to construct (and validate) an egress client just to read a
+  // local file. HTTP sources call getClient(); the vendoring source never does.
+  let client: AllowlistedHttpClient | undefined;
+  const getClient = (): AllowlistedHttpClient => (client ??= buildPublicSourceClient(deps.config, deps.fetchImpl));
   const ctx = { calendar: deps.calendar, ingestedAt };
   let outcome: FetchOutcome<unknown>;
   try {
     store.assertWithinBudget();
-    outcome = await dispatch(client, store, deps.config, ctx, request);
+    outcome = await dispatch(getClient, store, deps.config, ctx, request);
   } catch (err) {
     if (err instanceof ArtifactBudgetExceededError) {
       ledger.append(
         "ingest.refused_budget",
-        { source: request.source, startedAt: ingestedAt, usageBytes: err.usageBytes, budgetBytes: err.budgetBytes, attemptedBytes: err.attemptedBytes, requestsCompleted: client.requests() },
+        { source: request.source, startedAt: ingestedAt, usageBytes: err.usageBytes, budgetBytes: err.budgetBytes, attemptedBytes: err.attemptedBytes, requestsCompleted: client?.requests() ?? 0 },
         nowUtc(clock),
       );
     }
@@ -106,7 +113,7 @@ export async function runIngest(deps: IngestDeps, request: IngestRequest): Promi
     observations: results.length,
     deduplicated: results.filter((r) => r.deduplicated).length,
     conflicts: results.filter((r) => r.conflict).length,
-    requestCount: client.requests(),
+    requestCount: client?.requests() ?? 0,
     sourceIds,
   };
   const event = ledger.append("ingest.completed", { ...report, startedAt: ingestedAt }, nowUtc(clock));
@@ -114,7 +121,7 @@ export async function runIngest(deps: IngestDeps, request: IngestRequest): Promi
 }
 
 async function dispatch(
-  client: AllowlistedHttpClient,
+  getClient: () => AllowlistedHttpClient,
   store: ArtifactStore,
   config: AppConfig,
   ctx: { calendar: ExchangeCalendar; ingestedAt: UtcInstant },
@@ -123,13 +130,24 @@ async function dispatch(
   const s = config.sources;
   switch (request.source) {
     case "sec-submissions":
-      return fetchSubmissions(client, store, request.cik, { ...ctx, userAgentContact: s.secUserAgentContact });
+      return fetchSubmissions(getClient(), store, request.cik, { ...ctx, userAgentContact: s.secUserAgentContact });
     case "fred":
-      return fetchSeriesVintages(client, store, request.seriesId, { ...ctx, apiKey: s.fredApiKey, realtimeStart: request.realtimeStart, realtimeEnd: request.realtimeEnd });
+      return fetchSeriesVintages(getClient(), store, request.seriesId, { ...ctx, apiKey: s.fredApiKey, realtimeStart: request.realtimeStart, realtimeEnd: request.realtimeEnd });
     case "cot":
-      return fetchCot(client, store, { ...ctx, dataset: request.dataset, marketCode: request.marketCode, from: request.from, to: request.to });
+      return fetchCot(getClient(), store, { ...ctx, dataset: request.dataset, marketCode: request.marketCode, from: request.from, to: request.to });
     case "alpaca-bars":
-      return fetchDailyBars(client, store, { ...ctx, keyId: s.alpacaKeyId, secretKey: s.alpacaSecretKey, symbols: request.symbols, start: request.start, end: request.end });
+      return fetchDailyBars(getClient(), store, { ...ctx, keyId: s.alpacaKeyId, secretKey: s.alpacaSecretKey, symbols: request.symbols, start: request.start, end: request.end });
+    case "corporate-actions": {
+      // Vendored actions (D-29): a local file, no network. Read the bytes here at the CLI boundary; the adapter
+      // stores them as an artifact and parses into observations.
+      let bytes: Uint8Array;
+      try {
+        bytes = new Uint8Array(readFileSync(request.file));
+      } catch (err) {
+        throw new Error(`cannot read corporate-actions file ${request.file}: ${err instanceof Error ? err.message : "read error"}`);
+      }
+      return ingestCorporateActions(store, bytes, { ...ctx, ...(request.dataset !== undefined ? { dataset: request.dataset } : {}) });
+    }
   }
 }
 
@@ -186,7 +204,8 @@ function required(v: string | undefined, name: string): string {
 export const INGEST_USAGE = `ingest sec-submissions --cik <cik>
 ingest fred --series <SERIES_ID> [--realtime-start YYYY-MM-DD] [--realtime-end YYYY-MM-DD]
 ingest cot --dataset <${COT_DATASETS.join("|")}> [--market <code>] [--from YYYY-MM-DD] [--to YYYY-MM-DD]
-ingest alpaca-bars --symbols A,B,C --start YYYY-MM-DD --end YYYY-MM-DD`;
+ingest alpaca-bars --symbols A,B,C --start YYYY-MM-DD --end YYYY-MM-DD
+ingest corporate-actions --file <path.json> [--dataset <name>]`;
 
 export function parseIngestArgs(args: readonly string[]): IngestRequest {
   const [source, ...rest] = args;
@@ -213,6 +232,10 @@ export function parseIngestArgs(args: readonly string[]): IngestRequest {
       const end = date(o["end"], "end");
       if (start === undefined || end === undefined) throw new UsageError("--start and --end are required");
       return { source, symbols, start, end };
+    }
+    case "corporate-actions": {
+      const o = parseOptions(rest, { file: { type: "string" }, dataset: { type: "string" } });
+      return { source, file: required(str(o["file"]), "file"), dataset: str(o["dataset"]) };
     }
     default:
       throw new UsageError(`Unknown ingest source: ${source}\n${INGEST_USAGE}`);
