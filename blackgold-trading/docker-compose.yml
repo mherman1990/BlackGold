@@ -28,6 +28,14 @@ services:
       # (a gitignored secrets file, never this repo, never the image). Empty default so a missing key does not
       # break startup: with no key the analyst simply abstains. Not a broker credential and cannot trade.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Stage-1 public research-data credentials (docs/ACCESS_AND_CREDENTIALS.md), passed through from the app
+      # environment (~/umbrel/app-data/blackgold-trading/.env) the same way. All free, none touch a brokerage
+      # account or move a dollar. Empty defaults so startup never breaks; the `ingest` command run inside this
+      # container (see docs/runbooks/first-ingestion.md) reads them, and fails fast if a needed one is absent.
+      BLACKGOLD_SEC_USER_AGENT_CONTACT: ${BLACKGOLD_SEC_USER_AGENT_CONTACT:-}
+      BLACKGOLD_ALPACA_KEY_ID: ${BLACKGOLD_ALPACA_KEY_ID:-}
+      BLACKGOLD_ALPACA_SECRET_KEY: ${BLACKGOLD_ALPACA_SECRET_KEY:-}
+      BLACKGOLD_FRED_API_KEY: ${BLACKGOLD_FRED_API_KEY:-}
     volumes:
       - ${APP_DATA_DIR}/data:/data
     healthcheck:

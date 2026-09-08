@@ -50,7 +50,10 @@ That is 14 symbols to ingest: the 13 universe members and `SPY`.
 ## Step 1 — put the four credentials in the environment
 
 Never in a tracked file, fixture, prompt, or log (`docs/ACCESS_AND_CREDENTIALS.md`). On Umbrel these go in the
-app environment; for a local run, an untracked `.env` sourced into the shell.
+app environment (`~/umbrel/app-data/blackgold-trading/.env`) and the commands below run inside the app
+container — see `umbrel-install-update-remove.md`, "Provide research-data credentials and run the first ingest
+on the Pi", for the exact `.env` path and `docker exec` procedure. For a local run, an untracked `.env` sourced
+into the shell:
 
 ```bash
 export BLACKGOLD_SEC_USER_AGENT_CONTACT="you@example.com"   # SEC fair-access UA; not used by the bars pull, but ingest requires it to build the egress client
