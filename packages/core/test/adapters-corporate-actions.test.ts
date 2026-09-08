@@ -11,6 +11,7 @@ import { openCoreDb } from "../src/db/open.ts";
 import { Ledger } from "../src/ledger/ledger.ts";
 import { parseIngestArgs, runIngest, UsageError } from "../src/ingest/run.ts";
 import { corporateActionFromValue, corporateActionSourceId } from "../src/market/types.ts";
+import { blocksPromotionEvidence, isQualityCode } from "../src/data/quality.ts";
 import { SchemaDriftError } from "../src/data/adapters/common.ts";
 import { ADAPTER_VERSION, PARSER_VERSION, UNVERIFIED_SINGLE_SOURCE, ingestCorporateActions, parseCorporateActions } from "../src/data/adapters/corporate-actions.ts";
 
@@ -94,6 +95,28 @@ describe("vendored corporate-action parser", () => {
     expect(() => parseCorporateActions(junk, ctxFor(junk))).toThrow(SchemaDriftError);
     const noDataset = bytesOf({ actions: [] });
     expect(() => parseCorporateActions(noDataset, ctxFor(noDataset))).toThrow(SchemaDriftError);
+  });
+
+  it("rejects unknown provenance fields (strict schema) and nonpositive spin-off values", () => {
+    const badEntry = (e: unknown) => () => parseCorporateActions(bytesOf({ dataset: "d", actions: [e] }), ctxFor(bytesOf({ dataset: "d", actions: [e] })));
+    // A misspelled announcedAt must fail, not be silently dropped (which would fall back to the ex-date start
+    // and could expose the action before its real, later announcement).
+    expect(badEntry({ action: DIVIDEND.action, announced_at: "2018-12-20T00:00:00Z", sources: ["a", "b"] })).toThrow(SchemaDriftError);
+    // Nonpositive spin-off ratio / childFirstClose would feed a zero or negative distribution into the TR series.
+    expect(badEntry({ action: { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0", exDate: "2015-10-08" }, sources: ["a", "b"] })).toThrow(SchemaDriftError);
+    expect(badEntry({ action: { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0.5", exDate: "2015-10-08", childFirstClose: "-1" }, sources: ["a", "b"] })).toThrow(SchemaDriftError);
+    // Unknown top-level key.
+    const extra = bytesOf({ dataset: "d", actions: [], oops: 1 });
+    expect(() => parseCorporateActions(extra, ctxFor(extra))).toThrow(SchemaDriftError);
+  });
+
+  it("counts distinct sources and registers the flag with the quality policy so it bars promotion evidence", () => {
+    const dup = { action: { kind: "CASH_DIVIDEND", entityId: "VTI", amount: "0.5", exDate: "2018-12-24", payDate: "2018-12-27", qualified: true }, sources: ["issuer:x", "issuer:x"] };
+    const bytes = bytesOf({ dataset: "d", actions: [dup] });
+    expect(parseCorporateActions(bytes, ctxFor(bytes))[0]?.qualityFlags).toEqual([UNVERIFIED_SINGLE_SOURCE]);
+    // The flag must actually bite: a registered quality code that bars promotion evidence (D-29 P1 fix).
+    expect(isQualityCode(UNVERIFIED_SINGLE_SOURCE)).toBe(true);
+    expect(blocksPromotionEvidence([UNVERIFIED_SINGLE_SOURCE])).toEqual([UNVERIFIED_SINGLE_SOURCE]);
   });
 });
 

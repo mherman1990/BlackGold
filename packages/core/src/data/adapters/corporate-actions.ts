@@ -38,25 +38,32 @@ export const UNVERIFIED_SINGLE_SOURCE = "UNVERIFIED_SINGLE_SOURCE";
 export type CorporateActionsContext = AdapterContext & { dataset?: string | undefined };
 export type CorporateActionsParseContext = ParseContext & { dataset?: string | undefined };
 
-const EntrySchema = z.object({
-  /** The action in stored form (docs/DATA_PROVENANCE_SPEC.md section 5); validated by corporateActionFromValue. */
-  action: z.record(z.string(), z.unknown()),
-  /**
-   * Announcement / first-public-record instant. Optional. The repository forbids availableAt earlier than the
-   * ex/effective date, so an announcement before the ex-date is clamped up to the ex-date start; a later
-   * announcement (rare) is honoured. Absent means "available at the ex-date start".
-   */
-  announcedAt: z.string().optional(),
-  /** Public sources this entry was reconciled against. Fewer than two flags the row UNVERIFIED_SINGLE_SOURCE. */
-  sources: z.array(z.string().min(1)).default([]),
-});
+// `.strict()` on both objects: an unknown key (a misspelled `announcedAt` as `announced_at`, say) is a
+// SCHEMA_DRIFT, not a silently dropped field. Silently dropping a mistyped announcement would fall back to the
+// ex-date start and could expose an action before its real, later announcement.
+const EntrySchema = z
+  .object({
+    /** The action in stored form (docs/DATA_PROVENANCE_SPEC.md section 5); validated by corporateActionFromValue. */
+    action: z.record(z.string(), z.unknown()),
+    /**
+     * Announcement / first-public-record instant. Optional. The repository forbids availableAt earlier than the
+     * ex/effective date, so an announcement before the ex-date is clamped up to the ex-date start; a later
+     * announcement (rare) is honoured. Absent means "available at the ex-date start".
+     */
+    announcedAt: z.string().optional(),
+    /** Distinct public sources this entry was reconciled against. Fewer than two flags UNVERIFIED_SINGLE_SOURCE. */
+    sources: z.array(z.string().min(1)).default([]),
+  })
+  .strict();
 
-const FileSchema = z.object({
-  /** Identifies the vendored set; part of each observation locator so multiple files coexist without collision. */
-  dataset: z.string().min(1),
-  notes: z.string().optional(),
-  actions: z.array(EntrySchema),
-});
+const FileSchema = z
+  .object({
+    /** Identifies the vendored set; part of each observation locator so multiple files coexist without collision. */
+    dataset: z.string().min(1),
+    notes: z.string().optional(),
+    actions: z.array(EntrySchema),
+  })
+  .strict();
 
 /** availableAt = max(announcedAt, exDateStart); the repository rejects anything earlier than the effective date. */
 function resolveAvailableAt(announcedAt: string | undefined, effectiveStart: UtcInstant): UtcInstant {
@@ -94,7 +101,8 @@ export function parseCorporateActions(bytes: Uint8Array, ctx: CorporateActionsPa
     const locator = `vendor/corporate-actions/${dataset}/${entityId}/${action.kind}/${effectiveDate}`;
     if (seen.has(locator)) throw new SchemaDriftError(SOURCE_KIND, `duplicate action ${locator} (same entity, kind and effective date twice in one file)`);
     seen.add(locator);
-    const qualityFlags = entry.sources.length < 2 ? [UNVERIFIED_SINGLE_SOURCE] : [];
+    // Count distinct source identifiers: ["issuer:x", "issuer:x"] is one source, not two.
+    const qualityFlags = new Set(entry.sources).size < 2 ? [UNVERIFIED_SINGLE_SOURCE] : [];
     return corporateActionObservation(action, {
       sourceLocator: locator,
       availableAt: resolveAvailableAt(entry.announcedAt, dateStartUtc(effectiveDate)),

@@ -265,6 +265,8 @@ export function corporateActionFromValue(value: unknown): CorporateAction {
       if (termsRaw["cashPerShare"] !== undefined && termsRaw["cashPerShare"] !== null) terms.cashPerShare = num(termsRaw["cashPerShare"], "terms.cashPerShare");
       if (termsRaw["stockRatio"] !== undefined && termsRaw["stockRatio"] !== null) terms.stockRatio = num(termsRaw["stockRatio"], "terms.stockRatio");
       if (terms.cashPerShare === undefined && terms.stockRatio === undefined) throw new MalformedCorporateActionError("merger terms need cashPerShare or stockRatio");
+      if (terms.cashPerShare?.isNegative()) throw new MalformedCorporateActionError("merger cashPerShare must be non-negative");
+      if (terms.stockRatio !== undefined && !terms.stockRatio.gt(0)) throw new MalformedCorporateActionError("merger stockRatio must be positive");
       return { kind: "MERGER", entityId: str(value["entityId"], "entityId"), acquirer: str(value["acquirer"], "acquirer"), terms, effective: date(value["effective"], "effective") };
     }
     case "SPINOFF": {
@@ -275,7 +277,9 @@ export function corporateActionFromValue(value: unknown): CorporateAction {
         ratio: num(value["ratio"], "ratio"),
         exDate: date(value["exDate"], "exDate"),
       };
+      if (!a.ratio.gt(0)) throw new MalformedCorporateActionError("spinoff ratio must be positive");
       if (value["childFirstClose"] !== undefined && value["childFirstClose"] !== null) a.childFirstClose = num(value["childFirstClose"], "childFirstClose");
+      if (a.childFirstClose !== undefined && !a.childFirstClose.gt(0)) throw new MalformedCorporateActionError("spinoff childFirstClose must be positive");
       if (typeof value["childSymbol"] === "string") a.childSymbol = value["childSymbol"];
       return a;
     }
