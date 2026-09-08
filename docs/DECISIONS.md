@@ -657,6 +657,38 @@ Phase 4 already built, which is why it is first.
 
 ---
 
+## D-48 Owner signed the charter approval block and risk.yaml
+
+**Status:** Accepted 2026-09-08 by Matt, who performed the signature himself in the GitHub web editor and committed
+it directly to `main` (`8a6dac7`, `2d7a8a1`, `16885f4`).
+
+**What Matt signed.** The `etf-trend-vol` charter approval block: `state: APPROVED`, `approved_by: "Matt Herman"`,
+`approval_date: 2026-09-08`, `code_commit: 474d0dc`, `approval_ref: docs/DECISIONS.md#D-39`, and
+`charter_version: 0.1.0` (dropping the `-draft` suffix). And `config/examples/risk.yaml`:
+`approvedBy: "Matt Herman"`, `approvedAt: 2026-09-08T00:00:00Z`. Signing risk.yaml **resolves OD-3** (the last
+substantive item that had been called "open" in prior sessions, though its OD-3 *resolution text* had already
+been written under D-39). The four charter open decisions were resolved under D-39; this is the signature on top
+of them.
+
+**Claude Code did not perform the signature, by design.** Signing a charter's approval block and resolving its
+open decisions are in "What standing authorization never covers" (`CLAUDE.md`). Claude Code prepared the exact
+edits and the web-editor links and stated plainly that the signature was what blocked registrability, but did not
+type Matt's name into either approval block, even when asked to make the edits easier — the gate is worthless if
+the agent can sign. What Claude Code *did* do is mechanical follow-through that a completed signature sanctions:
+reconcile the deliberate tripwire test in `strategy-charter.test.ts` (whose own comment says "when the owner does
+sign, updating this test is part of that act") from asserting DRAFT to asserting the signed, registrable state,
+plus a fail-closed guard the other way (PR #36), and update STATE.md / HANDOFF.md.
+
+**What this unlocks, and what it does not.** `assertRegistrable` now passes and `charter show` reports
+`registrable: true`, so an experiment *may* be registered. It does **not** register anything, compute any result,
+or enable any live or paper mode: a registered result still needs ingested market data plus the registry call
+(both owner-gated), and any live path additionally needs an expiring `LIVE_AUTHORIZATION` bound to the account,
+versions, instruments, caps, and executable hash. Signing froze the charter, so D-32's provisional book-slot
+resolution now stands as accepted-by-signing; the one-sentence prose clarification in `ALPHA_CHARTER.md` is still
+worth adding but no longer blocks anything.
+
+---
+
 ## Rejected
 
 - **R-01** Postgres/Kafka/Kubernetes/vector DB: no measured need; violates the one-owner maintainability constraint.
