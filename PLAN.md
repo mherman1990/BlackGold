@@ -36,7 +36,7 @@ Deliver: candidate engine for the approved charter only; leakage audit; coverage
 
 Exit: predeclared research tests complete and reported. Then stop. Matt accepts, rejects, or revises via a new strategy version. Engineering completion is not investment evidence.
 
-**Status (updated 2026-09-08):** the machinery is delivered and tested; no result exists yet. The charter is now signed/`APPROVED` (D-48), its four open decisions are resolved (D-39), and D-32 (book-slot priority) is owner-confirmed (2026-09-08) — so the sole remaining blocker to a registered result is that no market data has been ingested. `docs/PHASE2_REQUIREMENTS_MATRIX.md` states which rows this blocks and why viewing a result early would be irreversible.
+**Status (updated 2026-09-08):** the machinery is delivered and tested; no result exists yet. The charter is now signed/`APPROVED` (D-48), its four open decisions are resolved (D-39), and D-32 (book-slot priority) is owner-confirmed (2026-09-08) — so the sole remaining blocker to registering an experiment and computing a first result is that no market data has been ingested (the §8 two-independent-implementations acceptance test is a separate open criterion — D-48). `docs/PHASE2_REQUIREMENTS_MATRIX.md` states which rows this blocks and why viewing a result early would be irreversible.
 
 ## Phase 3 - Bounded runtime-LLM overlay
 
