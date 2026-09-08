@@ -28,12 +28,13 @@ no macro, filings, or positioning:
    dataset.
 
 The `alpaca-bars` adapter pulls `adjustment=raw` and emits only bars — it does **not** produce corporate
-actions, and there is currently **no ingest-CLI source** for them. Per **D-29** they are *vendored as
-observations* (loaded via the point-in-time repository) until an issuer distribution feed is verified;
-`docs/PHASE2_REQUIREMENTS_MATRIX.md` tracks "corporate-action records for the 14 ETFs, reconciled across two
-sources" as a tier-2 (after-credentials) requirement, with the XLF/XLRE 2016 spin-off as the acceptance case.
-If no corporate-action observations are present when you reach Step 3, that vendoring is an open prerequisite —
-flag it; it is a data/code gap, not something raw-bar ingestion fills.
+actions. No live issuer distribution feed is verified yet, so per **D-29** they are *vendored*: curated into a
+file reconciled across at least two independent public sources and loaded with `ingest corporate-actions
+--file <path>` (Step 2b below). `docs/PHASE2_REQUIREMENTS_MATRIX.md` tracks "corporate-action records for the
+14 ETFs, reconciled across two sources" as a tier-2 (after-credentials) requirement, with the XLF/XLRE 2015
+spin-off as the acceptance case; `config/examples/corporate-actions.example.json` shows the file format. The
+ingest mechanism now exists; **curating and reconciling the actual dataset is the open prerequisite** — until
+the ledger is loaded the dataset is not ready (Step 5), and raw bars alone are a price-return artifact.
 
 FRED, CFTC COT, and SEC submissions are **not required for this charter's first result**. They feed the Phase 3
 LLM evidence packets, not the Phase 2 deterministic computation. Ingest them when Phase 3 begins, not now.
@@ -99,6 +100,25 @@ node packages/core/dist/main.js ingest alpaca-bars \
 Each run prints an `IngestReport` (artifacts, observations, dedup counts) and writes an `ingest.completed`
 ledger event. Ingest stops and records `ingest.refused_budget` if the artifact store would exceed
 `BLACKGOLD_ARTIFACT_BUDGET_BYTES` (default 40 GiB) — not a concern for 14 daily-bar series.
+
+## Step 2b — load the corporate-action ledger (D-29)
+
+Raw bars are not a ready dataset on their own: the charter's features and every performance/benchmark comparison
+run on the adjusted total-return series, which the code recomputes from the raw bars **plus** a corporate-action
+ledger (dividends, splits, spin-offs). There is no live feed for these yet, so they are vendored — curated into a
+file, each action **reconciled across at least two independent public sources** (issuer distribution notices and
+an exchange corporate-action feed), then loaded:
+
+```bash
+node packages/core/dist/main.js ingest corporate-actions --file <your-actions.json>
+```
+
+The file format is `config/examples/corporate-actions.example.json` (format only — its values are illustrative
+and not reconciled; do not ingest it as data). Each `action` object is the stored form validated by the same
+parser the read path uses; an entry naming fewer than two sources is flagged `UNVERIFIED_SINGLE_SOURCE`. The
+loader needs no credentials and no network — it reads only the local file. Re-loading the identical file
+deduplicates. Curating the real dataset for the 14 symbols over the evaluable span (the XLF/XLRE 2015 spin-off is
+the acceptance case) is operator work; the ingest mechanism does not create the data.
 
 ## Step 3 — measure what actually came back (this is the CR-09 measurement)
 

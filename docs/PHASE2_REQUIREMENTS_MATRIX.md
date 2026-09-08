@@ -66,7 +66,7 @@ Computing and viewing a result before the charter is frozen would be irreversibl
 | Item | Phase | Why |
 |---|---|---|
 | Live ingest of the ETF universe and the first real coverage report | 2 (after credentials) | Needs `BLACKGOLD_ALPACA_KEY_ID`/`SECRET_KEY`, `BLACKGOLD_FRED_API_KEY`, `BLACKGOLD_SEC_USER_AGENT_CONTACT` |
-| Corporate-action records for the 14 ETFs, reconciled across two sources | 2 (after credentials) | D-29: vendored as observations until an issuer feed is verified. The XLF/XLRE 2016 spin-off is the acceptance case |
+| Corporate-action records for the 14 ETFs, reconciled across two sources | 2 (after credentials) | D-29: vendored via `ingest corporate-actions --file` — the loader, file format, and tests now exist (`config/examples/corporate-actions.example.json`); what remains is curating and two-source-reconciling the real dataset. The XLF/XLRE 2015 spin-off is the acceptance case (round-trips through the point-in-time read path in `test/adapters-corporate-actions.test.ts`) |
 | A real factor library for the attribution regression | 2 or later | `factorAttribution` reports "not performed" rather than approximating, per protocol section 10 |
 | Compliance look-through evaluation of XLI/XLP and admission of XLE | 4 | The compliance engine is a Phase 4 deliverable; until then the conditional member is excluded |
 | `risk.yaml` enforcement of the caps the charter cites | 4 | Phase 2 applies the charter's own caps; `RiskEngine` and `ComplianceEngine` (which may only shrink or block) are Phase 4 |
