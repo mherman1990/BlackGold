@@ -2,6 +2,48 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.2
+
+Brings the installed app up to the current codebase. The 0.1.1 image could ingest bars but predated the
+risk/compliance/portfolio layer and used an older charter schema, so this is a large catch-up release — the
+on-Pi ingest you just ran is part of it.
+
+**What changed**
+
+- **Risk, compliance, and portfolio construction (Phase 4).** Deterministic risk limits and halt states, the
+  compliance engine and restricted list, ETF factor look-through, and the deterministic portfolio constructor
+  with inverse-volatility sizing. Every hard rule has positive, negative, and boundary tests; unknown or stale
+  state fails closed for new risk, and the layer can only ever shrink or block risk, never add it.
+- **The decision gate.** New risk is allowed only when halt state, risk limits, and compliance all pass, and
+  any position increase must be covered by a passing compliance check — fail-closed by construction.
+- **The signed Alpha Charter.** `etf-trend-vol` is owner-signed and frozen (D-48); the current charter schema
+  (with the deterministic factor map) now loads on the Pi, so `charter show`/`plan` and `research coverage`
+  work against it directly.
+- **Corporate-action vendoring (D-29).** `ingest corporate-actions --file` loads a curated, two-source-
+  reconciled dividend/split ledger — the input the adjusted total-return series is built from. Raw bars alone
+  are a price-return artifact. A single-source entry is labelled and can never support promotion evidence.
+- **Operator ingest on the Pi.** The compose forwards the free Stage-1 data credentials from the app
+  environment, and the runbooks document the on-Pi ingest and coverage procedure.
+
+**Why it matters** — it makes the Pi self-consistent with the research kernel: the deployed 0.1.1 image had an
+older charter parser (it rejected the `factors` block) and none of the risk/compliance machinery.
+
+**Required actions**
+
+- Update Black Gold in Umbrel. Your data under `${APP_DATA_DIR}` is preserved.
+- To ingest, put the free Stage-1 credentials in `~/umbrel/app-data/blackgold-trading/.env`
+  (`docs/runbooks/first-ingestion.md`, `umbrel-install-update-remove.md`). None is a brokerage credential.
+
+**Risk impact** — none to money or accounts. **Live trading remains disabled by construction**: no live-order
+path, no broker credential, and no money-movement code exists. The new risk/compliance layer only shrinks or
+blocks risk.
+
+**Migration** — database migrations apply automatically on first start; the health output lists them. No
+manual step, and runtime data under `${APP_DATA_DIR}` is untouched.
+
+**Rollback** — reinstall the previous version by pinning its tag and digest; runtime data is compatible. Take a
+verified backup first (`docs/runbooks/backup-and-restore.md`).
+
 ## 0.1.1
 
 First release you can actually look at, and three correctness fixes found by pointing the ingest adapters at
