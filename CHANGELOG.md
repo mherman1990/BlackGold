@@ -21,7 +21,9 @@ on-Pi ingest you just ran is part of it.
   work against it directly.
 - **Corporate-action vendoring (D-29).** `ingest corporate-actions --file` loads a curated, two-source-
   reconciled dividend/split ledger — the input the adjusted total-return series is built from. Raw bars alone
-  are a price-return artifact. A single-source entry is labelled and can never support promotion evidence.
+  are a price-return artifact. A single-source entry is labelled `UNVERIFIED_SINGLE_SOURCE`; wiring that label
+  through the research path so it actually blocks promotion evidence is a tracked follow-up (it is inert until
+  a corporate-action dataset exists, which none does yet).
 - **Operator ingest on the Pi.** The compose forwards the free Stage-1 data credentials from the app
   environment, and the runbooks document the on-Pi ingest and coverage procedure.
 
