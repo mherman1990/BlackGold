@@ -50,6 +50,11 @@ describe("evaluateCompliance", () => {
     expect(check({ symbol: "NEWTICK", identifiers: ["NEWTICK"] })).not.toContain("RESTRICTED_NAME");
   });
 
+  it("matches a restricted entry keyed on the stable entity id (symbolsFor returns only tickers)", () => {
+    // The list carries the entity id; the candidate's tickers do not include it, but entityId is folded in.
+    expect(check({ symbol: "SOMETICK", identifiers: ["SOMETICK"], entityId: "FAKE_EMPLOYER_CO" })).toContain("RESTRICTED_NAME");
+  });
+
   it("rejects a candidate exposed to a restricted theme", () => {
     expect(check({ symbol: "XLE", themeExposures: ["soybean_processing"] })).toContain("RESTRICTED_THEME");
   });
