@@ -20,11 +20,13 @@ import type { RestrictedListConfig } from "../config/schema.ts";
  * - **Unknown ETF look-through blocks.** `themeExposures` of `undefined` means look-through has not run - an
  *   unknown state that blocks new risk (spec section 7). A known-empty exposure set is `[]`.
  * - **A stale restricted list blocks.** Older than the allowed age is treated as unknown, not trusted.
- * - **Identity is by entity, not by string.** Matching uses the entity's complete resolved identifier set
- *   (`identifiers`, from `EntityMap.symbolsFor`), so a restricted company cannot be admitted under a new
- *   ticker (docs/DATA_PROVENANCE_SPEC.md section 6a). The set is REQUIRED: the engine cannot query the entity
- *   map itself, so an optional alias list would let a caller silently reintroduce the bypass. A caller with no
- *   ticker history passes the current symbol alone, asserting that identity is resolved.
+ * - **Identity is by entity, not by string.** Matching runs against the entity's complete resolved identity:
+ *   its stable `entityId` AND every ticker it has carried, so a restricted company cannot be admitted under a
+ *   new ticker (docs/DATA_PROVENANCE_SPEC.md section 6a). `identifiers` (the tickers) is REQUIRED - the engine
+ *   cannot query the entity map itself, so an optional list would let a caller silently reintroduce the bypass.
+ *   `EntityMap.symbolsFor(entityId)` returns only tickers, NOT the entity id, so the stable `entityId` is
+ *   passed separately and folded into the match set; a restricted list may key on either. A caller with no
+ *   ticker history and no resolved entity id passes the current symbol alone, asserting identity is resolved.
  */
 
 export type ComplianceViolation = { code: string; detail: string };
@@ -34,12 +36,19 @@ export type ComplianceInput = {
   /** Candidate identifier for human-readable detail (ticker for an ETF, or the restricted-name id for an equity). */
   symbol: string;
   /**
-   * The entity's COMPLETE resolved identifier set - current and historical tickers and the restricted-name id,
-   * from `EntityMap.symbolsFor`. Required, and matching is done against it (plus `symbol` defensively): the
-   * engine cannot resolve identity itself, so an optional set would let a caller reintroduce the ticker-change
-   * bypass. Pass the current symbol alone only when identity is genuinely resolved to it.
+   * The entity's current and historical tickers, from `EntityMap.symbolsFor(entityId)`. Required, and matching
+   * runs against it (plus `symbol` and `entityId`): the engine cannot resolve identity itself, so an optional
+   * set would let a caller reintroduce the ticker-change bypass. Pass the current symbol alone only when there
+   * is no ticker history.
    */
   identifiers: readonly string[];
+  /**
+   * The stable entity id (docs/DATA_PROVENANCE_SPEC.md section 6a) folded into the match set, because
+   * `symbolsFor` returns only tickers so a restricted list keyed on the entity id would otherwise be missed.
+   * REQUIRED but nullable: a caller must pass the resolved id, or an explicit `undefined` for an ad-hoc symbol
+   * with no resolved entity - it cannot be silently omitted, which would recreate the ticker-change bypass.
+   */
+  entityId: string | undefined;
   /** Restricted themes the candidate is exposed to. `undefined` means ETF look-through has NOT run (unknown state, blocks new risk); `[]` means known-empty. */
   themeExposures?: readonly string[] | undefined;
   restrictedList: RestrictedListConfig;
@@ -68,7 +77,7 @@ export function evaluateCompliance(input: ComplianceInput): ComplianceVerdict {
   const rl = input.restrictedList;
   const nowMs = Date.parse(input.now);
   const nowDate = input.now.slice(0, 10);
-  const ids = new Set<string>([input.symbol, ...input.identifiers]);
+  const ids = new Set<string>([input.symbol, ...input.identifiers, ...(input.entityId !== undefined ? [input.entityId] : [])]);
 
   // Fail closed on a stale list: an unknown restriction picture blocks new risk rather than trusting old data.
   const age = ageDays(input.now, rl.asOf);
