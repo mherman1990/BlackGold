@@ -497,7 +497,7 @@ taxonomy; no duplicates). `packages/core/src/strategy/factors.ts` classifies a c
 `unclassifiedRiskEtfs` reports gaps. The `research analyst` CLI now derives `factorsTouched`'s deterministic
 counterpart from the charter and **refuses an unclassified candidate** ("unknown factor classification blocks
 new risk", `docs/PRODUCT_SPEC.md` section 11), replacing the operator `--factors` flag. The etf-trend-vol
-charter carries a conservative starting map for owner review.
+charter carries a conservative starting map, now frozen into the signed charter (hash-covered, D-48); revising any tag is a new charter version.
 
 **Why the charter, not a side file.** Factor assignments are the code-side authority the model's
 `factorsTouched` is checked against (T-05); a change to them is a data transform, which `CLAUDE.md` already
