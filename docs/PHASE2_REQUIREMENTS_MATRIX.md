@@ -2,13 +2,13 @@
 
 Status values: `implemented`, `tested`, `deferred`, `blocked`, `not applicable`. A row is not `tested` from inspection alone. Evidence names the file, test, or command.
 
-**Read this first.** Phase 2's deliverable list in `PLAN.md` is machinery plus results. This PR delivers the machinery, complete and tested. It delivers **no results**, and that is deliberate, not incomplete: see "Why no result exists yet" below. Engineering completion of Phase 2 was never investment evidence; with a DRAFT charter and no ingested data it is not even research evidence.
+**Read this first.** Phase 2's deliverable list in `PLAN.md` is machinery plus results. This PR delivers the machinery, complete and tested. It delivers **no results**, and that is deliberate, not incomplete: see "Why no result exists yet" below. Engineering completion of Phase 2 was never investment evidence; with no ingested data — and, until the owner confirms D-32, an unconfirmed book-slot rule inside the now-signed charter — it is not even research evidence.
 
 ## Why no result exists yet
 
-Two independent blockers, either one of which is sufficient:
+Two independent blockers to a registered result, either one of which is sufficient:
 
-1. **The charter is `DRAFT`.** `strategies/etf-trend-vol/charter.yaml` carries four unresolved open decisions (compliance look-through, live cash instrument, `risk.yaml` defaults, market-data source) and one undecided conditional universe member (XLE). `assertRegistrable` refuses to freeze an experiment in that state, and a permanent CI gate asserts it stays refused.
+1. **D-32 (book-slot priority) is not yet owner-confirmed.** The charter's four open decisions are resolved (D-39) and its approval block is signed (D-48), so `assertRegistrable` now passes and `charter show` reports `registrable: true`. But `assertRegistrable` checks the approval block, not D-32 — the provisional entry-vs-hold book-slot rule the code applies (`docs/DECISIONS.md` D-32, D-48). Registering before the owner confirms it in `ALPHA_CHARTER.md` §8 would freeze that provisional reading, so the registration procedure (`HANDOFF.md` §5 step 4) stops until it is confirmed. `registrable: true` is necessary but not sufficient.
 2. **No market data has been ingested.** The Phase 1 adapters are fixture-tested but have never run against a live source: SEC contact, FRED key, and Alpaca keys are all still owed. There is nothing to compute a 2007-2018 walk-forward from.
 
 Computing and viewing a result before the charter is frozen would be irreversible. `docs/EXPERIMENT_PROTOCOL.md` section 3 makes viewing a result consume information: after a view, any change to the hypothesis, rules, grid, boundaries, metrics or costs is a new experiment with a parent, and the trial count for multiple-testing purposes is cumulative across the chain. A result viewed now, on numbers the owner never approved, would permanently spend a clean first look at the design period and would put every later registration downstream of it. So the machinery runs on deterministic synthetic fixtures instead, where a rule change shows up as a failing assertion rather than as a plausible-looking number.
@@ -33,8 +33,8 @@ Computing and viewing a result before the charter is frozen would be irreversibl
 | 14 | Backtest runner: weekly decision loop, sealed decision records, two independent arms | tested | `packages/core/src/research/backtest.ts`, `packages/core/test/research-backtest.test.ts` (23 tests) |
 | 15 | Result report: the protocol section 8 minimum set with the charter's "reasons it may not work" | tested | `packages/core/src/research/report.ts`, `packages/core/test/research-report.test.ts` (15 tests) |
 | 16 | A written "reasons it may not work" carried into every report | tested | `reasons_it_may_not_work` in `charter.yaml`, copied verbatim into `ResultReport.reasonsItMayNotWork` |
-| 17 | Walk-forward **results**, holdout **results**, robustness **results** | blocked | Charter is DRAFT and no data is ingested. See "Why no result exists yet". The code paths are tested on fixtures; the numbers require owner approval plus an ingest. |
-| 18 | Experiment registration for the charter point | blocked | Deliberately not done: `assertRegistrable` refuses, and registering on unapproved numbers would freeze them |
+| 17 | Walk-forward **results**, holdout **results**, robustness **results** | blocked | No data is ingested, and D-32 (book-slot priority) is not yet owner-confirmed. See "Why no result exists yet". The code paths are tested on fixtures; the numbers require an ingest plus D-32 confirmation. |
+| 18 | Experiment registration for the charter point | blocked | `assertRegistrable` now passes, but registration is still gated on an ingest and owner confirmation of D-32 (the book-slot rule `assertRegistrable` does not check); registering first would freeze the provisional reading (`HANDOFF.md` §5 step 4) |
 
 ## Exit criteria
 
@@ -89,3 +89,4 @@ Test-suite wall time is about 26 seconds, up from about 6 seconds at the Phase 1
 | 2026-09-07 | `node packages/core/dist/main.js research coverage --path strategies/etf-trend-vol/charter.yaml --from 2026-01-02 --to 2026-06-30` | Exit code 1, all 13 universe members uncovered: correct for an empty store, and the reason a real coverage report is still owed |
 | 2026-09-07 | CI on `bbf99ee` (PR #6), two runs of the same job on the same commit | One `success`, one `failure`. The failure was `research-backtest.test.ts > produces sealed weekly decisions and two independent arms`: `Test timed out in 5000ms` at 5290 ms. Not infrastructure - a test written with only 20% headroom against vitest's default |
 | 2026-09-07 | `npm run check` after declaring a 30 s budget for the two backtest-backed suites and sharing their read-only fixture market | 494 tests still passing (no assertion changed); slowest test 4174 ms to 2249 ms; suite 44 s to 26 s |
+| 2026-09-08 | `node packages/core/dist/main.js charter show --path strategies/etf-trend-vol/charter.yaml` (re-run after the owner signed, D-48) | `approvalState: APPROVED`, `charterVersion: 0.1.0`, `registrable: true`, `reasons: []`; 12 admitted risk ETFs (XLE excluded). Supersedes the 2026-09-07 `registrable: false` row above. **`registrable: true` is necessary but not sufficient**: D-32 (book-slot priority) is a registration precondition `assertRegistrable` does not check — see "Why no result exists yet" |

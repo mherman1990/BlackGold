@@ -520,8 +520,8 @@ can build sizing and risk."
 **What was not done about risk.yaml, and why.** Approving the risk.yaml defaults is charter open decision OD-3,
 and *resolving a charter's declared open decisions* is one of the acts standing authorization never covers
 (`CLAUDE.md`) - the evidence gate is worthless if the agent that writes the code also signs off the values it
-enforces. So Claude Code did **not** resolve OD-3 or set `approvedBy`; `config/examples/risk.yaml` keeps
-`approvedBy: null`. This did not block the build: the *approval* gate governs registration and live activation,
+enforces. So Claude Code did **not** resolve OD-3 or set `approvedBy`; at the time, `config/examples/risk.yaml` kept
+`approvedBy: null` (the owner has since signed it himself — D-48). This did not block the build: the *approval* gate governs registration and live activation,
 not whether the engine may be written and tested. The risk-policy schema and defaults already existed (D-15,
 `RiskConfigSchema`), and sizing already existed (`strategy/construct.ts`, Phase 2) - the missing piece was the
 engine.
