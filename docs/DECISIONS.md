@@ -520,8 +520,8 @@ can build sizing and risk."
 **What was not done about risk.yaml, and why.** Approving the risk.yaml defaults is charter open decision OD-3,
 and *resolving a charter's declared open decisions* is one of the acts standing authorization never covers
 (`CLAUDE.md`) - the evidence gate is worthless if the agent that writes the code also signs off the values it
-enforces. So Claude Code did **not** resolve OD-3 or set `approvedBy`; `config/examples/risk.yaml` keeps
-`approvedBy: null`. This did not block the build: the *approval* gate governs registration and live activation,
+enforces. So Claude Code did **not** resolve OD-3 or set `approvedBy`; at the time, `config/examples/risk.yaml` kept
+`approvedBy: null` (the owner has since signed it himself — D-48). This did not block the build: the *approval* gate governs registration and live activation,
 not whether the engine may be written and tested. The risk-policy schema and defaults already existed (D-15,
 `RiskConfigSchema`), and sizing already existed (`strategy/construct.ts`, Phase 2) - the missing piece was the
 engine.
@@ -543,7 +543,9 @@ and recovery from `HOLD_ONLY` is staged one step at a time (`HOLD_ONLY` -> `HALT
 section 9.2), so an owner re-arm cannot skip the intermediate state.
 
 **What still needs Matt / is deferred.** Resolving OD-3 (approving risk.yaml) is his act; the engine is built
-and tested, but the policy it consumes is not yet approved, so nothing may register or run for real. Deferred
+and tested, but the policy it consumed was not yet approved when this was written, so nothing could register or
+run for real. *(OD-3 has since been resolved — Matt signed risk.yaml on 2026-09-08, D-48. A registered result
+remains gated on ingested data and owner confirmation of D-32.)* Deferred
 to further Phase 4 PRs: the risk-limit/caps engine (position, sector, cluster, gross, ADV) with reason codes;
 the compliance engine and restricted list; exposure flags and look-through; and wiring the halt state into a
 decision or gateway loop (Phase 5). No live path, broker credential, or order forms here.
@@ -680,12 +682,27 @@ sign, updating this test is part of that act") from asserting DRAFT to asserting
 plus a fail-closed guard the other way (PR #36), and update STATE.md / HANDOFF.md.
 
 **What this unlocks, and what it does not.** `assertRegistrable` now passes and `charter show` reports
-`registrable: true`, so an experiment *may* be registered. It does **not** register anything, compute any result,
-or enable any live or paper mode: a registered result still needs ingested market data plus the registry call
-(both owner-gated), and any live path additionally needs an expiring `LIVE_AUTHORIZATION` bound to the account,
-versions, instruments, caps, and executable hash. Signing froze the charter, so D-32's provisional book-slot
-resolution now stands as accepted-by-signing; the one-sentence prose clarification in `ALPHA_CHARTER.md` is still
-worth adding but no longer blocks anything.
+`registrable: true` — code-registrability, not permission to register. It does **not** register anything, compute
+any result, or enable any live or paper mode. A registered result still needs ingested market data, **owner
+confirmation of D-32** (see below and `HANDOFF.md` §5 step 4), and the registry call — all owner-gated;
+`registrable: true` is necessary but not sufficient, because `assertRegistrable` checks the approval block, not
+D-32. Any live path additionally needs an expiring `LIVE_AUTHORIZATION` bound to the account, versions,
+instruments, caps, and executable hash.
+
+**D-32 is not resolved by this signature.** The charter is now frozen with D-32's provisional book-slot
+resolution (incumbent priority) baked into it, but the approval block references D-39, not D-32, and Matt did not
+separately confirm the incumbent-priority reading — which D-32 asked for *before* the charter was frozen. So the
+charter was frozen ahead of that confirmation. D-32 remains an outstanding owner item (STATE.md and HANDOFF.md
+still list it): Matt should either confirm incumbent priority explicitly (a one-sentence addition to
+`ALPHA_CHARTER.md` section 8) or, if he intended the narrower hold band, treat it as a charter change and a new
+charter version at DRAFT.
+
+**Until confirmed, D-32 blocks registration — it is a precondition, not just a note.** `charter show` reporting
+`registrable: true` is necessary but not sufficient here: `assertRegistrable` checks the approval block, not
+D-32, so the code cannot enforce this and the procedure must. `HANDOFF.md` §5 step 4 now stops registration
+until the owner confirms D-32, and STATE.md and HANDOFF.md list D-32 alongside ingestion as a blocker to a
+registered result. Registering first would freeze the provisional incumbent-priority reading — the irreversible
+outcome D-32 exists to prevent — so it waits on the owner, surfaced and gated rather than silently accepted.
 
 ---
 
