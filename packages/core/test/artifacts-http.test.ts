@@ -220,4 +220,13 @@ describe("AllowlistedHttpClient transient-retry", () => {
     expect(c.requests()).toBe(1);
     expect(sleeps).toEqual([]);
   });
+
+  it("rejects invalid retry options at construction", () => {
+    const base = { allowlist: ["data.sec.gov"], userAgent: "BlackGold/0.1.0 (x@y.z)" };
+    expect(() => new AllowlistedHttpClient({ ...base, maxRetries: -1 })).toThrow(RangeError);
+    expect(() => new AllowlistedHttpClient({ ...base, maxRetries: 1.5 })).toThrow(RangeError);
+    expect(() => new AllowlistedHttpClient({ ...base, retryBaseMs: 0 })).toThrow(RangeError);
+    expect(() => new AllowlistedHttpClient({ ...base, maxRetryDelayMs: -5 })).toThrow(RangeError);
+    expect(() => new AllowlistedHttpClient({ ...base, maxRetries: 0 })).not.toThrow(); // 0 = retries disabled, valid
+  });
 });

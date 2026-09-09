@@ -114,6 +114,8 @@ export class AllowlistedHttpClient {
     this.retryBaseMs = opts.retryBaseMs ?? 500;
     this.maxRetryDelayMs = opts.maxRetryDelayMs ?? 30_000;
     this.random = opts.random ?? Math.random;
+    if (!Number.isInteger(this.maxRetries) || this.maxRetries < 0) throw new RangeError("maxRetries must be a non-negative integer");
+    if (!(this.retryBaseMs > 0) || !(this.maxRetryDelayMs > 0)) throw new RangeError("retryBaseMs and maxRetryDelayMs must be positive");
   }
 
   isAllowed(url: string): boolean {
@@ -172,6 +174,7 @@ export class AllowlistedHttpClient {
         }
         if (RETRYABLE_STATUSES.has(res.status) && attempt < this.maxRetries) {
           const delayMs = this.retryDelayMs(res.headers.get("retry-after"), attempt);
+          await res.arrayBuffer().catch(() => undefined); // drain the (small) error body so the connection can be reused
           clearTimeout(timer);
           await this.sleep(delayMs);
           continue;
