@@ -2,6 +2,41 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.3
+
+Adds a second market-data source so the strategy's historical window can actually be filled. Alpaca's free IEX
+feed only reaches ~2019, which left the charter's 2007–2018 design window empty; this release ships a read-only
+Tiingo end-of-day daily-bars adapter whose free tier covers the whole universe back past 2007 (verified: every
+admitted ETF plus the BIL cash leg and SPY/VTI benchmarks start on or before the 2007-06-01 design-window open).
+
+**What changed**
+
+- **Tiingo EOD daily-bars source (`tiingo.eod.bars.1d`).** A new `ingest tiingo-bars --symbols A,B,C --start
+  YYYY-MM-DD --end YYYY-MM-DD` command fetches RAW (unadjusted) open/high/low/close/volume for each ticker,
+  labelled venue `tiingo`. It reads only allowlisted `api.tiingo.com` and behaves exactly like the Alpaca
+  adapter on point-in-time timing (observed at the exchange close, available at close + 60 min, estimated).
+- **Credential wiring.** The core service now forwards `BLACKGOLD_TIINGO_API_KEY` from the app environment;
+  the token travels only in a request header and never reaches a stored artifact, log, or error message.
+- **Deliberately raw only.** Tiingo's adjusted columns, `divCash`, and `splitFactor` are ignored; Black Gold
+  recomputes total return from raw bars plus a corporate-action ledger, and that ledger for 2007–2018 is a
+  separate, still-pending ingest — so this release enables ingest and coverage checks, not full total-return
+  backtests yet.
+
+**Required actions**
+
+- Update Black Gold in umbrelOS to pick up the new image.
+- Put your Tiingo token in `~/umbrel/app-data/blackgold-trading/.env` as `BLACKGOLD_TIINGO_API_KEY=…` (free
+  tier is sufficient). No key means the source simply fails closed; nothing else is affected.
+
+**Risk / migration / rollback**
+
+- Risk: none to money or accounts — read-only public market data, no broker or order surface, live trading
+  remains disabled by construction. The only sensitive value is the read-only Tiingo token.
+- Migration: none. `sources.tiingoApiKey` is a new optional field; new `tiingo.eod.bars.1d` observations
+  coexist with existing sources under the same point-in-time tables.
+- Rollback: reinstall the 0.1.2 image. Any Tiingo bars already ingested are isolated by source id and unread
+  by the current strategy, so they are inert.
+
 ## 0.1.2
 
 Brings the installed app up to the current codebase. The 0.1.1 image could ingest bars but predated the

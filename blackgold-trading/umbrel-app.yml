@@ -2,7 +2,7 @@ manifestVersion: 1
 id: blackgold-trading
 category: finance
 name: Black Gold
-version: "0.1.2"
+version: "0.1.3"
 tagline: Evidence-first research and controlled execution for one ring-fenced sleeve
 description: >-
   Black Gold researches, shadows, paper trades, and (only after explicit owner
