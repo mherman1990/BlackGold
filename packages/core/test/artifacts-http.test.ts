@@ -149,3 +149,75 @@ describe("AllowlistedHttpClient", () => {
     expect(() => new AllowlistedHttpClient({ allowlist: ["data.sec.gov"], userAgent: "bot" })).toThrow(RangeError);
   });
 });
+
+describe("AllowlistedHttpClient transient-retry", () => {
+  // A client whose fetch returns a scripted status sequence (last entry repeats), with the token bucket set high
+  // enough that no rate-limit wait fires, so every captured sleep is a retry backoff. Jitter is pinned to zero.
+  const build = (statuses: number[], opts: { retryAfter?: string; maxRetries?: number; retryBaseMs?: number; maxRetryDelayMs?: number } = {}) => {
+    const sleeps: number[] = [];
+    let i = 0;
+    const fetchImpl: FetchLike = () => {
+      const status = statuses[Math.min(i, statuses.length - 1)] ?? 200;
+      i++;
+      return Promise.resolve({
+        status,
+        headers: { get: (n: string) => (n === "retry-after" && status === 429 ? (opts.retryAfter ?? null) : null) },
+        arrayBuffer: () => Promise.resolve(new TextEncoder().encode("{}").buffer),
+      });
+    };
+    const c = new AllowlistedHttpClient({
+      allowlist: ["data.sec.gov"],
+      userAgent: "BlackGold/0.1.0 (test@example.invalid)",
+      ratePerSecond: { "data.sec.gov": 1000 }, // effectively unlimited for the handful of requests here
+      fetchImpl,
+      clock: () => 1_000_000,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+      random: () => 0, // zero jitter => delay is exactly retryBaseMs * 2^attempt
+      retryBaseMs: opts.retryBaseMs ?? 500,
+      maxRetries: opts.maxRetries ?? 4,
+      maxRetryDelayMs: opts.maxRetryDelayMs ?? 30_000,
+    });
+    return { c, sleeps };
+  };
+
+  it("retries a transient 429 with exponential backoff, then returns the success", async () => {
+    const { c, sleeps } = build([429, 429, 200]);
+    const res = await c.get("https://data.sec.gov/x");
+    expect(res.status).toBe(200);
+    expect(c.requests()).toBe(3); // two throttled attempts plus the success, each a real request
+    expect(sleeps).toEqual([500, 1000]); // base*2^0, base*2^1 with jitter pinned to zero
+  });
+
+  it("retries a 503 the same way", async () => {
+    const { c } = build([503, 200]);
+    expect((await c.get("https://data.sec.gov/x")).status).toBe(200);
+    expect(c.requests()).toBe(2);
+  });
+
+  it("honors a Retry-After header and caps it at maxRetryDelayMs", async () => {
+    expect((await build([429, 200], { retryAfter: "2" }).c.get("https://data.sec.gov/x")).status).toBe(200);
+    const honored = build([429, 200], { retryAfter: "2" });
+    await honored.c.get("https://data.sec.gov/x");
+    expect(honored.sleeps).toEqual([2000]);
+    const capped = build([429, 200], { retryAfter: "99999", maxRetryDelayMs: 30_000 });
+    await capped.c.get("https://data.sec.gov/x");
+    expect(capped.sleeps).toEqual([30_000]);
+  });
+
+  it("gives up after maxRetries and throws the last 429", async () => {
+    const { c, sleeps } = build([429], { maxRetries: 3 });
+    await expect(c.get("https://data.sec.gov/x")).rejects.toMatchObject({ name: "HttpError", status: 429 });
+    expect(c.requests()).toBe(4); // one initial attempt plus three retries
+    expect(sleeps).toEqual([500, 1000, 2000]);
+  });
+
+  it("never retries a non-transient error", async () => {
+    const { c, sleeps } = build([404, 200]);
+    await expect(c.get("https://data.sec.gov/x")).rejects.toThrow(HttpError);
+    expect(c.requests()).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+});
