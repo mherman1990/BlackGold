@@ -185,6 +185,26 @@ describe("buildCoverageReport", () => {
     }
   });
 
+  it("reads bars from the requested source id, so a different source reports uncovered", () => {
+    const m = market();
+    const base = {
+      pit: m.pit,
+      calendar: m.calendar,
+      entities: ["AAA"],
+      from: D("2026-02-02"),
+      to: D("2026-06-30"),
+      decisionAt: m.decisionAt(D("2026-06-30")),
+    };
+    // The fixture wrote bars under the default source: fully covered, and the report names the source it read.
+    const onDefault = buildCoverageReport({ ...base, barsSourceId: DEFAULT_BARS_SOURCE_ID });
+    expect(onDefault.uncovered).toEqual([]);
+    expect(onDefault.barsSourceId).toBe(DEFAULT_BARS_SOURCE_ID);
+    // A different bars source (e.g. Tiingo) has no bars in this store: uncovered — exactly what `--source` selects.
+    const onTiingo = buildCoverageReport({ ...base, barsSourceId: "tiingo.eod.bars.1d" });
+    expect(onTiingo.uncovered).toEqual(["AAA"]);
+    expect(onTiingo.barsSourceId).toBe("tiingo.eod.bars.1d");
+  });
+
   it("counts interior gaps and drops the coverage ratio", () => {
     const gaps = [D("2026-03-10"), D("2026-03-11"), D("2026-03-12")];
     const m = market({ omitSessions: { BBB: gaps } });

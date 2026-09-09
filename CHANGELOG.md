@@ -2,6 +2,32 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.5
+
+Lets the point-in-time coverage report measure a **specific bars source**, so the newly-ingested Tiingo daily
+history can be checked against a charter window without changing which source the charter itself uses.
+
+**What changed**
+
+- **`research coverage` gains an optional `--source <bars-source-id>` flag.** Without it, coverage reads the
+  default `alpaca.iex.bars.1d` (unchanged). With `--source tiingo.eod.bars.1d` it reports coverage — per-entity
+  ratio, interior gaps, leading/trailing absence, quality codes — for the Tiingo bars instead. It is a
+  read-only diagnostic; it does not adopt Tiingo as the strategy's data source (that remains a separate,
+  owner-signed new-strategy-version decision).
+
+**Required actions**
+
+- Update Black Gold in umbrelOS to pick up the new image. No configuration change.
+- Example, after ingesting Tiingo bars, to check the charter's 2007–2018 design split against them:
+  `research coverage --path strategies/etf-trend-vol/charter.yaml --from 2007-06-01 --to 2018-12-31 --source tiingo.eod.bars.1d`
+
+**Risk / migration / rollback**
+
+- Risk: none — a read-only reporting flag; no decision, order, account, or money-movement path is touched, and
+  live trading remains disabled by construction.
+- Migration: none.
+- Rollback: reinstall the 0.1.4 image.
+
 ## 0.1.4
 
 Makes ingestion resilient to a provider's transient rate limiting. A free-tier data source (Tiingo, on the

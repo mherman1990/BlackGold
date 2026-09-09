@@ -54,8 +54,9 @@ Phase 1 research kernel (public sources only; requires BLACKGOLD_SEC_USER_AGENT_
 Phase 2 research (deterministic charters only; computes nothing that a DRAFT charter may cite as evidence):
   charter show --path <charter.yaml>        Parse, hash, and report whether the charter may be registered
   charter plan --path <charter.yaml>        Evaluation plan: design, walk-forward and recent splits, sealed holdout, grid and tiers
-  research coverage --path <charter.yaml> --from <date> --to <date>
+  research coverage --path <charter.yaml> --from <date> --to <date> [--source <bars-source-id>]
                                             Point-in-time coverage report for the charter universe
+                                            (--source measures a specific bars source, e.g. tiingo.eod.bars.1d; default alpaca.iex.bars.1d)
 
 Phase 3 runtime-LLM analyst (requires ANTHROPIC_API_KEY in the environment; abstains fail-closed without it):
   research analyst --manifest <model-manifest.yaml> --model <id> --candidate <SYMBOL> --at <iso-instant>
@@ -304,10 +305,13 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
         }
       }
       if (sub !== "coverage") throw new UsageError("research requires a subcommand: coverage | analyst");
-      const o = parseOptions(rest, { path: { type: "string" }, from: { type: "string" }, to: { type: "string" } });
+      const o = parseOptions(rest, { path: { type: "string" }, from: { type: "string" }, to: { type: "string" }, source: { type: "string" } });
       const path = o["path"];
       const from = o["from"];
       const to = o["to"];
+      // Optional: measure coverage for a specific bars source id (e.g. tiingo.eod.bars.1d) instead of the
+      // default. A diagnostic only - it does not change which source the charter uses.
+      const source = o["source"];
       if (typeof path !== "string" || typeof from !== "string" || typeof to !== "string") {
         throw new UsageError("research coverage requires --path, --from and --to");
       }
@@ -321,6 +325,7 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
           from: isoDate(from),
           to: isoDate(to),
           decisionAt,
+          ...(typeof source === "string" ? { barsSourceId: source } : {}),
         }),
       );
       return { exitCode: report.uncovered.length === 0 ? 0 : 1, output: report };
