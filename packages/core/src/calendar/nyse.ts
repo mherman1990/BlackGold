@@ -14,15 +14,40 @@ import { NotASessionError, type ExchangeCalendar } from "./types.ts";
  * NYSE (MIC XNYS) calendar computed BY RULE for 2000-2100. Rules verified against
  * https://www.nyse.com/markets/hours-calendars (accessed 2026-09-06); the 2026/2027 schedules are test fixtures.
  *
- * Unscheduled closures (national days of mourning, disasters) cannot be derived by rule; pass them as
- * `adHocClosures`. Any date not in the supported range throws.
+ * Unscheduled closures (national days of mourning, disasters) cannot be derived by rule. The known historical
+ * ones are baked in as `NYSE_ADHOC_CLOSURES` and applied by default; `adHocClosures` adds to (never replaces)
+ * that set, and `includeDefaultAdHocClosures: false` opts out for isolated tests. Any date not in the
+ * supported range throws.
  */
 
 const NY = "America/New_York";
 const MIN_YEAR = 2000;
 const MAX_YEAR = 2100;
 
-export type NyseCalendarOptions = { adHocClosures?: readonly IsoDate[] };
+/**
+ * Full-day NYSE (XNYS) closures that no rule derives - national days of mourning and disasters. Verified
+ * against NYSE holiday-closing history (https://www.nyse.com/markets/hours-calendars) and press records.
+ * Every entry is a weekday (weekends are already non-sessions). Extend this as new closures are announced.
+ */
+export const NYSE_ADHOC_CLOSURES: readonly IsoDate[] = [
+  isoDate("2001-09-11"), // September 11 attacks: closed Sep 11-14, reopened Sep 17
+  isoDate("2001-09-12"),
+  isoDate("2001-09-13"),
+  isoDate("2001-09-14"),
+  isoDate("2004-06-11"), // National Day of Mourning, Ronald Reagan
+  isoDate("2007-01-02"), // National Day of Mourning, Gerald Ford
+  isoDate("2012-10-29"), // Hurricane Sandy: closed Oct 29-30
+  isoDate("2012-10-30"),
+  isoDate("2018-12-05"), // National Day of Mourning, George H. W. Bush
+  isoDate("2025-01-09"), // National Day of Mourning, Jimmy Carter
+];
+
+export type NyseCalendarOptions = {
+  /** Additional ad-hoc closures, merged on top of `NYSE_ADHOC_CLOSURES` (does not replace them). */
+  adHocClosures?: readonly IsoDate[];
+  /** Opt out of the baked-in historical closures (isolated tests only); defaults to true. */
+  includeDefaultAdHocClosures?: boolean;
+};
 
 export type HolidaySchedule = { holidays: IsoDate[]; earlyCloses: IsoDate[] };
 
@@ -33,7 +58,8 @@ export class NyseCalendar implements ExchangeCalendar {
   private readonly cache = new Map<number, { holidays: Set<string>; earlyCloses: Set<string> }>();
 
   constructor(options: NyseCalendarOptions = {}) {
-    this.adHoc = new Set(options.adHocClosures ?? []);
+    const base = options.includeDefaultAdHocClosures === false ? [] : NYSE_ADHOC_CLOSURES;
+    this.adHoc = new Set<string>([...base, ...(options.adHocClosures ?? [])]);
   }
 
   isSession(date: IsoDate): boolean {
