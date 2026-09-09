@@ -4,6 +4,7 @@ category: finance
 name: Black Gold
 version: "0.1.5"
 tagline: Evidence-first research and controlled execution for one ring-fenced sleeve
+icon: https://raw.githubusercontent.com/mherman1990/BlackGold/main/blackgold-trading/icon.svg
 description: >-
   Black Gold researches, shadows, paper trades, and (only after explicit owner
   authorization in a much later release) executes a narrowly approved systematic
