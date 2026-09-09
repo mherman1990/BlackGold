@@ -63,4 +63,24 @@ describe("NyseCalendar reproduces the published schedule exactly", () => {
     expect(withClosure.isSession(isoDate("2026-09-09"))).toBe(false);
     expect(cal.isSession(isoDate("2026-09-09"))).toBe(true);
   });
+
+  it("treats the known historical closures as non-sessions by default", () => {
+    // National days of mourning and disasters that no rule derives - all weekdays that would otherwise be sessions.
+    for (const d of ["2001-09-11", "2001-09-12", "2001-09-13", "2001-09-14", "2004-06-11", "2007-01-02", "2012-10-29", "2012-10-30", "2018-12-05", "2025-01-09"]) {
+      expect(weekday(isoDate(d)), `${d} is a weekday`).not.toBe(0);
+      expect(weekday(isoDate(d)), `${d} is a weekday`).not.toBe(6);
+      expect(cal.isSession(isoDate(d)), d).toBe(false);
+      expect(cal.isHoliday(isoDate(d)), d).toBe(true);
+    }
+    // Hurricane Sandy: the two closed days drop out of the session list.
+    expect(cal.sessionDates(isoDate("2012-10-26"), isoDate("2012-10-31"))).toEqual(["2012-10-26", "2012-10-31"]);
+    // schedule() stays rule-derived: it never lists an ad-hoc closure among the year's holidays.
+    expect(cal.schedule(2012).holidays).not.toContain("2012-10-29");
+  });
+
+  it("can opt out of the baked-in closures for isolated tests", () => {
+    const pure = new NyseCalendar({ includeDefaultAdHocClosures: false });
+    expect(pure.isSession(isoDate("2012-10-29"))).toBe(true); // a plain Monday when the rule engine ignores Sandy
+    expect(cal.isSession(isoDate("2012-10-29"))).toBe(false);
+  });
 });
