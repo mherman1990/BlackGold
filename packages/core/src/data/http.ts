@@ -174,7 +174,7 @@ export class AllowlistedHttpClient {
         }
         if (RETRYABLE_STATUSES.has(res.status) && attempt < this.maxRetries) {
           const delayMs = this.retryDelayMs(res.headers.get("retry-after"), attempt);
-          await res.arrayBuffer().catch(() => undefined); // drain the (small) error body so the connection can be reused
+          controller.abort(); // cancel the unread error body rather than buffering it: an unbounded arrayBuffer() here could exhaust the Pi's memory
           clearTimeout(timer);
           await this.sleep(delayMs);
           continue;
