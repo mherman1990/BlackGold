@@ -4,6 +4,8 @@
  * - Host allowlist (docs/DATA_PROVENANCE_SPEC.md section 10). A URL outside the allowlist throws before any
  *   connection is attempted. Trading and model-provider hosts are never on the list.
  * - Per-host token-bucket rate limiting (SEC fair access: 10 requests/second across the whole system).
+ * - Transient throttling (429) and unavailability (503) are retried with bounded exponential backoff, honoring
+ *   the provider's Retry-After; safe because every request here is an idempotent GET/HEAD.
  * - Declared User-Agent, conditional requests, bounded response size, deadline per request.
  * - GET and HEAD only. There is no method for POST/PUT/DELETE: this client cannot mutate anything remote.
  * - `fetchImpl` is injectable so tests never touch the network.
@@ -30,7 +32,18 @@ export type HttpClientOptions = {
   clock?: () => number;
   /** Injected sleeper so rate-limit waits are testable. */
   sleep?: (ms: number) => Promise<void>;
+  /** Max retries for a transient throttle/unavailability (HTTP 429/503) before giving up. Default 4. */
+  maxRetries?: number;
+  /** Base for exponential backoff between retries, in ms. Default 500. */
+  retryBaseMs?: number;
+  /** Ceiling on any single backoff wait, in ms; also caps an honored Retry-After. Default 30000. */
+  maxRetryDelayMs?: number;
+  /** Injected [0,1) source for backoff jitter, so retry waits are deterministic in tests. Default Math.random. */
+  random?: () => number;
 };
+
+/** Statuses safe to retry for the idempotent GET/HEAD requests this client makes: transient throttling and unavailability. */
+const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([429, 503]);
 
 export type HttpResponse = {
   url: string;
@@ -78,6 +91,10 @@ export class AllowlistedHttpClient {
   private readonly fetchImpl: FetchLike;
   private readonly clock: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly maxRetries: number;
+  private readonly retryBaseMs: number;
+  private readonly maxRetryDelayMs: number;
+  private readonly random: () => number;
   private readonly buckets = new Map<string, Bucket>();
   private requestCount = 0;
 
@@ -93,6 +110,12 @@ export class AllowlistedHttpClient {
     this.fetchImpl = opts.fetchImpl ?? defaultFetch;
     this.clock = opts.clock ?? Date.now;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.maxRetries = opts.maxRetries ?? 4;
+    this.retryBaseMs = opts.retryBaseMs ?? 500;
+    this.maxRetryDelayMs = opts.maxRetryDelayMs ?? 30_000;
+    this.random = opts.random ?? Math.random;
+    if (!Number.isInteger(this.maxRetries) || this.maxRetries < 0) throw new RangeError("maxRetries must be a non-negative integer");
+    if (!(this.retryBaseMs > 0) || !(this.maxRetryDelayMs > 0)) throw new RangeError("retryBaseMs and maxRetryDelayMs must be positive");
   }
 
   isAllowed(url: string): boolean {
@@ -126,7 +149,6 @@ export class AllowlistedHttpClient {
   ): Promise<HttpResponse> {
     if (!this.isAllowed(url)) throw new EgressDeniedError(url);
     const host = new URL(url).hostname.toLowerCase();
-    await this.takeToken(host);
     const headers: Record<string, string> = {
       "user-agent": this.userAgent,
       accept: "application/json, text/plain, */*",
@@ -135,24 +157,52 @@ export class AllowlistedHttpClient {
     };
     if (opts.ifNoneMatch) headers["if-none-match"] = opts.ifNoneMatch;
     if (opts.ifModifiedSince) headers["if-modified-since"] = opts.ifModifiedSince;
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-    }, this.timeoutMs);
-    try {
-      this.requestCount++;
-      const res = await this.fetchImpl(url, { method, headers, signal: controller.signal });
-      const fetchedAt = nowUtc(this.clock);
-      if (res.status === 304) {
-        return { url, status: 304, body: new Uint8Array(0), etag: res.headers.get("etag"), lastModified: res.headers.get("last-modified"), contentType: res.headers.get("content-type"), fetchedAt, notModified: true };
+    // A transient 429/503 is retried with bounded backoff (honoring Retry-After) rather than failing the whole
+    // ingest; every attempt takes a fresh rate-limit token and its own deadline. Non-transient errors throw at once.
+    for (let attempt = 0; ; attempt++) {
+      await this.takeToken(host);
+      const controller = new AbortController();
+      const timer = setTimeout(() => {
+        controller.abort();
+      }, this.timeoutMs);
+      try {
+        this.requestCount++;
+        const res = await this.fetchImpl(url, { method, headers, signal: controller.signal });
+        const fetchedAt = nowUtc(this.clock);
+        if (res.status === 304) {
+          return { url, status: 304, body: new Uint8Array(0), etag: res.headers.get("etag"), lastModified: res.headers.get("last-modified"), contentType: res.headers.get("content-type"), fetchedAt, notModified: true };
+        }
+        if (RETRYABLE_STATUSES.has(res.status) && attempt < this.maxRetries) {
+          const delayMs = this.retryDelayMs(res.headers.get("retry-after"), attempt);
+          controller.abort(); // cancel the unread error body rather than buffering it: an unbounded arrayBuffer() here could exhaust the Pi's memory
+          clearTimeout(timer);
+          await this.sleep(delayMs);
+          continue;
+        }
+        if (res.status < 200 || res.status >= 300) throw new HttpError(url, res.status);
+        const buf = new Uint8Array(await res.arrayBuffer());
+        if (buf.byteLength > this.maxBytes) throw new ResponseTooLargeError(url, buf.byteLength, this.maxBytes);
+        return { url, status: res.status, body: buf, etag: res.headers.get("etag"), lastModified: res.headers.get("last-modified"), contentType: res.headers.get("content-type"), fetchedAt, notModified: false };
+      } finally {
+        clearTimeout(timer);
       }
-      if (res.status < 200 || res.status >= 300) throw new HttpError(url, res.status);
-      const buf = new Uint8Array(await res.arrayBuffer());
-      if (buf.byteLength > this.maxBytes) throw new ResponseTooLargeError(url, buf.byteLength, this.maxBytes);
-      return { url, status: res.status, body: buf, etag: res.headers.get("etag"), lastModified: res.headers.get("last-modified"), contentType: res.headers.get("content-type"), fetchedAt, notModified: false };
-    } finally {
-      clearTimeout(timer);
     }
+  }
+
+  /**
+   * Backoff before retrying a transient status. Honors a `Retry-After` header (delta-seconds or an HTTP date),
+   * capped at `maxRetryDelayMs`; otherwise exponential backoff `retryBaseMs * 2^attempt` with additive jitter in
+   * `[0, base)`, also capped. Never negative.
+   */
+  private retryDelayMs(retryAfter: string | null, attempt: number): number {
+    if (retryAfter !== null && retryAfter.trim() !== "") {
+      const secs = Number(retryAfter);
+      if (Number.isFinite(secs)) return Math.min(Math.max(0, secs) * 1000, this.maxRetryDelayMs);
+      const when = Date.parse(retryAfter);
+      if (!Number.isNaN(when)) return Math.min(Math.max(0, when - this.clock()), this.maxRetryDelayMs);
+    }
+    const base = this.retryBaseMs * 2 ** attempt;
+    return Math.min(base + this.random() * base, this.maxRetryDelayMs);
   }
 
   private async takeToken(host: string): Promise<void> {

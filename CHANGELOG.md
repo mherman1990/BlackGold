@@ -2,6 +2,32 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.4
+
+Makes ingestion resilient to a provider's transient rate limiting. A free-tier data source (Tiingo, on the
+free plan, is 50 requests/hour) can answer a request with `HTTP 429`; on 0.1.3 that aborted the whole ingest.
+
+**What changed**
+
+- **The shared egress client now retries a transient `429` (and `503`) with bounded exponential backoff**,
+  honoring the provider's `Retry-After` header (capped so a run can't hang for long), before giving up. This is
+  safe because every request the client makes is an idempotent `GET`/`HEAD`, and it applies to all sources, not
+  just Tiingo. A run that briefly brushes a rate limit now self-heals instead of failing.
+
+**Required actions**
+
+- Update Black Gold in umbrelOS to pick up the new image. No configuration change.
+- Note: retry smooths over *brief* throttling. If a whole hourly quota is already spent (e.g. from repeated
+  manual pulls), the backoff won't wait out the full hour — re-run once the window resets. A normal
+  universe-sized `ingest tiingo-bars` is only ~15 requests, well under the hourly cap.
+
+**Risk / migration / rollback**
+
+- Risk: none to money or accounts — the change is confined to the read-only public-source HTTP client; live
+  trading remains disabled by construction. Retries are bounded and only for idempotent GET/HEAD.
+- Migration: none.
+- Rollback: reinstall the 0.1.3 image.
+
 ## 0.1.3
 
 Adds a second market-data source so the strategy's historical window can actually be filled. Alpaca's free IEX
