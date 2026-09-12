@@ -64,7 +64,7 @@ export type TiingoContext = AdapterContext & {
   entityIds?: Readonly<Record<string, string>> | undefined;
 };
 
-function normalizeSymbols(symbols: readonly string[]): string[] {
+export function normalizeSymbols(symbols: readonly string[]): string[] {
   const out = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter((s) => s.length > 0))].sort();
   for (const s of out) if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(s)) throw new TypeError(`Unsafe symbol: ${s}`);
   if (out.length === 0) throw new RangeError("at least one symbol is required");

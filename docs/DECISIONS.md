@@ -48,6 +48,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-40 | Granary (separate product `mherman1990/Granary`) owns the household / personal-finance / capital-allocation layer and sits above Black Gold in the hierarchy, reading Black Gold data read-only. Black Gold takes no dependency on Granary and stops growing an in-house household planner | **Proposed** 2026-09-07 by Claude Code | Phase 4 (household scope) |
 | D-41 | Phase 3 authorized (Matt, 2026-09-07, ordering "2 → 1 → 3"). Built as the provider-agnostic analyst pipeline and its safety surface, tested with a deterministic stub; the real Anthropic adapter, the POST egress change, and live CR-11/12/13 re-verification are a separate follow-up PR needing an API key | Accepted 2026-09-07 by Matt | Provider wiring, call/budget persistence, and prospective C1/D1 backtest wiring remain (credentials / Phase 5) |
 | D-42 | The Anthropic model adapter (raw `fetch`, no SDK) as its own PR: a second egress module `packages/core/src/model/provider-http.ts` is the only outbound POST and the only reference to `api.anthropic.com`; `live-disabled.test.ts` is updated to allow exactly that while trading hosts stay forbidden and `data/http.ts` stays POST-free. The key is passed in from the environment, never in git, code, or the image | Accepted 2026-09-07 by Matt ("keep building… put the key in when things are connected") | Live CR-12/CR-13 verification against the real API is Matt's one run on the Pi; call/budget persistence and C1/D1 wiring still Phase 5 |
+| D-49 | Corporate actions may be ingested automatically from Tiingo's daily-prices feed (`divCash`/`splitFactor`), flagged `UNVERIFIED_SINGLE_SOURCE`: usable for research and decisions, never promotion evidence. Amends D-29's "vendored file until a feed is verified" to add a single-source automated path alongside it; the operator-curated, ≥2-source reconciled vendored file stays the only promotion-eligible corporate-action source | Accepted 2026-09-12 by Matt ("Item 3, use A") | - |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -215,7 +216,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 **Status:** Accepted 2026-09-07 (engineering).
 **Verified:** Alpaca `GET /v2/stocks/bars` with `feed=iex`, `adjustment=raw`, `timeframe=1Day`, key-header auth, and paging (CR-24). Free-tier entitlement semantics are not yet measured with a real key.
 **Decision:** The adapter fetches raw, unadjusted IEX daily bars labelled `alpaca.iex.bars.1d` and never labels them consolidated. Splits, dividends, and other actions are separate observations; Black Gold computes its own total-return series from raw closes plus the action ledger, so adjustments are reproducible and versioned. For the frozen ETF universe the action ledger is seeded from issuer distribution records vendored as observations with their own `availableAt`; an automated corporate-actions feed is a Phase 2 verification item.
-**Implementation (2026-09-08):** the vendoring loader now exists — `ingest corporate-actions --file <path>` reads a local file (no network, no credential), stores it as one content-addressed artifact, and appends `corporate_action.<KIND>` observations through the same `corporateActionObservation` builder and `corporateActionFromValue` validator the read path uses. `availableAt` is the announcement instant, clamped up to the ex-date start (the repository forbids availableAt earlier than the effective date); an entry naming fewer than two reconciling sources is flagged `UNVERIFIED_SINGLE_SOURCE`. Format and behaviour: `config/examples/corporate-actions.example.json`, `packages/core/src/data/adapters/corporate-actions.ts`, `packages/core/test/adapters-corporate-actions.test.ts` (the XLF/XLRE 2015 spin-off round-trips through the point-in-time path). This is the mechanism only; curating and reconciling the real dataset across two sources, and deciding when a live feed replaces the vendored file, remain open — neither is Claude Code's to declare done.
+**Implementation (2026-09-08):** the vendoring loader now exists — `ingest corporate-actions --file <path>` reads a local file (no network, no credential), stores it as one content-addressed artifact, and appends `corporate_action.<KIND>` observations through the same `corporateActionObservation` builder and `corporateActionFromValue` validator the read path uses. `availableAt` is the announcement instant, clamped up to the ex-date start (the repository forbids availableAt earlier than the effective date); an entry naming fewer than two reconciling sources is flagged `UNVERIFIED_SINGLE_SOURCE`. Format and behaviour: `config/examples/corporate-actions.example.json`, `packages/core/src/data/adapters/corporate-actions.ts`, `packages/core/test/adapters-corporate-actions.test.ts` (the XLF/XLRE 2015 spin-off round-trips through the point-in-time path). This is the mechanism only; curating and reconciling the real dataset across two sources, and deciding when a live feed replaces the vendored file, remain open — neither is Claude Code's to declare done. *(Update 2026-09-12: D-49 adds an automated single-source Tiingo path flagged `UNVERIFIED_SINGLE_SOURCE` for research and decisions; the reconciled ≥2-source vendored file remains the only promotion-eligible corporate-action source.)*
 
 ## D-30 Data provenance engineering defaults
 
@@ -706,6 +707,56 @@ implementation exists, so that criterion stays open — but the confirmation rem
 made two implementations disagree. The D-32 registration precondition is satisfied; the operational blocker to a
 registered result is now ingested data. Had Matt intended the narrower hold band (hold rank equal to entry rank)
 instead, that would have been a new charter version at DRAFT.
+
+## D-49 Automated single-source corporate actions from Tiingo
+
+**Status:** Accepted 2026-09-12 by Matt ("Item 3, use A"). Amends, does not replace, D-29.
+
+**Context.** D-29 built the corporate-action ledger as an operator-curated file reconciled across at least two
+independent public sources, with an automated issuer/vendor feed left as a Phase 2 verification item, because a
+single unreconciled source is not promotion-grade evidence. Tiingo's daily-prices endpoint — already the bars
+source under evaluation for the 2007+ design window — carries `divCash` (raw cash dividend per share on the
+ex-date) and `splitFactor` (new shares per old share on the ex-date) on every row. Adopting it lets total-return
+research proceed now, without waiting on a hand-curated, twice-sourced file for the 13-ETF universe.
+
+**Decision.** Add `ingest tiingo-actions` (`packages/core/src/data/adapters/tiingo-corporate-actions.ts`): it
+reads the same prices payload the bars adapter reads and emits `corporate_action.CASH_DIVIDEND` and
+`corporate_action.SPLIT` observations through the same `corporateActionFromValue` validator and
+`corporateActionObservation` builder the vendored loader and the read path use. Because Tiingo is one source,
+**every action it produces is flagged `UNVERIFIED_SINGLE_SOURCE`** — a registered quality code with
+`decisionAllowed: true, promotionEvidenceAllowed: false` (`data/quality.ts`), so these actions feed the
+total-return series for research but `blocksPromotionEvidence` bars any run that touches them from being cited as
+promotion evidence. The operator-curated, ≥2-source reconciled vendored file (`corporate-actions.ts`, unchanged)
+remains the only promotion-eligible corporate-action path. An operator uses one path or the other for a given
+universe, never both, because the two share the `corporate_action.<KIND>` source ids and would double-count a
+distribution if mixed.
+
+**Making the flag bite (P1 fix, review of PR #54).** The safeguard is only real if the flag reaches the check
+`ExperimentRegistry.setPromotionEvidence` runs. `asOf().labels` never carries a row's own `qualityFlags` (it
+holds only `OPTIMISTIC_DELAY`), and the three consumers of corporate actions — `strategy/features.ts:loadEntity`,
+`research/backtest.ts:loadExecutionSeries`, and `research/coverage.ts:buildCoverageReport` — copied only
+`asOf().labels`, discarding each action row's flags. So `UNVERIFIED_SINGLE_SOURCE` never reached trial labels or
+the coverage report's blocking codes, and a run built on single-source actions would have looked
+promotion-eligible. Fixed: all three now fold each consumed action row's promotion-blocking codes
+(`blocksPromotionEvidence(row.qualityFlags)`) into the labels/blocking codes they emit — the features and
+backtest paths into the trial labels, coverage into `blockingCodes`/`promotionBlockingCodes`. The backtest fold
+lives in `loadExecutionSeries`, so it also covers entities the feature engine never reads (the benchmark, the
+cash ETF). This closed gap applied equally to the pre-existing vendored path; the new tests
+(`research-leakage-coverage`, `strategy-features`, `research-backtest`) pin the end-to-end propagation.
+
+**Provenance limits (recorded as facts, not hidden).** A prices feed names no announcement date and no pay date,
+so: `availableAt` is the ex-date start — the conservative, leakage-safe instant a going-ex action is certainly
+known by (the real declaration is earlier, never later); `payDate` defaults to the ex-date (the TR series reads
+only ex-date and amount, and the repository requires `payDate >= exDate`); `qualified` defaults to false, the
+tax-conservative unknown. Corrupt values fail closed as `SCHEMA_DRIFT`: a negative `divCash`, a nonpositive
+`splitFactor`, a non-decimal field, a missing field, or the same entity/kind/ex-date twice in one payload.
+
+**What this does not do.** It does not make Tiingo actions promotion evidence, does not touch the charter or its
+signed data-source decision (OD-4/D-39 still name Alpaca; adopting Tiingo as the charter's default is the
+separate, owner-signed item), and does not enable any live path. Tests:
+`packages/core/test/adapters-tiingo-corporate-actions.test.ts` (parser mapping, boundary no-action rows,
+corrupt-value rejection, single-source flag biting the quality policy, point-in-time leakage boundary,
+token-in-header/scrubbing, TR consumption, CLI).
 
 ---
 

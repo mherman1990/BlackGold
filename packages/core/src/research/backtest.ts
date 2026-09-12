@@ -1,6 +1,7 @@
 import { Dec, ONE, ZERO, addMs, hashJson, sumDec, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import type { ExchangeCalendar } from "../calendar/types.ts";
 import type { ReadOnlyPointInTime } from "../data/pit/types.ts";
+import { blocksPromotionEvidence } from "../data/quality.ts";
 import { RawSeries, TotalReturnSeries, type LoadedBar, type TRPoint, type TRSeries } from "../market/series.ts";
 import { corporateActionFromValue, corporateActionSourceId, CORPORATE_ACTION_KINDS, type CorporateAction } from "../market/types.ts";
 import { admittedRiskEtfs, type Charter } from "../strategy/charter.ts";
@@ -184,7 +185,7 @@ function mondayOf(session: IsoDate): string {
   return d.toISOString().slice(0, 10);
 }
 
-type EntitySeries = { bars: LoadedBar[]; actions: CorporateAction[]; tr: TRPoint[] };
+type EntitySeries = { bars: LoadedBar[]; actions: CorporateAction[]; tr: TRPoint[]; qualityLabels: string[] };
 
 /**
  * Load the execution and marking series.
@@ -213,6 +214,7 @@ function loadExecutionSeries(input: BacktestInput, entityId: string, decisionAt:
     ...(input.processingDelayMs === undefined ? {} : { processingDelayMs: input.processingDelayMs }),
   });
   const actions: CorporateAction[] = [];
+  const qualityLabels = new Set<string>();
   for (const kind of CORPORATE_ACTION_KINDS) {
     const res = pit.asOf({
       sourceId: corporateActionSourceId(kind),
@@ -221,9 +223,15 @@ function loadExecutionSeries(input: BacktestInput, entityId: string, decisionAt:
       ...(input.snapshotId === undefined ? {} : { snapshotId: input.snapshotId }),
       ...(input.processingDelayMs === undefined ? {} : { processingDelayMs: input.processingDelayMs }),
     });
-    for (const row of res.rows) actions.push(corporateActionFromValue(row.value));
+    for (const row of res.rows) {
+      // Surface an action row's promotion-blocking quality flags (e.g. UNVERIFIED_SINGLE_SOURCE, D-49): a NAV
+      // or benchmark series that credits a single-source dividend must carry that label into the trial. This
+      // covers entities the feature engine does not read (the benchmark, the cash ETF).
+      for (const code of blocksPromotionEvidence(row.qualityFlags)) qualityLabels.add(code);
+      actions.push(corporateActionFromValue(row.value));
+    }
   }
-  return { bars: raw.bars, actions, tr: TotalReturnSeries.build(raw.bars, actions, entityId).points };
+  return { bars: raw.bars, actions, tr: TotalReturnSeries.build(raw.bars, actions, entityId).points, qualityLabels: [...qualityLabels] };
 }
 
 function navIndex(entityId: string, nav: readonly { session: IsoDate; nav: Dec }[]): TRSeries {
@@ -277,6 +285,10 @@ export function runBacktest(input: BacktestInput): BacktestResult {
   const events: PortfolioEvent[] = [];
   const fills: ArmResult["fills"] = [];
   const labels = new Set<string>();
+  // Promotion-blocking flags on any consumed corporate action (e.g. UNVERIFIED_SINGLE_SOURCE, D-49) enter the
+  // run's labels up front, so a run that credits a single-source dividend on any universe entity is barred from
+  // promotion evidence even when that entity is not read by the feature engine.
+  for (const s of series.values()) for (const l of s.qualityLabels) labels.add(l);
   let tradedNotional = ZERO;
   let shortfall = ZERO;
   const executionOrderViolations: string[] = [];

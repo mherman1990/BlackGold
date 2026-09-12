@@ -1,6 +1,6 @@
 import { addDays, hashJson, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import type { ExchangeCalendar } from "../calendar/types.ts";
-import { isQualityCode, QUALITY_RULES } from "../data/quality.ts";
+import { blocksPromotionEvidence, isQualityCode, QUALITY_RULES } from "../data/quality.ts";
 import type { ReadOnlyPointInTime } from "../data/pit/types.ts";
 import { DEFAULT_BARS_SOURCE_ID, RawSeries } from "../market/series.ts";
 import { corporateActionFromValue, corporateActionSourceId, CORPORATE_ACTION_KINDS } from "../market/types.ts";
@@ -123,6 +123,7 @@ export function buildCoverageReport(input: CoverageInput): CoverageReport {
     }
 
     const actionCounts: Record<string, number> = {};
+    const actionBlocking = new Set<string>();
     for (const kind of CORPORATE_ACTION_KINDS) {
       const res = input.pit.asOf({
         sourceId: corporateActionSourceId(kind),
@@ -134,6 +135,10 @@ export function buildCoverageReport(input: CoverageInput): CoverageReport {
       for (const l of res.labels) labels.add(l);
       let n = 0;
       for (const row of res.rows) {
+        // A single-source corporate action (UNVERIFIED_SINGLE_SOURCE, D-49) carries its flag on the row, not in
+        // asOf().labels; fold the promotion-blocking codes into this entity's blocking codes so the report and
+        // its promotionBlockingCodes union reflect that a run over these actions cannot be promotion evidence.
+        for (const code of blocksPromotionEvidence(row.qualityFlags)) actionBlocking.add(code);
         const a = corporateActionFromValue(row.value);
         const d = actionEffective(a);
         if (d >= input.from && d <= input.to) n++;
@@ -145,7 +150,7 @@ export function buildCoverageReport(input: CoverageInput): CoverageReport {
     const last = raw.bars[raw.bars.length - 1]?.session;
     const leading = first === undefined ? expected : input.calendar.sessionDates(input.from, addDays(first, -1)).length;
     const trailing = last === undefined ? 0 : input.calendar.sessionDates(addDays(last, 1), input.to).length;
-    const blocking = [...new Set([...Object.keys(qualityCounts), ...(staleBars > 0 ? ["STALE_BAR"] : [])])]
+    const blocking = [...new Set([...Object.keys(qualityCounts), ...(staleBars > 0 ? ["STALE_BAR"] : []), ...actionBlocking])]
       .filter(isQualityCode)
       .filter((c) => !QUALITY_RULES[c].decisionAllowed || !QUALITY_RULES[c].promotionEvidenceAllowed)
       .sort();

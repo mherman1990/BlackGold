@@ -7,6 +7,7 @@ import { computeFeatures, type FeatureParams } from "../src/strategy/features.ts
 import { DEFAULT_BARS_SOURCE_ID } from "../src/market/series.ts";
 import { defaultProcessingDelayMs } from "../src/data/pit/repository.ts";
 import { rawBarToValue } from "../src/market/types.ts";
+import { UNVERIFIED_SINGLE_SOURCE } from "../src/data/adapters/corporate-actions.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
 
 const SMALL: FeatureParams = {
@@ -313,6 +314,33 @@ describe("buildCoverageReport", () => {
     };
     expect(buildCoverageReport(args).reportHash).toBe(buildCoverageReport(args).reportHash);
     expect(() => buildCoverageReport({ ...args, from: D("2026-06-30"), to: D("2026-02-02") })).toThrow(RangeError);
+  });
+
+  it("surfaces a single-source corporate action's UNVERIFIED_SINGLE_SOURCE as a promotion-blocking code (D-49)", () => {
+    // A dividend flagged UNVERIFIED_SINGLE_SOURCE (e.g. from the Tiingo actions feed). asOf().labels never
+    // carries a row's own quality flags, so the report must read them off the action rows themselves — otherwise
+    // a run built on single-source actions would look promotion-eligible.
+    const exDate = D("2026-03-16");
+    const m = buildMarket({
+      paths: PATHS,
+      from: D("2026-01-02"),
+      to: D("2026-06-30"),
+      actions: [{ action: { kind: "CASH_DIVIDEND", entityId: "AAA", amount: N("0.5"), exDate, payDate: exDate, qualified: false }, qualityFlags: [UNVERIFIED_SINGLE_SOURCE] }],
+    });
+    const report = buildCoverageReport({
+      pit: m.pit,
+      calendar: m.calendar,
+      entities: ["AAA", "BBB"],
+      from: D("2026-02-02"),
+      to: D("2026-06-30"),
+      decisionAt: m.decisionAt(D("2026-06-30")),
+    });
+    const aaa = report.entities.find((e) => e.entityId === "AAA");
+    expect(aaa?.actionCounts["CASH_DIVIDEND"]).toBe(1);
+    expect(aaa?.blockingCodes).toContain(UNVERIFIED_SINGLE_SOURCE);
+    expect(report.promotionBlockingCodes).toContain(UNVERIFIED_SINGLE_SOURCE);
+    // An entity with no single-source action stays clean.
+    expect(report.entities.find((e) => e.entityId === "BBB")?.blockingCodes).not.toContain(UNVERIFIED_SINGLE_SOURCE);
   });
 
   it("audits cleanly when the coverage report itself goes through the auditor", () => {

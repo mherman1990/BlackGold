@@ -65,7 +65,7 @@ export type BuildMarketOptions = {
   staleSessions?: Readonly<Record<string, readonly IsoDate[]>>;
   /** Sessions to omit entirely, per entity, creating a GAP. */
   omitSessions?: Readonly<Record<string, readonly IsoDate[]>>;
-  actions?: readonly { action: CorporateAction; availableAt?: UtcInstant }[];
+  actions?: readonly { action: CorporateAction; availableAt?: UtcInstant; qualityFlags?: readonly string[] }[];
   /** Set the row's availableAt to the session close plus this many ms. Defaults to 30 minutes. */
   publishDelayMs?: number;
   db?: Db;
@@ -142,6 +142,7 @@ export function buildMarket(opts: BuildMarketOptions): FixtureMarket {
         rawContentHash: `sha256:${sha256Hex(`action:${JSON.stringify(entry.action)}`)}`,
         adapterVersion: ADAPTER_VERSION,
         parserVersion: ADAPTER_VERSION,
+        ...(entry.qualityFlags === undefined ? {} : { qualityFlags: [...entry.qualityFlags] }),
       }),
     );
   }

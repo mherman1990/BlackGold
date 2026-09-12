@@ -1,6 +1,7 @@
 import { addDays, Dec, ONE, ZERO, sumDec, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import type { ExchangeCalendar } from "../calendar/types.ts";
 import type { ReadOnlyPointInTime } from "../data/pit/types.ts";
+import { blocksPromotionEvidence } from "../data/quality.ts";
 import { corporateActionFromValue, corporateActionSourceId, CORPORATE_ACTION_KINDS, type CorporateAction } from "../market/types.ts";
 import { RawSeries, TotalReturnSeries, TR_ADJUSTMENT_VERSION, type LoadedBar, type TRPoint } from "../market/series.ts";
 import type { Charter } from "./charter.ts";
@@ -153,7 +154,13 @@ function loadEntity(deps: FeatureEngineDeps, entityId: string, from: IsoDate, to
       ...(deps.processingDelayMs === undefined ? {} : { processingDelayMs: deps.processingDelayMs }),
     });
     for (const l of res.labels) labels.add(l);
-    for (const row of res.rows) actions.push(corporateActionFromValue(row.value));
+    for (const row of res.rows) {
+      // An action row's own quality flags are not in asOf().labels (that only carries OPTIMISTIC_DELAY), so
+      // surface the promotion-blocking ones here: a total-return series built from a single-source corporate
+      // action (UNVERIFIED_SINGLE_SOURCE, D-49) must carry that label into the trial so it bars promotion.
+      for (const code of blocksPromotionEvidence(row.qualityFlags)) labels.add(code);
+      actions.push(corporateActionFromValue(row.value));
+    }
   }
   const tr = TotalReturnSeries.build(raw.bars, actions, entityId);
   return { bars: raw.bars, tr: tr.points, labels: [...labels], observationIds: raw.bars.map((b) => b.observationId), warnings: tr.warnings };
