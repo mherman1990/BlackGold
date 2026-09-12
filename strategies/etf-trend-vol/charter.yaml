@@ -8,9 +8,11 @@
 # evidence. `assertRegistrable` (packages/core/src/strategy/charter.ts) refuses this charter until the approval
 # block below is signed - state APPROVED with approved_by/approval_date/code_commit filled - which is the
 # OWNER's act (the carve-out in CLAUDE.md: Claude Code prepared this draft but must not sign it). The
-# strategy-charter tripwire test intentionally fails until then; that red is the gate working, not a bug. Once
-# signed, the DEFAULT_BARS_SOURCE_ID flip and the consequent code/test/STATE updates land as an immediate
-# follow-up (docs/DECISIONS.md#D-50). A registered result still needs ingested market data.
+# strategy-charter tripwire test intentionally fails until then; that red is the gate working, not a bug. This
+# PR is ATOMIC: it already carries the DEFAULT_BARS_SOURCE_ID flip to tiingo.eod.bars.1d, the tiingo processing-
+# delay entry, and the consequent test/prose updates, so the runtime source switches together with the signed
+# charter - never a window where a 0.2.0-labelled run reads the old Alpaca feed (a Codex P1 on PR #57;
+# docs/DECISIONS.md#D-50). A registered result still needs ingested market data.
 
 strategy_id: etf-trend-vol
 charter_version: 0.2.0

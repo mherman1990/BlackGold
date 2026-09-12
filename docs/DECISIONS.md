@@ -782,11 +782,15 @@ behavior, a change from 0.1.0's conservative IEX-volume ADV.
 **How this lands.** Claude Code prepared the 0.2.0 charter as a DRAFT on `claude/charter-tiingo-default`: the
 version bump, the revised OD-4, and the approval block left unsigned (`state: DRAFT`). `assertRegistrable` and
 the `strategy-charter` tripwire test refuse it until the owner signs (set `state: APPROVED`, fill `approved_by`,
-`approval_date`, `code_commit`) — the branch's CI is red by design until then. Once signed and merged, the
-engineering follow-up flips `DEFAULT_BARS_SOURCE_ID` (`packages/core/src/market/series.ts`) to
-`tiingo.eod.bars.1d`, updates the tests that encode the old default, refreshes STATE/HANDOFF, and ships in the
-next release. Until 0.2.0 is signed, the strategy still runs on 0.1.0 (Alpaca); `research coverage --source`
-already reads Tiingo without a charter change.
+`approval_date`, `code_commit`) — the branch's CI is red by design until then. **The PR is atomic (a Codex P1 on
+#57): deferring the runtime flip would leave a window where a 0.2.0-labelled backtest/coverage that omits
+`barsSourceId` silently reads the old Alpaca feed. So this same PR already carries the `DEFAULT_BARS_SOURCE_ID`
+flip to `tiingo.eod.bars.1d` (`packages/core/src/market/series.ts`), the previously-missing `tiingo.` 15-minute
+processing-delay entry (`packages/core/src/data/pit/repository.ts` — Tiingo bars were silently getting the
+60-minute fallback), the consequent test updates, the 0.2.0 prose banner, and the STATE/HANDOFF updates.** The
+runtime source therefore switches together with the signed charter. The only red before signing is the tripwire;
+on signing it goes fully green and ships in the next release (0.1.7). Until 0.2.0 is signed, the strategy still
+runs on 0.1.0 (Alpaca); `research coverage --source` already reads Tiingo without a charter change.
 
 ---
 

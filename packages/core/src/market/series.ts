@@ -46,7 +46,7 @@ export type RawSeriesQuery = {
   processingDelayMs?: number;
 };
 
-export const DEFAULT_BARS_SOURCE_ID = "alpaca.iex.bars.1d";
+export const DEFAULT_BARS_SOURCE_ID = "tiingo.eod.bars.1d";
 
 export const RawSeries = {
   /**

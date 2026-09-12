@@ -22,6 +22,7 @@ import {
   type CorporateAction,
   type RawBar,
 } from "../src/index.ts";
+import { DEFAULT_BARS_SOURCE_ID } from "../src/market/series.ts";
 
 const H = `sha256:${sha256Hex("bars")}`;
 const d = isoDate;
@@ -172,7 +173,7 @@ describe("RawSeries.load", () => {
     for (const b of [bar("2026-03-02", "100"), bar("2026-03-03", "101"), bar("2026-03-04", "102"), bar("2026-03-06", "102"), bar("2026-03-09", "103")]) {
       const t = dailyBarTimes(b.session, cal);
       pit.append({
-        sourceId: "alpaca.iex.bars.1d",
+        sourceId: DEFAULT_BARS_SOURCE_ID,
         sourceLocator: `TST/${b.session}`,
         entityId: "TST",
         observedAt: t.observedAt,
