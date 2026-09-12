@@ -5,6 +5,7 @@ import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
 import { backtestParamsFromCharter, costModelFor, costsFromCharter, runBacktest, weeklyDecisionSessions, type BacktestInput } from "../src/research/backtest.ts";
 import { auditReads } from "../src/research/leakage.ts";
 import { defaultProcessingDelayMs } from "../src/data/pit/repository.ts";
+import { UNVERIFIED_SINGLE_SOURCE } from "../src/data/adapters/corporate-actions.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
 
 
@@ -143,6 +144,21 @@ describe("runBacktest", () => {
       // The decision is anchored at or before its own session, never after.
       expect(d.anchorSession <= d.decisionSession).toBe(true);
     }
+  });
+
+  it("carries a consumed single-source corporate action's UNVERIFIED_SINGLE_SOURCE into the run labels (D-49)", () => {
+    // A backtest that credits a single-source dividend must be barred from promotion evidence: the flag has to
+    // reach the trial labels. A fresh market so the flagged action does not couple the shared-market tests.
+    const exDate = D("2026-04-17");
+    const m = buildMarket({
+      paths: PATHS,
+      from: D("2026-01-02"),
+      to: D("2026-06-30"),
+      actions: [{ action: { kind: "CASH_DIVIDEND", entityId: "VTI", amount: N("1.0"), exDate, payDate: exDate, qualified: false }, qualityFlags: [UNVERIFIED_SINGLE_SOURCE] }],
+    });
+    const { input } = setup({ pit: m.pit, calendar: m.calendar });
+    const r = runBacktest(input);
+    expect(r.labels).toContain(UNVERIFIED_SINGLE_SOURCE);
   });
 
   it("is deterministic: the same inputs produce the same result hash and the same seals", () => {

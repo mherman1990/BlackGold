@@ -24,7 +24,9 @@ import { normalizeSymbols, tiingoRequestUrl, type TiingoContext } from "./tiingo
  * closes plus the corporate-action ledger, and this adapter is that ledger's Tiingo source.
  *
  * Tiingo is a SINGLE public source, so every action it produces is flagged `UNVERIFIED_SINGLE_SOURCE` - usable
- * for research and decisions, never promotion evidence (docs/DECISIONS.md D-29/D-49, `data/quality.ts`). This
+ * for research and decisions, never promotion evidence (docs/DECISIONS.md D-29/D-49, `data/quality.ts`). That
+ * bar binds because the consumers of corporate actions (features, backtest, coverage) fold each action row's
+ * promotion-blocking flags into the trial labels and coverage blocking codes `setPromotionEvidence` checks. This
  * is the automated alternative to the operator-curated, multi-source vendored file in `corporate-actions.ts`;
  * the two share the `corporate_action.<KIND>` source ids and the same strict `corporateActionFromValue`
  * validator, so an operator uses one or the other for a given universe and never both (mixing double-counts a

@@ -10,6 +10,7 @@ import {
   requiredHistorySessions,
   type FeatureParams,
 } from "../src/strategy/features.ts";
+import { UNVERIFIED_SINGLE_SOURCE } from "../src/data/adapters/corporate-actions.ts";
 import { buildMarket, D, N, pathClose, type PricePath } from "./strategy-fixture.ts";
 
 /** Small windows keep the fixture short while exercising the same code paths as the charter's 252/200/63. */
@@ -287,5 +288,22 @@ describe("featureParamsFromCharter", () => {
       advSessions: 20,
       minAdvUsd: new Dec("50000000"),
     });
+  });
+
+  it("propagates a consumed corporate action's UNVERIFIED_SINGLE_SOURCE into the feature-series labels (D-49)", () => {
+    // A dividend flagged single-source is consumed by the total-return series that feeds the features; the flag
+    // must reach fs.labels so it lands in the trial and bars promotion. asOf().labels alone never carries it.
+    const exDate = D("2026-03-16");
+    const m = buildMarket({
+      paths: RISERS,
+      from: D("2026-01-02"),
+      to: D("2026-06-30"),
+      actions: [{ action: { kind: "CASH_DIVIDEND", entityId: "AAA", amount: N("0.5"), exDate, payDate: exDate, qualified: false }, qualityFlags: [UNVERIFIED_SINGLE_SOURCE] }],
+    });
+    const fs = computeFeatures(
+      { pit: m.pit, calendar: m.calendar },
+      { riskEntities: ["AAA", "BBB", "CCC"], cashEntityId: "BIL", decisionAt: m.decisionAt(D("2026-05-15")), params: SMALL },
+    );
+    expect(fs.labels).toContain(UNVERIFIED_SINGLE_SOURCE);
   });
 });

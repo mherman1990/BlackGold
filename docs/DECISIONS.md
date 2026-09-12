@@ -731,6 +731,19 @@ remains the only promotion-eligible corporate-action path. An operator uses one 
 universe, never both, because the two share the `corporate_action.<KIND>` source ids and would double-count a
 distribution if mixed.
 
+**Making the flag bite (P1 fix, review of PR #54).** The safeguard is only real if the flag reaches the check
+`ExperimentRegistry.setPromotionEvidence` runs. `asOf().labels` never carries a row's own `qualityFlags` (it
+holds only `OPTIMISTIC_DELAY`), and the three consumers of corporate actions — `strategy/features.ts:loadEntity`,
+`research/backtest.ts:loadExecutionSeries`, and `research/coverage.ts:buildCoverageReport` — copied only
+`asOf().labels`, discarding each action row's flags. So `UNVERIFIED_SINGLE_SOURCE` never reached trial labels or
+the coverage report's blocking codes, and a run built on single-source actions would have looked
+promotion-eligible. Fixed: all three now fold each consumed action row's promotion-blocking codes
+(`blocksPromotionEvidence(row.qualityFlags)`) into the labels/blocking codes they emit — the features and
+backtest paths into the trial labels, coverage into `blockingCodes`/`promotionBlockingCodes`. The backtest fold
+lives in `loadExecutionSeries`, so it also covers entities the feature engine never reads (the benchmark, the
+cash ETF). This closed gap applied equally to the pre-existing vendored path; the new tests
+(`research-leakage-coverage`, `strategy-features`, `research-backtest`) pin the end-to-end propagation.
+
 **Provenance limits (recorded as facts, not hidden).** A prices feed names no announcement date and no pay date,
 so: `availableAt` is the ex-date start — the conservative, leakage-safe instant a going-ex action is certainly
 known by (the real declaration is earlier, never later); `payDate` defaults to the ex-date (the TR series reads
