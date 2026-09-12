@@ -1,28 +1,32 @@
 # Machine-readable companion to ALPHA_CHARTER.md. The prose charter is the specification a human reads;
 # this file is the only form the code executes.
 #
-# STATUS: APPROVED. The owner signed the approval block below on 2026-09-08 (D-48) - Claude Code did not; that
-# is the owner's act, and the carve-out ("What standing authorization never covers" in CLAUDE.md) held. All four
-# open decisions are resolved (D-39), the XLE condition is settled (excluded), and D-32 (book-slot priority) is
-# owner-confirmed via the ALPHA_CHARTER.md section 8 "Book-slot priority" row. `assertRegistrable`
-# (packages/core/src/strategy/charter.ts) now passes: approval.state is APPROVED, every open decision is
-# resolved, and no conditional universe member is undecided. Signing changed the charter hash, which was the
-# point: the approved charter is a different artifact from the draft it came from. A registered result still
-# needs ingested market data.
+# STATUS: DRAFT (charter_version 0.2.0) - AWAITING OWNER SIGNATURE. The 0.1.0 charter was owner-signed on
+# 2026-09-08 (D-48); this 0.2.0 draft revises OD-4 to adopt Tiingo EOD daily bars (tiingo.eod.bars.1d) as the
+# strategy's market-data source, replacing the Alpaca IEX feed. Adopting a new data source is a data-transform
+# change and therefore a NEW STRATEGY VERSION (CLAUDE.md versioning rule): 0.2.0 does NOT inherit 0.1.0's
+# evidence. `assertRegistrable` (packages/core/src/strategy/charter.ts) refuses this charter until the approval
+# block below is signed - state APPROVED with approved_by/approval_date/code_commit filled - which is the
+# OWNER's act (the carve-out in CLAUDE.md: Claude Code prepared this draft but must not sign it). The
+# strategy-charter tripwire test intentionally fails until then; that red is the gate working, not a bug. Once
+# signed, the DEFAULT_BARS_SOURCE_ID flip and the consequent code/test/STATE updates land as an immediate
+# follow-up (docs/DECISIONS.md#D-50). A registered result still needs ingested market data.
 
 strategy_id: etf-trend-vol
-charter_version: 0.1.0
+charter_version: 0.2.0
 prose_charter: strategies/etf-trend-vol/ALPHA_CHARTER.md
 runtime_llm_in_signal: false
 arms: [B0_PASSIVE, B1_DETERMINISTIC]
 
 approval:
-  state: APPROVED
-  approved_by: "Matt Herman"
-  approval_date: "2026-09-08"
-  code_commit: "474d0dc"
-  approval_ref: "docs/DECISIONS.md#D-39"
-  decision_refs: [D-08, D-09, D-10, D-15, D-19, D-24]
+  # OWNER SIGNATURE REQUIRED to make this 0.2.0 charter registrable. To sign: set `state` to APPROVED and fill
+  # `approved_by`, `approval_date`, and `code_commit`. Claude Code must not fill these (CLAUDE.md carve-out).
+  state: DRAFT
+  approved_by: null       # e.g. "Matt Herman"
+  approval_date: null     # e.g. "2026-09-12"
+  code_commit: null       # the commit you sign against
+  approval_ref: "docs/DECISIONS.md#D-50"
+  decision_refs: [D-08, D-09, D-10, D-15, D-19, D-24, D-50]
   conditions: []
   # ALPHA_CHARTER.md section 24. Each needs a written resolution before registration.
   open_decisions:
@@ -52,12 +56,18 @@ approval:
     - id: OD-4
       question: "Approval of the free market-data source after the capability probe (D-24, CR-09)."
       resolution: >-
-        Approved: Alpaca free tier, IEX feed, daily bars. The capability probe required by D-24 was run live
-        on 2026-09-07 - 340 bars for SPY and VTI, prices stored as decimal strings, availableAt one hour after
-        each close, DST-correct session times, zero OHLC violations. The CR-09 limitation stands and is
-        accepted: IEX is not the consolidated SIP tape, so reported volume is a fraction of consolidated and
-        ADV estimates read low, which makes the 1% ADV cap bind earlier than it would on full-tape volume.
-        That is conservative for execution. Owner decision, 2026-09-07 (D-39).
+        PROPOSED for 0.2.0 (owner confirms by signing this charter): adopt Tiingo free tier, EOD daily bars
+        (tiingo.eod.bars.1d), replacing the Alpaca IEX feed approved at 0.1.0 (D-39). Reason: Alpaca's free IEX
+        feed only reaches ~2018, so the registered design window 2007-06-01..2018-12-31 cannot be run on it;
+        Tiingo serves the whole universe back past 2007 (verified on the Pi: 96,288 raw bars 2000-2026; coverage
+        over the design split returns uncovered:[] once the baked-in NYSE ad-hoc closures apply, coverageRatio
+        0.9986). Prices are raw OHLCV as decimal strings, availableAt = close + 60 min (estimated) - the same
+        point-in-time treatment as Alpaca. Corporate actions come from `ingest tiingo-actions` (D-49), flagged
+        UNVERIFIED_SINGLE_SOURCE (usable for research and decisions, never promotion evidence) until a
+        >=2-source reconciled ledger exists. On CR-09: Tiingo's daily volume is composite, not IEX-only, so the
+        ADV cap no longer reads artificially low - ADV participation binds on full-tape volume, the intended
+        behavior. This is a new strategy version (0.2.0) and does not inherit 0.1.0's evidence. Owner decision
+        recorded on signing (D-50).
 
 universe:
   universe_id: etf_trend_vol_v0
