@@ -123,6 +123,28 @@ loader needs no credentials and no network — it reads only the local file. Re-
 deduplicates. Curating the real dataset for the 14 symbols over the evaluable span (the XLF/XLRE 2015 spin-off is
 the acceptance case) is operator work; the ingest mechanism does not create the data.
 
+## Step 2c — or load corporate actions automatically from Tiingo (D-49, research-only)
+
+If you are pulling bars from Tiingo (`ingest tiingo-bars`, deeper history than the free IEX feed — see
+`docs/DECISIONS.md` D-49) you can extract the corporate actions from the **same prices payload** instead of
+curating a file. Tiingo's daily rows carry `divCash` and `splitFactor`; `ingest tiingo-actions` turns them into
+`CASH_DIVIDEND` and `SPLIT` observations:
+
+```bash
+node packages/core/dist/main.js ingest tiingo-actions \
+  --symbols VTI,QQQ,IWM,VTV,VUG,XLK,XLF,XLV,XLI,XLP,XLU,XLY,BIL,SPY \
+  --start 2006-04-01 --end 2026-09-06
+```
+
+Tiingo is a **single source**, so every action it produces is flagged `UNVERIFIED_SINGLE_SOURCE`: it feeds the
+total-return series for research and decisions, but any run that touches it is **barred from promotion evidence**
+by the quality policy. This is the fast path to a research-grade total-return dataset; the operator-curated,
+two-source vendored file in Step 2b remains the only promotion-eligible corporate-action source. Use one path or
+the other for the universe, never both — they share the `corporate_action.<KIND>` source ids and would
+double-count a distribution if mixed. The feed names no announcement or pay date, so `availableAt` is the
+conservative ex-date start, `payDate` defaults to the ex-date, and `qualified` defaults to false; the TR series
+reads only ex-date and amount, so these defaults do not affect returns.
+
 ## Step 3 — measure what actually came back (this is the CR-09 measurement)
 
 Alpaca's free **IEX** feed does not reach back to 2007 — IEX itself is younger than that. **How far back Basic

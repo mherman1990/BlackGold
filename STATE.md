@@ -2,7 +2,7 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-09-08 by Claude Code (Phase 5 decision gate merged as PR #35; owner signed the charter + `risk.yaml`, recorded as D-48).
+**Last updated:** 2026-09-12 by Claude Code (D-49: automated single-source Tiingo corporate-actions adapter `ingest tiingo-actions`, flagged `UNVERIFIED_SINGLE_SOURCE` — research-only, never promotion evidence). Prior: 2026-09-08 (Phase 5 decision gate merged as PR #35; owner signed the charter + `risk.yaml`, D-48).
 
 ## Product state
 
@@ -14,7 +14,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 | Live trading | Absent by construction. Config loader and gateway both refuse `LIVE_MANUAL` and `LIVE_LIMITED`; CI asserts the image refuses them too |
 | Broker credentials | None exist anywhere in this project. Only the synthetic broker adapter exists |
 | Runtime LLM | **Phase 3 machinery merged to `main`** (PR #22, #23, #25): provider-agnostic analyst pipeline + safety surface, the Anthropic adapter behind the single egress module, call archiving/budget persistence, the `research analyst` CLI, and status-page visibility. **No live call has been made** — no key is on the Pi and the one CR-12/CR-13 verification run is still pending. The `etf-trend-vol` charter declares no LLM in the signal and only two arms, so nothing wires the analyst into a decision |
-| Data ingestion | **All four adapters live-verified 2026-09-07.** FRED (16,880 obs / 5,103 vintages), SEC EDGAR (1,590 obs), CFTC COT (34 obs), Alpaca IEX bars (340 obs / 170 sessions). **Two of the four failed on their first real request** - FRED on CR-28 and CR-29, SEC on CR-30 - all fixed and tested. CFTC and Alpaca passed first time. No production ingest schedule is wired yet (Phase 5) |
+| Data ingestion | **All four adapters live-verified 2026-09-07.** FRED (16,880 obs / 5,103 vintages), SEC EDGAR (1,590 obs), CFTC COT (34 obs), Alpaca IEX bars (340 obs / 170 sessions). **Two of the four failed on their first real request** - FRED on CR-28 and CR-29, SEC on CR-30 - all fixed and tested. CFTC and Alpaca passed first time. No production ingest schedule is wired yet (Phase 5). **Tiingo EOD bars** (`tiingo.eod.bars.1d`) were added for the deeper 2007+ history the design window needs (Alpaca IEX starts ~2018); the owner ingested them on the Pi (96,288 bars, 2000-2026). **D-49 (2026-09-12):** `ingest tiingo-actions` extracts corporate actions (`divCash`/`splitFactor`) from the same Tiingo feed, flagged `UNVERIFIED_SINGLE_SOURCE` — usable for research/decisions, **never promotion evidence**; the reconciled ≥2-source vendored file stays the only promotion-eligible corporate-action source |
 | First Alpha Charter | `strategies/etf-trend-vol/charter.yaml` is **APPROVED** — owner-signed 2026-09-08 (state `APPROVED`, `charter_version 0.1.0`, `approved_by "Matt Herman"`, `code_commit 474d0dc`, `approval_ref docs/DECISIONS.md#D-39`); all four open decisions resolved (D-39), XLE excluded (12-ETF universe). `assertRegistrable` now passes, and the tripwire test asserts the signed state (PR #36). Registrable, and D-32 (book-slot priority) is now owner-confirmed (2026-09-08), so **market data ingestion is the sole remaining blocker to a registered experiment** |
 | Registered experiments | None. No experiment has been registered, no result computed, no holdout opened |
 | Umbrel manifests | Written (`umbrel-app-store.yml`, `blackgold-trading/`) and identity-checked; not yet installed anywhere |
@@ -37,7 +37,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 
 ## Decisions
 
-All Discovery recommendations accepted by Matt on 2026-09-06 (see the header of `docs/DECISIONS.md`). Phase 2 added D-32 to D-36; D-37 grants Claude Code standing git and GitHub authority, with the carve-outs in `CLAUDE.md` that no autonomy reaches.
+All Discovery recommendations accepted by Matt on 2026-09-06 (see the header of `docs/DECISIONS.md`). Phase 2 added D-32 to D-36; D-37 grants Claude Code standing git and GitHub authority, with the carve-outs in `CLAUDE.md` that no autonomy reaches. **D-49 (Accepted 2026-09-12 by Matt, "Item 3, use A")** amends D-29 to permit automated single-source corporate actions from Tiingo, flagged `UNVERIFIED_SINGLE_SOURCE` (research-only); the multi-source reconciled vendored file remains the only promotion-eligible path.
 
 **D-32 is resolved — owner-confirmed 2026-09-08.** The prose charter's entry rule and its hysteresis hold rule can name six ETFs for a five-slot book, and section 9 did not say which yields. The code resolves it in favour of the incumbent, because resolving by rank alone would make the hysteresis band dead code whenever five names are eligible. Matt confirmed the incumbent-priority reading by adding a `Book-slot priority` row to section 8 of `ALPHA_CHARTER.md` (commit `13d637a`); it matches `candidates.ts`, so no code change was needed.
 
