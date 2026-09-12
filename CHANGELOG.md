@@ -2,6 +2,42 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.6
+
+Ships the corporate-action ledger source for Tiingo, the baked-in historical exchange closures, and the store
+icon — the pieces needed to compute a total-return dataset from the Tiingo history already on the Pi.
+
+**What changed**
+
+- **`ingest tiingo-actions` (D-49).** Extracts dividends and splits from Tiingo's daily-prices feed
+  (`divCash`/`splitFactor`) into the corporate-action ledger the total-return series is built from. Because
+  Tiingo is a single source, every action is flagged `UNVERIFIED_SINGLE_SOURCE`: usable for research and
+  decisions, **never promotion evidence**. The operator-curated, ≥2-source reconciled vendored file
+  (`ingest corporate-actions`) remains the only promotion-eligible corporate-action path — use one path or the
+  other for a universe, never both. See `docs/runbooks/first-ingestion.md` Step 2c.
+- **The single-source flag now actually bars promotion end to end.** The feature, backtest, and coverage read
+  paths previously discarded an action row's own quality flags; they now surface the promotion-blocking codes
+  into trial labels and the coverage report, so a run built on single-source actions cannot be cited as
+  promotion evidence.
+- **NYSE ad-hoc closures baked in.** National days of mourning and disaster closures (9/11, Sandy, Reagan,
+  Ford, G.H.W. Bush, Carter) are applied by the calendar by default, so coverage over the 2007-2018 design
+  window no longer reports those real closures as missing sessions.
+- **Store icon.** The app manifest now carries the `icon:` URL, so Black Gold shows its icon in the community
+  store and on the umbrelOS home screen (a store refresh picks it up).
+
+**Required actions**
+
+- Update Black Gold in umbrelOS to pick up the new image. No configuration change.
+- To build a total-return dataset from the Tiingo history, run `ingest tiingo-actions` for the universe (see
+  the runbook). This does **not** change the charter's data source; adopting Tiingo as the strategy's default
+  remains a separate, owner-signed new-strategy-version decision.
+
+**Risk / migration / rollback**
+
+- No live path, broker credential, or config-schema change. No database migration. Live trading remains
+  disabled by construction. Rollback: reinstall the prior image tag; ingested single-source actions are ordinary
+  point-in-time observations flagged `UNVERIFIED_SINGLE_SOURCE` and can be ignored without a migration.
+
 ## 0.1.5
 
 Lets the point-in-time coverage report measure a **specific bars source**, so the newly-ingested Tiingo daily
