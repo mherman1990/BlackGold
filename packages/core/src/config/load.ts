@@ -114,6 +114,12 @@ const SECRET_FILE_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 function secretsFilePath(env: NodeJS.ProcessEnv): string {
+  // An explicit override wins. On Umbrel the file is mounted into the core container ONLY (a core-only
+  // read-only mount, e.g. /run/blackgold-secrets/secrets.env), never under the shared /data volume the gateway
+  // also mounts - so the gateway, which holds no credential in Phases 0-5, cannot read these secrets. Local
+  // single-process dev falls back to ${dataDir}/secrets.env.
+  const override = env[`${ENV_PREFIX}SECRETS_FILE`];
+  if (override !== undefined && override !== "") return override;
   const dataDir = env[`${ENV_PREFIX}DATA_DIR`];
   return join(dataDir !== undefined && dataDir !== "" ? dataDir : "./data", SECRETS_FILE_NAME);
 }

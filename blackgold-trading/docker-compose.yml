@@ -37,8 +37,15 @@ services:
       BLACKGOLD_ALPACA_SECRET_KEY: ${BLACKGOLD_ALPACA_SECRET_KEY:-}
       BLACKGOLD_FRED_API_KEY: ${BLACKGOLD_FRED_API_KEY:-}
       BLACKGOLD_TIINGO_API_KEY: ${BLACKGOLD_TIINGO_API_KEY:-}
+      # Fallback secrets file for the credentials above, read only when the matching env var is empty
+      # (config/load.ts, D-52), for hosts (umbrelOS 1.x) where the app-data .env is not injected into the
+      # container. Mounted into THIS (core) container ONLY and read-only - never the gateway, which holds no
+      # credential in Phases 0-5 - so the credential boundary is preserved. Put the values in
+      # ${APP_DATA_DIR}/secrets/secrets.env on the Pi.
+      BLACKGOLD_SECRETS_FILE: /run/blackgold-secrets/secrets.env
     volumes:
       - ${APP_DATA_DIR}/data:/data
+      - ${APP_DATA_DIR}/secrets:/run/blackgold-secrets:ro
     healthcheck:
       test: ["CMD", "node", "packages/core/dist/main.js", "health"]
       interval: 60s

@@ -63,6 +63,15 @@ describe("file-based secrets loader", () => {
     expect(loadAppConfig(env).sleeveAccount.role).toBe("blackgold_sleeve");
   });
 
+  it("reads BLACKGOLD_SECRETS_FILE when set (the core-only mount), not the data dir", () => {
+    const dir = mkdtempSync(join(tmpdir(), "bg-secrets-"));
+    const custom = join(dir, "custom-secrets.env");
+    writeFileSync(custom, `BLACKGOLD_TIINGO_API_KEY=${FAKE_TIINGO}\n`);
+    const dataDir = mkdtempSync(join(tmpdir(), "bg-data-")); // no secrets.env here
+    const env: NodeJS.ProcessEnv = { BLACKGOLD_DATA_DIR: dataDir, BLACKGOLD_SECRETS_FILE: custom };
+    expect(loadAppConfig(env).sources.tiingoApiKey).toBe(FAKE_TIINGO);
+  });
+
   it("is a no-op when the file is absent", () => {
     const env = setup();
     expect(loadAppConfig(env).sources.tiingoApiKey).toBeUndefined();
