@@ -49,6 +49,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-41 | Phase 3 authorized (Matt, 2026-09-07, ordering "2 → 1 → 3"). Built as the provider-agnostic analyst pipeline and its safety surface, tested with a deterministic stub; the real Anthropic adapter, the POST egress change, and live CR-11/12/13 re-verification are a separate follow-up PR needing an API key | Accepted 2026-09-07 by Matt | Provider wiring, call/budget persistence, and prospective C1/D1 backtest wiring remain (credentials / Phase 5) |
 | D-42 | The Anthropic model adapter (raw `fetch`, no SDK) as its own PR: a second egress module `packages/core/src/model/provider-http.ts` is the only outbound POST and the only reference to `api.anthropic.com`; `live-disabled.test.ts` is updated to allow exactly that while trading hosts stay forbidden and `data/http.ts` stays POST-free. The key is passed in from the environment, never in git, code, or the image | Accepted 2026-09-07 by Matt ("keep building… put the key in when things are connected") | Live CR-12/CR-13 verification against the real API is Matt's one run on the Pi; call/budget persistence and C1/D1 wiring still Phase 5 |
 | D-49 | Corporate actions may be ingested automatically from Tiingo's daily-prices feed (`divCash`/`splitFactor`), flagged `UNVERIFIED_SINGLE_SOURCE`: usable for research and decisions, never promotion evidence. Amends D-29's "vendored file until a feed is verified" to add a single-source automated path alongside it; the operator-curated, ≥2-source reconciled vendored file stays the only promotion-eligible corporate-action source | Accepted 2026-09-12 by Matt ("Item 3, use A") | - |
+| D-50 | Adopt Tiingo (`tiingo.eod.bars.1d`) as the strategy's market-data source, revising OD-4 and cutting `charter_version` 0.2.0 — a new strategy version that does not inherit 0.1.0's evidence. Prepared as a DRAFT charter (`strategies/etf-trend-vol/charter.yaml`); the owner signs the approval block to accept | **Proposed** 2026-09-12 by Claude Code (owner to sign) | etf-trend-vol registration on 0.2.0 |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -757,6 +758,39 @@ separate, owner-signed item), and does not enable any live path. Tests:
 `packages/core/test/adapters-tiingo-corporate-actions.test.ts` (parser mapping, boundary no-action rows,
 corrupt-value rejection, single-source flag biting the quality policy, point-in-time leakage boundary,
 token-in-header/scrubbing, TR consumption, CLI).
+
+## D-50 Adopt Tiingo as the strategy's market-data source (charter 0.2.0)
+
+**Status:** **Proposed** 2026-09-12 by Claude Code. Accepted only when the owner signs the 0.2.0 charter's
+approval block — that signature is the decision, and the carve-out ("What standing authorization never covers"
+in CLAUDE.md) means Claude Code prepared this but must not sign it.
+
+**Context.** OD-4 at 0.1.0 approved Alpaca's free IEX feed (D-39). That feed only reaches ~2018, so the
+charter's registered design window (2007-06-01..2018-12-31) cannot be run on it — the strategic blocker to a
+first result. Tiingo's free EOD daily bars (`tiingo.eod.bars.1d`, shipped 0.1.3) serve the whole universe back
+past 2007; verified on the Pi (96,288 raw bars 2000-2026; coverage over the design split returns `uncovered:[]`
+once the baked-in NYSE ad-hoc closures apply, coverageRatio 0.9986). Corporate actions are now available via
+`ingest tiingo-actions` (D-49), flagged `UNVERIFIED_SINGLE_SOURCE`.
+
+**Decision (proposed).** Adopt Tiingo as the strategy's bar source. Adopting a new data source is a
+data-transform change and therefore a **new strategy version** (CLAUDE.md versioning rule): the charter is cut
+to `charter_version` 0.2.0, OD-4's resolution is revised to Tiingo, and 0.2.0 **does not inherit 0.1.0's
+evidence** — any registered result is fresh on 0.2.0. On CR-09: Tiingo's daily volume is composite (not
+IEX-only), so the ADV cap binds on full-tape volume rather than reading artificially low — the intended
+behavior, a change from 0.1.0's conservative IEX-volume ADV.
+
+**How this lands.** Claude Code prepared the 0.2.0 charter as a DRAFT on `claude/charter-tiingo-default`: the
+version bump, the revised OD-4, and the approval block left unsigned (`state: DRAFT`). `assertRegistrable` and
+the `strategy-charter` tripwire test refuse it until the owner signs (set `state: APPROVED`, fill `approved_by`,
+`approval_date`, `code_commit`) — the branch's CI is red by design until then. **The PR is atomic (a Codex P1 on
+#57): deferring the runtime flip would leave a window where a 0.2.0-labelled backtest/coverage that omits
+`barsSourceId` silently reads the old Alpaca feed. So this same PR already carries the `DEFAULT_BARS_SOURCE_ID`
+flip to `tiingo.eod.bars.1d` (`packages/core/src/market/series.ts`), the previously-missing `tiingo.` 15-minute
+processing-delay entry (`packages/core/src/data/pit/repository.ts` — Tiingo bars were silently getting the
+60-minute fallback), the consequent test updates, the 0.2.0 prose banner, and the STATE/HANDOFF updates.** The
+runtime source therefore switches together with the signed charter. The only red before signing is the tripwire;
+on signing it goes fully green and ships in the next release (0.1.7). Until 0.2.0 is signed, the strategy still
+runs on 0.1.0 (Alpaca); `research coverage --source` already reads Tiingo without a charter change.
 
 ---
 

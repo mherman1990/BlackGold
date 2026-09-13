@@ -200,10 +200,11 @@ describe("buildCoverageReport", () => {
     const onDefault = buildCoverageReport({ ...base, barsSourceId: DEFAULT_BARS_SOURCE_ID });
     expect(onDefault.uncovered).toEqual([]);
     expect(onDefault.barsSourceId).toBe(DEFAULT_BARS_SOURCE_ID);
-    // A different bars source (e.g. Tiingo) has no bars in this store: uncovered — exactly what `--source` selects.
-    const onTiingo = buildCoverageReport({ ...base, barsSourceId: "tiingo.eod.bars.1d" });
-    expect(onTiingo.uncovered).toEqual(["AAA"]);
-    expect(onTiingo.barsSourceId).toBe("tiingo.eod.bars.1d");
+    // A different bars source than the fixture's default has no bars in this store: uncovered — exactly what
+    // `--source` selects. (The default is now `tiingo.eod.bars.1d`, so the non-default probe is Alpaca.)
+    const onOther = buildCoverageReport({ ...base, barsSourceId: "alpaca.iex.bars.1d" });
+    expect(onOther.uncovered).toEqual(["AAA"]);
+    expect(onOther.barsSourceId).toBe("alpaca.iex.bars.1d");
   });
 
   it("counts interior gaps and drops the coverage ratio", () => {

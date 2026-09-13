@@ -1,5 +1,13 @@
 # Alpha Charter: `etf-trend-vol`
 
+> **⚠️ 0.2.0 revision pending owner signature (D-50, PR #57).** The prose below still describes the signed
+> **0.1.0** charter (APPROVED 2026-09-08, D-48). The proposed **0.2.0** revision — staged in `charter.yaml` as
+> DRAFT — **adopts Tiingo EOD daily bars (`tiingo.eod.bars.1d`) as the strategy's market-data source, replacing
+> the Alpaca IEX feed** (revises OD-4 / §6.2 and §24 item 4; Alpaca's free IEX feed does not reach the
+> 2007–2018 design window, Tiingo does). Adopting a new data source is a new strategy version, so 0.2.0 does
+> **not** inherit 0.1.0's evidence. Until the owner signs the 0.2.0 `approval:` block, the 0.1.0 charter below
+> remains binding; on signing, this prose is updated to 0.2.0 throughout.
+
 **Status: this specification is frozen** — its values are the ones in the owner-signed, executable `strategies/etf-trend-vol/charter.yaml` (APPROVED 2026-09-08, D-48), which is the binding approval and the only form the code executes. The `PROPOSED default` labels throughout this prose mark each value's origin as a Discovery proposal; all are now frozen into the signed charter, and changing any is a new charter version.
 
 | Field | Value |
@@ -113,6 +121,13 @@ Honest counterpoint: the post-2009 record of simple trend rules on U.S. equities
 Adjusted series are used only for signals and total-return accounting. Unadjusted series are used for execution simulation and share counts. Adjusted series are recomputed from the raw unadjusted series plus explicit dividend and split records; a vendor's pre-adjusted column is a cross-check, not the source of record (see `docs/DATA_PROVENANCE_SPEC.md`).
 
 ### 6.2 Allowed data sources (candidates; each must be probed and recorded in `docs/CAPABILITY_REGISTER.md` before use)
+
+> **0.2.0 (pending signature):** the market-data source is **Tiingo EOD daily bars (`tiingo.eod.bars.1d`)**,
+> replacing Alpaca IEX — the Alpaca free IEX feed only reaches ~2018, so the 2007–2018 design window cannot run
+> on it, while Tiingo covers the whole universe back past 2007 (verified: 96,288 bars, coverageRatio 0.9986 over
+> the design split). Corporate actions come from `ingest tiingo-actions` (D-49), flagged `UNVERIFIED_SINGLE_SOURCE`
+> (research only) until a ≥2-source reconciled ledger exists. Tiingo daily volume is composite (not IEX-only), so
+> the ADV cap binds on full-tape volume. The Alpaca row below is the 0.1.0 candidate, retained for history.
 
 | Source | What | Licence / caveat (UNVERIFIED until probed) |
 |---|---|---|

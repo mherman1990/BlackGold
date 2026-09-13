@@ -40,6 +40,7 @@ export const DEFAULT_PROCESSING_DELAY_MS: Readonly<Record<string, number>> = {
   "sec.": 15 * 60_000,
   "market.": 15 * 60_000,
   "alpaca.": 15 * 60_000,
+  "tiingo.": 15 * 60_000,
   "fred.": 60 * 60_000,
   "cftc.": 60 * 60_000,
   "treasury.": 60 * 60_000,
