@@ -21,10 +21,10 @@ import { PointInTimeRepository } from "./data/pit/repository.ts";
 import { INGEST_USAGE, parseIngestArgs, parseOptions, runIngest, UsageError } from "./ingest/run.ts";
 import { admittedRiskEtfs, charterUniverseMembers, loadCharterFile, registrabilityReasons } from "./strategy/charter.ts";
 import { classifyCandidateFactors } from "./strategy/factors.ts";
-import { splitPlan } from "./research/walkforward.ts";
+import { splitPlan, type SplitKind } from "./research/walkforward.ts";
 import { enumerateGrid, enumerateTiers } from "./research/robustness.ts";
 import { buildCoverageReport } from "./research/coverage.ts";
-import { runEvaluation } from "./research/evaluate.ts";
+import { runEvaluation, type EvaluationProgress } from "./research/evaluate.ts";
 
 /**
  * blackgold-core CLI. Operational commands plus Phase 1 public-source ingestion. No broker, no model, no live path.
@@ -58,10 +58,11 @@ Phase 2 research (deterministic charters only; computes nothing that a DRAFT cha
   research coverage --path <charter.yaml> --from <date> --to <date> [--source <bars-source-id>]
                                             Point-in-time coverage report for the charter universe
                                             (--source measures a specific bars source, e.g. tiingo.eod.bars.1d; default alpaca.iex.bars.1d)
-  research evaluate --path <charter.yaml> [--source <bars-source-id>]
+  research evaluate --path <charter.yaml> [--source <bars-source-id>] [--split design|walk-forward|recent]
                                             Deterministic backtest over the charter's design, walk-forward and recent splits
                                             (never the sealed holdout); emits a per-split result report. Numbers only: a run over
                                             promotion-ineligible data (e.g. single-source) is reported uncitable as evidence.
+                                            --split (comma-separated) runs only those kinds; progress is printed to stderr.
 
 Phase 3 runtime-LLM analyst (requires ANTHROPIC_API_KEY in the environment; abstains fail-closed without it):
   research analyst --manifest <model-manifest.yaml> --model <id> --candidate <SYMBOL> --at <iso-instant>
@@ -310,14 +311,36 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
         }
       }
       if (sub === "evaluate") {
-        const o = parseOptions(rest, { path: { type: "string" }, source: { type: "string" } });
+        const o = parseOptions(rest, { path: { type: "string" }, source: { type: "string" }, split: { type: "string" } });
         const path = o["path"];
-        if (typeof path !== "string") throw new UsageError("research evaluate requires --path <charter.yaml> [--source <bars-source-id>]");
+        if (typeof path !== "string") throw new UsageError("research evaluate requires --path <charter.yaml> [--source <bars-source-id>] [--split design|walk-forward|recent]");
         const source = o["source"];
+        // Optional --split filter: a comma-separated list of split kinds. Lets an operator run just the design
+        // split (or just recent) instead of the full sweep, which matters on a Pi where the full run is slow.
+        const splitAliases: Record<string, SplitKind> = { design: "DESIGN", "walk-forward": "WALK_FORWARD", walkforward: "WALK_FORWARD", wf: "WALK_FORWARD", recent: "RECENT" };
+        let splitKinds: SplitKind[] | undefined;
+        if (typeof o["split"] === "string") {
+          const requested = o["split"].split(",").map((s) => s.trim().toLowerCase()).filter((s) => s !== "");
+          const mapped: SplitKind[] = [];
+          for (const r of requested) {
+            const kind = splitAliases[r];
+            if (kind === undefined) throw new UsageError(`unknown --split value "${r}"; valid: design, walk-forward, recent`);
+            if (!mapped.includes(kind)) mapped.push(kind);
+          }
+          splitKinds = mapped;
+        }
         const loaded = loadCharterFile(path);
         // Registrability is threaded, not enforced: running a DRAFT charter on fixtures is legitimate, and the
         // result carries the reasons it may not be cited. Signing a charter is outside standing authorization.
         const reasons = registrabilityReasons(loaded.charter);
+        // Progress goes to stderr so stdout stays the clean JSON report; the timing is a side channel only.
+        let splitStartedAt = 0;
+        const onProgress = (e: EvaluationProgress): void => {
+          if (e.phase === "start") process.stderr.write(`[evaluate] ${e.total} split(s) to run\n`);
+          else if (e.phase === "split-start") { splitStartedAt = Date.now(); process.stderr.write(`[evaluate] split ${e.index + 1}/${e.total} ${e.kind} ${e.splitId} ...\n`); }
+          else if (e.phase === "split-done") process.stderr.write(`[evaluate] split ${e.index + 1}/${e.total} ${e.kind} done in ${((Date.now() - splitStartedAt) / 1000).toFixed(1)}s\n`);
+          else process.stderr.write(`[evaluate] all ${e.total} split(s) done\n`);
+        };
         const report = withDb(config, (db) =>
           runEvaluation({
             charter: loaded.charter,
@@ -325,7 +348,9 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
             registrabilityReasons: reasons,
             pit: pitRepository(db, config),
             calendar,
+            onProgress,
             ...(typeof source === "string" ? { barsSourceId: source } : {}),
+            ...(splitKinds === undefined ? {} : { splitKinds }),
           }),
         );
         return { exitCode: report.splits.length > 0 ? 0 : 1, output: report };

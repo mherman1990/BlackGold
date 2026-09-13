@@ -67,6 +67,8 @@ export type EvaluationReport = {
   charterHash: string;
   planHash: string;
   barsSourceId: string;
+  /** The split kinds actually evaluated. Narrowed when the caller passes a splitKinds filter. */
+  splitKinds: SplitKind[];
   /** Whether the charter itself may be registered (empty registrability reasons). */
   registrable: boolean;
   registrabilityReasons: string[];
@@ -77,6 +79,16 @@ export type EvaluationReport = {
   splits: SplitEvaluation[];
   reportHash: string;
 };
+
+/**
+ * Progress event emitted around each split and at the run's start and end. A side channel for long runs
+ * (the report itself is unaffected): a caller can print it to stderr so an operator sees the sweep advance.
+ */
+export type EvaluationProgress =
+  | { phase: "start"; total: number }
+  | { phase: "split-start"; total: number; index: number; splitId: string; kind: SplitKind }
+  | { phase: "split-done"; total: number; index: number; splitId: string; kind: SplitKind }
+  | { phase: "done"; total: number };
 
 export type RunEvaluationInput = {
   charter: Charter;
@@ -89,6 +101,10 @@ export type RunEvaluationInput = {
   initialCash?: Dec;
   /** Optional bars source override (e.g. tiingo.eod.bars.1d); defaults to the charter's default source. */
   barsSourceId?: string;
+  /** Restrict which split kinds run (e.g. just DESIGN, or just RECENT). Omit to run all non-holdout splits. */
+  splitKinds?: readonly SplitKind[];
+  /** Optional progress callback for long runs. A side channel only; it does not affect the report. */
+  onProgress?: (event: EvaluationProgress) => void;
 };
 
 export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
@@ -100,13 +116,20 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
   const params = backtestParamsFromCharter(c);
   const costs = costsFromCharter(c, "base");
 
+  // Never the sealed holdout; optionally narrow to the requested kinds. Order follows splitPlan (design,
+  // walk-forward schedule, recent).
+  const selected = plan.splits.filter(
+    (s) => s.kind !== "HOLDOUT" && (input.splitKinds === undefined || input.splitKinds.includes(s.kind)),
+  );
+  const notify = input.onProgress ?? (() => undefined);
+
   const splits: SplitEvaluation[] = [];
   const promotionBlocking = new Set<string>();
   let allCitable = true;
 
-  for (const split of plan.splits) {
-    // Defensive: splitPlan never returns the holdout, but never evaluate one even if that ever regressed.
-    if (split.kind === "HOLDOUT") continue;
+  notify({ phase: "start", total: selected.length });
+  for (const [index, split] of selected.entries()) {
+    notify({ phase: "split-start", total: selected.length, index, splitId: split.id, kind: split.kind });
 
     const btInput: BacktestInput = {
       charter: c,
@@ -152,10 +175,14 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
       },
       arms: report.arms.map((a) => ({ arm: a.arm, totalReturn: a.totalReturn.toFixed(8), maxDrawdown: a.maxDrawdown.toFixed(8) })),
     });
+
+    notify({ phase: "split-done", total: selected.length, index, splitId: split.id, kind: split.kind });
   }
+  notify({ phase: "done", total: selected.length });
 
   const barsSourceId = input.barsSourceId ?? DEFAULT_BARS_SOURCE_ID;
   const promotionBlockingCodes = [...promotionBlocking].sort();
+  const splitKinds = [...new Set(splits.map((s) => s.kind))];
   const body = {
     evaluationVersion: EVALUATION_VERSION,
     strategyId: c.strategy_id,
@@ -163,6 +190,7 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
     charterHash: input.charterHash,
     planHash: plan.planHash,
     barsSourceId,
+    splitKinds,
     splits: splits.map((s) => [s.splitId, s.reportHash, s.resultHash]),
     promotionBlockingCodes,
   };
@@ -173,6 +201,7 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
     charterHash: input.charterHash,
     planHash: plan.planHash,
     barsSourceId,
+    splitKinds,
     registrable: input.registrabilityReasons.length === 0,
     registrabilityReasons: [...input.registrabilityReasons],
     citableAsEvidence: allCitable && splits.length > 0,
