@@ -37,6 +37,13 @@ services:
       BLACKGOLD_ALPACA_SECRET_KEY: ${BLACKGOLD_ALPACA_SECRET_KEY:-}
       BLACKGOLD_FRED_API_KEY: ${BLACKGOLD_FRED_API_KEY:-}
       BLACKGOLD_TIINGO_API_KEY: ${BLACKGOLD_TIINGO_API_KEY:-}
+      # Opt-in autonomous market-data refresh (config/schema.ts sources.autoIngestCharterPath /
+      # autoIngestActions). Non-secret BEHAVIOURAL config, so it is passed through here, not via the
+      # credential-only secrets file (SECRET_FILE_KEYS deliberately excludes it). Empty defaults leave the
+      # scheduled ingest job idle; set the charter path on the Pi to enable the nightly incremental refresh,
+      # and set actions to "tiingo" only for a universe that uses Tiingo as its corporate-action source.
+      BLACKGOLD_AUTO_INGEST_CHARTER: ${BLACKGOLD_AUTO_INGEST_CHARTER:-}
+      BLACKGOLD_AUTO_INGEST_ACTIONS: ${BLACKGOLD_AUTO_INGEST_ACTIONS:-}
       # Fallback secrets file for the credentials above, read only when the matching env var is empty
       # (config/load.ts, D-52), for hosts (umbrelOS 1.x) where the app-data .env is not injected into the
       # container. Mounted into THIS (core) container ONLY and read-only - never the gateway, which holds no
