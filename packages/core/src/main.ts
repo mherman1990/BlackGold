@@ -155,10 +155,10 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
         // Convenience wrapper: ingest every symbol the charter reads (admitted risk ETFs + cash + benchmarks)
         // over its window span in one command, instead of listing symbols and dates by hand. Reads the charter
         // only; the fetch itself goes through the same allowlisted runIngest path as a single-source ingest.
-        const o = parseOptions(args.slice(1), { charter: { type: "string" }, start: { type: "string" }, end: { type: "string" }, source: { type: "string" } });
+        const o = parseOptions(args.slice(1), { charter: { type: "string" }, start: { type: "string" }, end: { type: "string" }, source: { type: "string" }, actions: { type: "string" } });
         const charterPath = o["charter"];
         if (typeof charterPath !== "string") {
-          throw new UsageError("ingest universe requires --charter <charter.yaml> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--source tiingo|alpaca]");
+          throw new UsageError("ingest universe requires --charter <charter.yaml> --actions <tiingo|none> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--source tiingo|alpaca]");
         }
         const loaded = loadCharterFile(charterPath);
         const c = loaded.charter;
@@ -168,18 +168,20 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
           start: typeof o["start"] === "string" ? o["start"] : undefined,
           end: typeof o["end"] === "string" ? o["end"] : undefined,
           source: typeof o["source"] === "string" ? o["source"] : undefined,
+          actions: typeof o["actions"] === "string" ? o["actions"] : undefined,
         });
         const csv = plan.symbols.join(",");
         const requests = [parseIngestArgs([plan.source === "tiingo" ? "tiingo-bars" : "alpaca-bars", "--symbols", csv, "--start", plan.start, "--end", plan.end])];
-        // Corporate actions have a Tiingo automated path only; an alpaca bars ingest leaves actions to the
-        // operator-curated vendored file (ingest corporate-actions --file), so it emits no actions request.
-        if (plan.source === "tiingo") requests.push(parseIngestArgs(["tiingo-actions", "--symbols", csv, "--start", plan.start, "--end", plan.end]));
+        // Corporate actions only when the operator explicitly asked for the Tiingo automated path. `none` leaves
+        // them to a reconciled vendored file (ingest corporate-actions --file), so a run cannot double-count a
+        // dividend/split by ingesting both the Tiingo and the vendored observation for the same event.
+        if (plan.actions === "tiingo") requests.push(parseIngestArgs(["tiingo-actions", "--symbols", csv, "--start", plan.start, "--end", plan.end]));
         mkdirSync(config.dataDir, { recursive: true });
         const { db } = openCoreDb(config);
         try {
           const reports: { source: string; report: Awaited<ReturnType<typeof runIngest>> }[] = [];
           for (const request of requests) reports.push({ source: request.source, report: await runIngest({ db, config, calendar }, request) });
-          return { exitCode: 0, output: { charterHash: loaded.charterHash, source: plan.source, symbols: plan.symbols, start: plan.start, end: plan.end, reports } };
+          return { exitCode: 0, output: { charterHash: loaded.charterHash, source: plan.source, actions: plan.actions, symbols: plan.symbols, start: plan.start, end: plan.end, reports } };
         } finally {
           db.close();
         }

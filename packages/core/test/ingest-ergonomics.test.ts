@@ -29,27 +29,42 @@ describe("resolveUniverseIngest", () => {
   ];
 
   it("dedupes and sorts members and spans earliest-with-lookback through latest", () => {
-    const plan = resolveUniverseIngest(["VTI", "QQQ", "VTI", "BIL"], ranges);
+    const plan = resolveUniverseIngest(["VTI", "QQQ", "VTI", "BIL"], ranges, { actions: "tiingo" });
     expect(plan.symbols).toEqual(["BIL", "QQQ", "VTI"]);
     expect(plan.source).toBe("tiingo");
+    expect(plan.actions).toBe("tiingo");
     expect(plan.start).toBe(addDays(isoDate("2007-06-01"), -UNIVERSE_LOOKBACK_DAYS));
     expect(plan.end).toBe("2026-09-06");
   });
 
-  it("honours explicit start, end, and source overrides", () => {
-    const plan = resolveUniverseIngest(["VTI"], ranges, { start: "2010-01-01", end: "2011-01-01", source: "alpaca" });
-    expect(plan).toEqual({ symbols: ["VTI"], start: isoDate("2010-01-01"), end: isoDate("2011-01-01"), source: "alpaca" });
+  it("honours explicit start, end, source, and actions overrides", () => {
+    const plan = resolveUniverseIngest(["VTI"], ranges, { start: "2010-01-01", end: "2011-01-01", source: "alpaca", actions: "none" });
+    expect(plan).toEqual({ symbols: ["VTI"], start: isoDate("2010-01-01"), end: isoDate("2011-01-01"), source: "alpaca", actions: "none" });
+  });
+
+  it("requires an explicit --actions choice (guards against double-counting corporate actions)", () => {
+    expect(() => resolveUniverseIngest(["VTI"], ranges, { source: "tiingo" })).toThrow(UsageError);
+    expect(() => resolveUniverseIngest(["VTI"], ranges, { source: "tiingo", actions: "maybe" })).toThrow(UsageError);
+  });
+
+  it("rejects --actions tiingo with a non-tiingo bars source", () => {
+    expect(() => resolveUniverseIngest(["VTI"], ranges, { source: "alpaca", actions: "tiingo" })).toThrow(UsageError);
   });
 
   it("rejects an unknown source", () => {
-    expect(() => resolveUniverseIngest(["VTI"], ranges, { source: "yahoo" })).toThrow(UsageError);
+    expect(() => resolveUniverseIngest(["VTI"], ranges, { source: "yahoo", actions: "none" })).toThrow(UsageError);
+  });
+
+  it("turns a malformed --start/--end into a usage error, not a crash", () => {
+    expect(() => resolveUniverseIngest(["VTI"], ranges, { actions: "none", start: "2020-13-99" })).toThrow(UsageError);
+    expect(() => resolveUniverseIngest(["VTI"], ranges, { actions: "none", end: "not-a-date" })).toThrow(UsageError);
   });
 
   it("rejects an end before the start", () => {
-    expect(() => resolveUniverseIngest(["VTI"], ranges, { start: "2020-01-01", end: "2019-01-01" })).toThrow(UsageError);
+    expect(() => resolveUniverseIngest(["VTI"], ranges, { actions: "none", start: "2020-01-01", end: "2019-01-01" })).toThrow(UsageError);
   });
 
   it("rejects an empty universe", () => {
-    expect(() => resolveUniverseIngest([], ranges)).toThrow(UsageError);
+    expect(() => resolveUniverseIngest([], ranges, { actions: "none" })).toThrow(UsageError);
   });
 });
