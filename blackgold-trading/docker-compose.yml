@@ -11,7 +11,7 @@ services:
       APP_PORT: 8479
 
   core:
-    image: ghcr.io/mherman1990/blackgold:0.1.12
+    image: ghcr.io/mherman1990/blackgold:0.1.12@sha256:7e0700e57f68086ebfd638e33dbfaa70b6de8cafc6198905665055d9885db909
     # The image ENTRYPOINT is `node`; the command supplies only the script and arguments.
     command: ["packages/core/dist/main.js", "serve"]
     user: "1000:1000"
@@ -62,7 +62,7 @@ services:
       retries: 3
 
   gateway:
-    image: ghcr.io/mherman1990/blackgold:0.1.12
+    image: ghcr.io/mherman1990/blackgold:0.1.12@sha256:7e0700e57f68086ebfd638e33dbfaa70b6de8cafc6198905665055d9885db909
     command: ["packages/broker-gateway/dist/main.js", "serve"]
     user: "1000:1000"
     init: true
