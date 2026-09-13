@@ -218,34 +218,55 @@ ingest alpaca-bars --symbols A,B,C --start YYYY-MM-DD --end YYYY-MM-DD
 ingest tiingo-bars --symbols A,B,C --start YYYY-MM-DD --end YYYY-MM-DD
 ingest tiingo-actions --symbols A,B,C --start YYYY-MM-DD --end YYYY-MM-DD
 ingest corporate-actions --file <path.json> [--dataset <name>]
-ingest universe --charter <charter.yaml> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--source tiingo|alpaca]`;
+ingest universe --charter <charter.yaml> --actions <tiingo|none> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--source tiingo|alpaca]`;
 
 /** Calendar-day headroom fetched before the earliest charter window, so a decision at that window's start still has its full feature lookback. Overridable with --start. */
 export const UNIVERSE_LOOKBACK_DAYS = 1095;
 
 export type UniverseIngestSource = "tiingo" | "alpaca";
+export type UniverseIngestActions = "tiingo" | "none";
 
 /**
- * Resolve the symbols and date span for `ingest universe` from the charter's universe members and window
- * boundaries. Pure: no charter import (members and ranges are passed in), no I/O. The span defaults to the
- * earliest window start minus UNIVERSE_LOOKBACK_DAYS through the latest window end, each overridable.
+ * Resolve the symbols, date span, and corporate-action choice for `ingest universe` from the charter's universe
+ * members and window boundaries. Pure: no charter import (members and ranges are passed in), no I/O. The span
+ * defaults to the earliest window start minus UNIVERSE_LOOKBACK_DAYS through the latest window end, each
+ * overridable. Corporate actions must be selected explicitly (see below).
  */
 export function resolveUniverseIngest(
   members: readonly string[],
   ranges: readonly { start: IsoDate; end: IsoDate }[],
-  opts: { start?: string | undefined; end?: string | undefined; source?: string | undefined } = {},
-): { symbols: string[]; start: IsoDate; end: IsoDate; source: UniverseIngestSource } {
+  opts: { start?: string | undefined; end?: string | undefined; source?: string | undefined; actions?: string | undefined } = {},
+): { symbols: string[]; start: IsoDate; end: IsoDate; source: UniverseIngestSource; actions: UniverseIngestActions } {
   const source = opts.source ?? "tiingo";
   if (source !== "tiingo" && source !== "alpaca") throw new UsageError('ingest universe --source must be "tiingo" or "alpaca"');
+  // Corporate actions must be chosen explicitly. Silently ingesting the Tiingo single-source actions alongside a
+  // reconciled vendored actions file stores both under the same corporate_action.* source (different locators),
+  // which asOf retains and TotalReturnSeries then sums/multiplies - double-counting dividends and splits. `none`
+  // relies on a separately ingested vendored file (ingest corporate-actions --file).
+  const actions = opts.actions;
+  if (actions !== "tiingo" && actions !== "none") {
+    throw new UsageError('ingest universe requires --actions tiingo|none: whether to also ingest Tiingo corporate actions. Use "none" when a reconciled >=2-source vendored actions file supplies them, so they are not double-counted.');
+  }
+  if (actions === "tiingo" && source !== "tiingo") throw new UsageError('ingest universe --actions tiingo requires --source tiingo');
   const symbols = [...new Set(members)].filter((s) => s.trim().length > 0).sort();
   if (symbols.length === 0) throw new UsageError("ingest universe: the charter names no symbols to ingest");
   if (ranges.length === 0) throw new UsageError("ingest universe: the charter has no windows");
   const earliest = ranges.map((r) => r.start).reduce((a, b) => (a < b ? a : b));
   const latest = ranges.map((r) => r.end).reduce((a, b) => (a > b ? a : b));
-  const start = opts.start !== undefined ? isoDate(opts.start) : addDays(earliest, -UNIVERSE_LOOKBACK_DAYS);
-  const end = opts.end !== undefined ? isoDate(opts.end) : latest;
+  const start = parseUniverseDate(opts.start, "start", () => addDays(earliest, -UNIVERSE_LOOKBACK_DAYS));
+  const end = parseUniverseDate(opts.end, "end", () => latest);
   if (end < start) throw new UsageError(`ingest universe: --end ${end} is before --start ${start}`);
-  return { symbols, start, end, source };
+  return { symbols, start, end, source, actions };
+}
+
+/** A user-supplied --start/--end for `ingest universe`: a malformed date is a usage error (exit 2), not a crash. */
+function parseUniverseDate(value: string | undefined, name: string, fallback: () => IsoDate): IsoDate {
+  if (value === undefined) return fallback();
+  try {
+    return isoDate(value);
+  } catch {
+    throw new UsageError(`ingest universe: --${name} must be a calendar date YYYY-MM-DD, got "${value}"`);
+  }
 }
 
 export function parseIngestArgs(args: readonly string[]): IngestRequest {
