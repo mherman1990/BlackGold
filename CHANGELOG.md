@@ -2,6 +2,50 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.11
+
+Corrects a silent total-return double-count, adds an opt-in nightly market-data refresh, and smooths ingest and credential ergonomics.
+
+**What changed**
+
+- **Corporate-action read-layer dedupe.** When the same dividend or split existed from two sources (a reconciled
+  ≥2-source vendored file and the single-source Tiingo feed), both rows survived under the same
+  `corporate_action.<kind>` source and `TotalReturnSeries` counted them twice — summing duplicate dividends and
+  multiplying duplicate splits, silently corrupting total return. `loadExecutionSeries` (the single point every
+  series load routes through) now dedupes per `(entity, kind, effective-date)`, preferring the reconciled row over
+  the single-source one. Labeling stays conservative: a superseded single-source row still surfaces
+  `UNVERIFIED_SINGLE_SOURCE`, so a run can never look more citable than its store — the fix only corrects the
+  arithmetic.
+- **Opt-in nightly incremental market-data ingest.** With `BLACKGOLD_AUTO_INGEST_CHARTER` set to a charter path,
+  the `serve` scheduler refreshes that universe's market data after each session close — no SSH, no `docker exec`.
+  The cursor is computed **per symbol** from each symbol's own latest stored bar, so a lagging or newly added
+  member is caught up from its earliest missing session rather than skipped; a symbol with no stored bar is left
+  for a manual seed and recorded. Bars only by default; set `BLACKGOLD_AUTO_INGEST_ACTIONS=tiingo` to also fetch
+  corporate actions (only for a universe that uses Tiingo as its action source). Unset leaves the job idle.
+- **`ingest universe --actions tiingo|none`.** A one-command wrapper that ingests a charter universe's bars and,
+  explicitly, Tiingo actions or none, over the charter's windows. Requiring the actions choice prevents silently
+  mixing single-source Tiingo actions with a reconciled vendored file.
+- **SEC User-Agent contact accepts name-plus-email.** `BLACKGOLD_SEC_USER_AGENT_CONTACT` now accepts the SEC
+  fair-access form "Name email@example.com", not a bare email only, and the emitted JSON-schema pattern matches
+  runtime validation.
+- **File-based credential fallback.** On hosts where the app-data `.env` is not injected into the container
+  (umbrelOS 1.x), core reads the allowlisted data-source credentials from `${APP_DATA_DIR}/secrets/secrets.env`,
+  mounted read-only into the **core** container only (never the gateway).
+
+**Required actions**
+
+- Update Black Gold in umbrelOS to pick up the new image. No configuration change is required. To enable the
+  nightly refresh, set `BLACKGOLD_AUTO_INGEST_CHARTER=strategies/etf-trend-vol/charter.yaml` in the app `.env`
+  (with the Tiingo credentials present) after a one-time `ingest universe` seeds the store; leave
+  `BLACKGOLD_AUTO_INGEST_ACTIONS` unset for a universe that uses a reconciled vendored actions file.
+
+**Risk / migration / rollback**
+
+- No live path, broker credential, gateway, risk-limit, mode, or authorization change. No database migration. The
+  dedupe changes the total-return computation deliberately, to make it correct (counted once, not twice); it
+  cannot inflate citability. The scheduled ingest writes only allowlisted public market data and is off unless
+  configured. Live trading remains disabled by construction. Rollback: reinstall the prior image tag (0.1.10).
+
 ## 0.1.10
 
 Makes `research evaluate` runnable a segment at a time, with live progress.
