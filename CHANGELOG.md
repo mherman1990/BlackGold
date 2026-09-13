@@ -2,6 +2,37 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.9
+
+Ships the `research evaluate` CLI so the deterministic backtest can be run on the Pi.
+
+**What changed**
+
+- **`research evaluate --path <charter.yaml> [--source <bars-source-id>]`.** Runs the deterministic backtest
+  over the charter's design, walk-forward and recent splits and emits a per-split result report (each arm, the
+  primary metric with its bootstrap interval and pass/fail, report and result hashes). The engine already
+  existed and was tested; this wires it into an operator command. Two boundaries hold by construction: the
+  **sealed holdout is never evaluated** (`splitPlan` excludes it and aborts if any split overlaps it; the
+  holdout opens only through the owner-gated registry path), and a run over **promotion-ineligible data is
+  reported uncitable** — a single-source dataset comes back `citableAsEvidence: false` with
+  `promotionBlockingCodes: ["UNVERIFIED_SINGLE_SOURCE"]` even under an approved charter (D-49). The numbers are
+  for research and owner judgement, never promotion evidence, until the ≥2-source reconciled corporate-action
+  path (D-29) lifts the block.
+
+**Required actions**
+
+- Update Black Gold in umbrelOS to pick up the new image. No configuration change. Then, inside the container,
+  `research evaluate --path strategies/etf-trend-vol/charter.yaml --source tiingo.eod.bars.1d` runs the backtest
+  (the charter ships in-image since 0.1.8, so no `docker cp` is needed). See `docs/runbooks/first-ingestion.md`
+  Step 6.
+
+**Risk / migration / rollback**
+
+- Read-only over the store. No live path, broker credential, gateway, risk-limit, mode, authorization, or
+  config-schema change. No database migration. Live trading remains disabled by construction. Registering an
+  experiment and opening the holdout stay owner-gated and are not automated. Rollback: reinstall the prior image
+  tag; the command simply disappears.
+
 ## 0.1.8
 
 Ships the strategy definitions in the runtime image so the charter commands work on the Pi.
