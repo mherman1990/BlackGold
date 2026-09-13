@@ -9,6 +9,8 @@ CLAUDE.local.md
 *.pem
 *.key
 secrets/
+secrets.env
+**/secrets.env
 config/local/
 LIVE_AUTHORIZATION.yaml
 LIVE_AUTHORIZATION.*.yaml

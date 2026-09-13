@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { z } from "zod";
 import { isLiveMode, SLEEVE_ROLE } from "@blackgold/shared";
@@ -94,14 +95,90 @@ export function envToAppConfigInput(env: NodeJS.ProcessEnv): Record<string, unkn
   });
 }
 
+/** Basename of the optional secrets file, read from under the data dir (see loadSecretsFile). */
+export const SECRETS_FILE_NAME = "secrets.env";
+
+/**
+ * The ONLY environment-variable names the secrets file may supply: read-only data-source credentials and the
+ * model-provider key. A closed allowlist by design - the file can never set MODE, the sleeve role, ports, or
+ * any behavioural config, so it cannot change what the app does and (impossible here regardless) could never
+ * enable a live path. A live mode is still refused from every source in loadAppConfig/parseAppConfig.
+ */
+const SECRET_FILE_KEYS: ReadonlySet<string> = new Set([
+  `${ENV_PREFIX}SEC_USER_AGENT_CONTACT`,
+  `${ENV_PREFIX}FRED_API_KEY`,
+  `${ENV_PREFIX}ALPACA_KEY_ID`,
+  `${ENV_PREFIX}ALPACA_SECRET_KEY`,
+  `${ENV_PREFIX}TIINGO_API_KEY`,
+  "ANTHROPIC_API_KEY",
+]);
+
+function secretsFilePath(env: NodeJS.ProcessEnv): string {
+  const dataDir = env[`${ENV_PREFIX}DATA_DIR`];
+  return join(dataDir !== undefined && dataDir !== "" ? dataDir : "./data", SECRETS_FILE_NAME);
+}
+
+/**
+ * Optional dotenv-style secrets file at `${dataDir}/secrets.env`, honoured ONLY for the allowlisted credential
+ * keys above. It exists because on some hosts (umbrelOS 1.x) the app-data .env is not injected into the
+ * container environment, while the data volume is reliably mounted - so an unattended process (the serve
+ * scheduler) would otherwise start with no credentials. Values here are equivalent to the same secrets in the
+ * environment: kept off AppConfig's serialized surfaces, never logged. A non-allowlisted key is ignored; a
+ * missing file is a no-op. Only the path (never a value) can appear in an error.
+ */
+function loadSecretsFile(env: NodeJS.ProcessEnv): Record<string, string> {
+  const path = secretsFilePath(env);
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw new ConfigError(`could not read secrets file ${path}: ${(err as Error).message}`);
+  }
+  const out: Record<string, string> = {};
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    if (!SECRET_FILE_KEYS.has(key)) continue;
+    let value = line.slice(eq + 1).trim();
+    if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
+      value = value.slice(1, -1);
+    }
+    if (value !== "") out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * The environment merged with the secrets file, for credentials only: a non-empty environment value always
+ * wins, and the file fills only a credential the environment leaves unset or empty. This is the single place
+ * both loadAppConfig and readAnthropicApiKey obtain credentials, preserving the "load.ts is the only module
+ * that reads secrets" invariant.
+ */
+function withFileSecrets(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const fileSecrets = loadSecretsFile(env);
+  const keys = Object.keys(fileSecrets);
+  if (keys.length === 0) return env;
+  const merged: NodeJS.ProcessEnv = { ...env };
+  for (const key of keys) {
+    const current = merged[key];
+    if (current === undefined || current === "") merged[key] = fileSecrets[key];
+  }
+  return merged;
+}
+
 /**
  * The model-provider API key, read from the standard `ANTHROPIC_API_KEY` variable (not `BLACKGOLD_`-prefixed,
- * to match the provider's own convention and the compose passthrough). Deliberately NOT placed on `AppConfig`
- * so it is never serialized into a log, a status surface, or a notification; the analyst wiring passes it
- * straight to the adapter constructor. Absent or empty yields undefined, and the analyst then fails closed.
+ * to match the provider's own convention and the compose passthrough), falling back to the secrets file. It is
+ * deliberately NOT placed on `AppConfig` so it is never serialized into a log, a status surface, or a
+ * notification; the analyst wiring passes it straight to the adapter constructor. Absent or empty yields
+ * undefined, and the analyst then fails closed.
  */
 export function readAnthropicApiKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const v = env["ANTHROPIC_API_KEY"];
+  const v = withFileSecrets(env)["ANTHROPIC_API_KEY"];
   return v === undefined || v === "" ? undefined : v;
 }
 
@@ -119,11 +196,13 @@ export function parseAppConfig(input: unknown): AppConfig {
 /** Load the app config from `BLACKGOLD_*` environment variables. */
 export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   // A live mode is refused before schema parsing so the message is unambiguous even if other fields are invalid.
+  // The live-mode precheck reads the raw environment only: the secrets file cannot carry MODE (it is not an
+  // allowlisted key), so it can neither enable nor disguise a live request.
   const requestedMode = env[`${ENV_PREFIX}MODE`];
   if (requestedMode === "LIVE_MANUAL" || requestedMode === "LIVE_LIMITED") {
     throw new LiveModeUnavailableError(requestedMode);
   }
-  return parseAppConfig(envToAppConfigInput(env));
+  return parseAppConfig(envToAppConfigInput(withFileSecrets(env)));
 }
 
 /** Read a YAML file and validate it against a zod schema. Uses the YAML 1.2 core schema: dates stay strings. */

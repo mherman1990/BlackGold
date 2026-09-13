@@ -51,6 +51,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-49 | Corporate actions may be ingested automatically from Tiingo's daily-prices feed (`divCash`/`splitFactor`), flagged `UNVERIFIED_SINGLE_SOURCE`: usable for research and decisions, never promotion evidence. Amends D-29's "vendored file until a feed is verified" to add a single-source automated path alongside it; the operator-curated, ≥2-source reconciled vendored file stays the only promotion-eligible corporate-action source | Accepted 2026-09-12 by Matt ("Item 3, use A") | - |
 | D-50 | Adopt Tiingo (`tiingo.eod.bars.1d`) as the strategy's market-data source, revising OD-4 and cutting `charter_version` 0.2.0 — a new strategy version that does not inherit 0.1.0's evidence. Prepared as a DRAFT charter (`strategies/etf-trend-vol/charter.yaml`); the owner signs the approval block to accept | **Proposed** 2026-09-12 by Claude Code (owner to sign) | etf-trend-vol registration on 0.2.0 |
 | D-51 | Reconsider the etf-trend-vol primary promotion metric: `net_sharpe_difference_vs_primary_benchmark` is nearly blind to the tail, but the strategy's thesis is drawdown reduction. Consider a Calmar/MAR- or Sortino-based gate, or an explicit max-drawdown constraint alongside the Sharpe test. Raised from the 2026-09-13 single-source machinery check (non-evidential). Any change is a new charter version | **Proposed** 2026-09-13 by Claude Code (owner to decide) | etf-trend-vol promotion criteria (charter version) |
+| D-52 | Optional file-based secrets fallback: `config/load.ts` reads a dotenv `${dataDir}/secrets.env` for a closed allowlist of credential keys (the data-source keys + `ANTHROPIC_API_KEY`) when the environment leaves them empty, because umbrelOS 1.x does not inject the app-data `.env` into the container while the data volume is reliably mounted. Environment always wins; the file can never set MODE, the sleeve role, or any behavioural config, so it cannot enable a live path | **Proposed** 2026-09-13 by Claude Code (owner to accept) | unattended/autonomous ingest and the analyst key under the umbrelOS env gap |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -827,6 +828,40 @@ primary metric and its threshold live in the signed 0.2.0 charter (hash-covered)
 edit and therefore a **new strategy version** that inherits none of the prior work (`CLAUDE.md`,
 versioning rule). Resolving this — and any re-signing — is the owner's act. Per the standing carve-outs, Claude
 Code may raise this with reasoning and may not decide it.
+
+---
+
+## D-52 Optional file-based secrets fallback
+
+**Status:** Proposed 2026-09-13 by Claude Code. Matt accepts by merging the PR; he may reject or ask for the
+umbrelOS-native env approach instead.
+
+**Why.** On umbrelOS 1.x the app runs under the legacy-compat shim and the app-data `.env`
+(`~/umbrel/app-data/blackgold-trading/.env`) is not injected into the container, so every `ingest` on the Pi
+has needed a manual `docker exec -e VAR=...`. That blocks two things the owner asked for: an unattended
+scheduled ingest (the serve scheduler would start with empty credentials and fail closed) and running the
+analyst (the `ANTHROPIC_API_KEY` never reaches the container). The data volume, unlike the environment, is
+reliably mounted.
+
+**Decision.** `config/load.ts` gains a dotenv-style fallback file at `${dataDir}/secrets.env`. When an
+environment variable is unset or empty, its value is taken from the file. It is honoured only for a **closed
+allowlist** of credential keys: `BLACKGOLD_SEC_USER_AGENT_CONTACT`, `BLACKGOLD_FRED_API_KEY`,
+`BLACKGOLD_ALPACA_KEY_ID`, `BLACKGOLD_ALPACA_SECRET_KEY`, `BLACKGOLD_TIINGO_API_KEY`, and `ANTHROPIC_API_KEY`.
+
+**Why it is safe.**
+- The environment always wins; the file only fills a gap.
+- The allowlist excludes MODE, the sleeve role, ports, and every behavioural setting, so the file cannot change
+  what the app does and - impossible in this build regardless - could never enable a live path. The live-mode
+  refusal in `loadAppConfig`/`parseAppConfig` still reads MODE from the environment only, and a permanent test
+  asserts a `secrets.env` naming `BLACKGOLD_MODE=LIVE_MANUAL` is ignored.
+- Values are equivalent to the same secrets already at rest in the app-data `.env`; they stay off `AppConfig`'s
+  serialized surfaces and are never logged (only the file path can appear in an error, never a value).
+- `load.ts` remains the single module that reads secrets; `secrets.env` is gitignored.
+
+**What it does not do.** It adds no credential, no broker path, no egress, and no live capability. It is purely
+a second read location for credentials the owner already holds. The umbrelOS-native alternative (fixing env
+injection via the app manifest) would need no code but depends on platform behaviour currently broken for this
+app; this fallback is self-contained and in our control.
 
 ---
 
