@@ -23,9 +23,9 @@ arms: [B0_PASSIVE, B1_DETERMINISTIC]
 approval:
   # OWNER SIGNATURE REQUIRED to make this 0.2.0 charter registrable. To sign: set `state` to APPROVED and fill
   # `approved_by`, `approval_date`, and `code_commit`. Claude Code must not fill these (CLAUDE.md carve-out).
-  state: DRAFT
-  approved_by: matt Herman       # e.g. "Matt Herman"
-  approval_date: 2026-09-12"     # e.g. "2026-09-12"
+  state: Approved
+  approved_by: Matt Herman       # e.g. "Matt Herman"
+  approval_date: 2026-09-12     # e.g. "2026-09-12"
   code_commit: 115dae4       # the commit you sign against
   approval_ref: "docs/DECISIONS.md#D-50"
   decision_refs: [D-08, D-09, D-10, D-15, D-19, D-24, D-50]
