@@ -2,7 +2,7 @@ manifestVersion: 1
 id: blackgold-trading
 category: finance
 name: Black Gold
-version: "0.1.10"
+version: "0.1.11"
 tagline: Evidence-first research and controlled execution for one ring-fenced sleeve
 icon: https://raw.githubusercontent.com/mherman1990/BlackGold/main/blackgold-trading/icon.svg
 description: >-
