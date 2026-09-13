@@ -16,6 +16,7 @@ import {
   PointInTimeRepository,
   Portfolio,
   PromotionEvidenceRefusedError,
+  DEFAULT_BARS_SOURCE_ID,
   RawSeries,
   TotalReturnSeries,
   UniverseStore,
@@ -51,8 +52,8 @@ function storeBars(pit: PointInTimeRepository, bars: RawBar[], flags: (b: RawBar
   bars.forEach((b, i) => {
     const t = dailyBarTimes(b.session, cal);
     pit.append({
-      sourceId: "alpaca.iex.bars.1d",
-      sourceLocator: `alpaca/bars/1d/${b.symbol}/${b.session}${flags(b, i).includes("STALE_BAR") ? "#repeat" : ""}`,
+      sourceId: DEFAULT_BARS_SOURCE_ID,
+      sourceLocator: `${DEFAULT_BARS_SOURCE_ID}/${b.symbol}/${b.session}${flags(b, i).includes("STALE_BAR") ? "#repeat" : ""}`,
       entityId: b.symbol,
       observedAt: t.observedAt,
       availableAt: t.availableAt,
