@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { Dec, ONE, ZERO } from "@blackgold/shared";
 import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
-import { backtestParamsFromCharter, costModelFor, costsFromCharter, runBacktest, weeklyDecisionSessions, type BacktestInput } from "../src/research/backtest.ts";
+import { backtestParamsFromCharter, costModelFor, costsFromCharter, reportBenchmarkSeries, runBacktest, weeklyDecisionSessions, type BacktestInput } from "../src/research/backtest.ts";
 import { auditReads } from "../src/research/leakage.ts";
 import { defaultProcessingDelayMs } from "../src/data/pit/repository.ts";
 import { UNVERIFIED_SINGLE_SOURCE } from "../src/data/adapters/corporate-actions.ts";
@@ -158,6 +158,54 @@ describe("runBacktest", () => {
     });
     const { input } = setup({ pit: m.pit, calendar: m.calendar });
     const r = runBacktest(input);
+    expect(r.labels).toContain(UNVERIFIED_SINGLE_SOURCE);
+  });
+
+  it("dedupes a corporate action present from both a reconciled and a single-source feed (no double-count)", () => {
+    // The same dividend can arrive from the reconciled operator file AND the single-source Tiingo feed - same
+    // entity/kind/exDate, different provenance (locators) - which asOf retains. Crediting both would
+    // double-count it in the total-return series.
+    const exDate = D("2026-04-17");
+    const div = { kind: "CASH_DIVIDEND", entityId: "VTI", amount: N("2.5"), exDate, payDate: exDate, qualified: false } as const;
+    const from = D("2026-01-02");
+    const to = D("2026-06-30");
+    const primaryTr = (m: ReturnType<typeof buildMarket>): string[] =>
+      reportBenchmarkSeries(setup({ pit: m.pit, calendar: m.calendar }).input).primary.points.map((p) => p.trIndex.toFixed(10));
+
+    const reconciledOnly = buildMarket({ paths: PATHS, from, to, actions: [{ action: div, sourceLocator: "vendored/div" }] });
+    const bothSources = buildMarket({
+      paths: PATHS,
+      from,
+      to,
+      actions: [
+        { action: div, sourceLocator: "vendored/div" },
+        { action: div, sourceLocator: "tiingo/div", qualityFlags: [UNVERIFIED_SINGLE_SOURCE] },
+      ],
+    });
+    const noDividend = buildMarket({ paths: PATHS, from, to });
+
+    // Deduped: the two-source run reproduces the single-action run exactly (the dividend is credited once)...
+    expect(primaryTr(bothSources)).toEqual(primaryTr(reconciledOnly));
+    // ...and stays above the no-dividend run, so the dividend was credited once, not zero.
+    const terminal = (rows: string[]): number => Number(rows[rows.length - 1]);
+    expect(terminal(primaryTr(bothSources))).toBeGreaterThan(terminal(primaryTr(noDividend)));
+  });
+
+  it("keeps conservative labeling: a superseded single-source action still taints the run (D-49)", () => {
+    // The reconciled action wins the arithmetic, but the mere presence of a single-source row keeps the run
+    // non-citable - the dedupe never makes a run look more citable than its store.
+    const exDate = D("2026-04-17");
+    const div = { kind: "CASH_DIVIDEND", entityId: "VTI", amount: N("2.5"), exDate, payDate: exDate, qualified: false } as const;
+    const m = buildMarket({
+      paths: PATHS,
+      from: D("2026-01-02"),
+      to: D("2026-06-30"),
+      actions: [
+        { action: div, sourceLocator: "vendored/div" },
+        { action: div, sourceLocator: "tiingo/div", qualityFlags: [UNVERIFIED_SINGLE_SOURCE] },
+      ],
+    });
+    const r = runBacktest(setup({ pit: m.pit, calendar: m.calendar }).input);
     expect(r.labels).toContain(UNVERIFIED_SINGLE_SOURCE);
   });
 
