@@ -2,6 +2,32 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.10
+
+Makes `research evaluate` runnable a segment at a time, with live progress.
+
+**What changed**
+
+- **`--split design|walk-forward|recent`** (comma-separated) restricts the run to those split kinds. The full
+  sweep is one design backtest plus the walk-forward schedule plus recent — heavy on a Pi. `--split recent` or
+  `--split design` runs just that segment, so a first look is minutes, not the whole sweep. The sealed holdout
+  is still never evaluated regardless of the filter.
+- **Per-split progress to stderr.** The command previously printed nothing until the entire sweep finished.
+  It now writes `split N/M <kind> <id> ...` / `done in Xs` lines to **stderr** as it goes, so an operator can
+  see it advance. stdout stays the clean JSON report, so piping is unaffected. The report gains a `splitKinds`
+  field recording which kinds were evaluated.
+
+**Required actions**
+
+- Update Black Gold in umbrelOS to pick up the new image. No configuration change. Then e.g.
+  `research evaluate --path strategies/etf-trend-vol/charter.yaml --source tiingo.eod.bars.1d --split recent`.
+
+**Risk / migration / rollback**
+
+- Read-only over the store; no live path, broker credential, config-schema, or database change. Progress is a
+  stderr side channel and does not affect the report or its hash (the same inputs still hash the same). Live
+  trading remains disabled by construction. Rollback: reinstall the prior image tag.
+
 ## 0.1.9
 
 Ships the `research evaluate` CLI so the deterministic backtest can be run on the Pi.

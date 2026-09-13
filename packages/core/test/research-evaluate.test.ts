@@ -142,4 +142,44 @@ describe("runEvaluation", () => {
     });
     expect(() => evaluate(bad, cleanMarket())).toThrow(SplitRangeError);
   });
+
+  it("runs only the requested split kinds when a --split filter is given", () => {
+    const c = evalCharter();
+    const m = cleanMarket();
+    const full = evaluate(c, m);
+    expect(full.splitKinds).toContain("DESIGN");
+    expect(full.splitKinds).toContain("RECENT");
+
+    const recentOnly = runEvaluation({
+      charter: c,
+      charterHash: "sha256:" + "0".repeat(64),
+      registrabilityReasons: registrabilityReasons(c),
+      pit: m.pit,
+      calendar: m.calendar,
+      splitKinds: ["RECENT"],
+    });
+    expect(recentOnly.splitKinds).toEqual(["RECENT"]);
+    expect(recentOnly.splits.every((s) => s.kind === "RECENT")).toBe(true);
+    expect(recentOnly.splits.length).toBeLessThan(full.splits.length);
+    // Narrowing scope changes the run, so the envelope hash differs from the full run.
+    expect(recentOnly.reportHash).not.toBe(full.reportHash);
+  });
+
+  it("emits progress around each split and at the start and end", () => {
+    const c = evalCharter();
+    const events: string[] = [];
+    const r = runEvaluation({
+      charter: c,
+      charterHash: "sha256:" + "0".repeat(64),
+      registrabilityReasons: registrabilityReasons(c),
+      pit: cleanMarket().pit,
+      calendar: cleanMarket().calendar,
+      onProgress: (e) => events.push(e.phase),
+    });
+    const n = r.splits.length;
+    expect(events[0]).toBe("start");
+    expect(events[events.length - 1]).toBe("done");
+    expect(events.filter((p) => p === "split-start").length).toBe(n);
+    expect(events.filter((p) => p === "split-done").length).toBe(n);
+  });
 });
