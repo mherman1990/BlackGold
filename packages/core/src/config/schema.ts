@@ -77,6 +77,13 @@ const AppConfigInput = z.object({
       fredApiKey: z.string().min(8).optional(),
       alpacaKeyId: z.string().min(8).optional(),
       alpacaSecretKey: z.string().min(8).optional(),
+      /**
+       * Opt-in: path to the charter whose universe the serve scheduler auto-ingests after each close (an
+       * incremental market-data refresh, bars + Tiingo actions, for only the sessions newer than the store).
+       * Unset (the default) leaves the job idle. Ingest still needs the source credentials in the environment
+       * or the secrets file; without them the job fails closed and the failure is recorded in the ledger.
+       */
+      autoIngestCharterPath: z.string().min(1).optional(),
       /** Tiingo EOD daily bars (deeper history than Alpaca free IEX). Read-only market data. */
       tiingoApiKey: z.string().min(8).optional(),
       /** Per-source-prefix processing delays as ISO-8601 durations; override spec defaults. */

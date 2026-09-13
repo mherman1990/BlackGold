@@ -88,6 +88,7 @@ export function envToAppConfigInput(env: NodeJS.ProcessEnv): Record<string, unkn
       alpacaKeyId: get("ALPACA_KEY_ID"),
       alpacaSecretKey: get("ALPACA_SECRET_KEY"),
       tiingoApiKey: get("TIINGO_API_KEY"),
+      autoIngestCharterPath: get("AUTO_INGEST_CHARTER"),
       processingDelays: delays("PROCESSING_DELAYS"),
       artifactBudgetBytes: num("ARTIFACT_BUDGET_BYTES"),
     }),
