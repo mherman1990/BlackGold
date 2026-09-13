@@ -2,6 +2,33 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.12
+
+Lets the nightly auto-ingest actually be turned on where the app-data `.env` is not injected (umbrelOS 1.x).
+
+**What changed**
+
+- **`BLACKGOLD_AUTO_INGEST_CHARTER` and `BLACKGOLD_AUTO_INGEST_ACTIONS` are now settable from `secrets.env`.**
+  0.1.11 added the opt-in nightly ingest but its switch could only arrive via the app-data `.env`, which
+  umbrelOS 1.x does not inject into the container — so on the Pi there was no way to enable it. These two keys
+  join the `secrets.env` allowlist (the only channel that reaches the unattended `serve` process there). They
+  are the sole non-credential keys admitted; `MODE`, the sleeve role, ports, budgets and every other behavioural
+  setting stay excluded, and a live path remains impossible from any source (D-52 amendment).
+
+**Required actions**
+
+- Update Black Gold in umbrelOS to pick up the new image. To enable the nightly refresh, add
+  `BLACKGOLD_AUTO_INGEST_CHARTER=strategies/etf-trend-vol/charter.yaml` to
+  `${APP_DATA_DIR}/secrets/secrets.env` (leave `BLACKGOLD_AUTO_INGEST_ACTIONS` unset for a universe that uses a
+  reconciled vendored actions file), with the Tiingo credentials present, then restart the app. Seed once with
+  `ingest universe` first if the store has no bars for a symbol.
+
+**Risk / migration / rollback**
+
+- No live path, broker credential, gateway, risk-limit, mode, or authorization change. No database migration.
+  The change only widens the credential-file allowlist by two opt-in, read-only-ingest switches. Live trading
+  remains disabled by construction. Rollback: reinstall the prior image tag (0.1.11).
+
 ## 0.1.11
 
 Corrects a silent total-return double-count, adds an opt-in nightly market-data refresh, and smooths ingest and credential ergonomics.

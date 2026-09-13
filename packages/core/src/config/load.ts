@@ -101,10 +101,18 @@ export function envToAppConfigInput(env: NodeJS.ProcessEnv): Record<string, unkn
 export const SECRETS_FILE_NAME = "secrets.env";
 
 /**
- * The ONLY environment-variable names the secrets file may supply: read-only data-source credentials and the
- * model-provider key. A closed allowlist by design - the file can never set MODE, the sleeve role, ports, or
- * any behavioural config, so it cannot change what the app does and (impossible here regardless) could never
- * enable a live path. A live mode is still refused from every source in loadAppConfig/parseAppConfig.
+ * The ONLY environment-variable names the secrets file may supply: the read-only data-source credentials, the
+ * model-provider key, and the two opt-in auto-ingest switches (`AUTO_INGEST_CHARTER` / `AUTO_INGEST_ACTIONS`).
+ * The two auto-ingest keys are the sole non-credential entries, and they are here for a reason: on umbrelOS 1.x
+ * the app-data `.env` is not injected into the container (D-52), so the secrets file is the ONLY channel that
+ * reaches an unattended `serve` process - and the scheduled ingest it turns on is precisely the autonomy D-52
+ * exists to serve. They are safe to admit here because they can only enable an opt-in, read-only public-data
+ * refresh: the charter path names which universe to fetch, and the actions switch is `tiingo|none`.
+ *
+ * A closed allowlist by design - the file still can NEVER set MODE, the sleeve role, ports, budgets, or any
+ * other behavioural config, so it cannot change what the app does beyond that one benign refresh and (impossible
+ * here regardless) could never enable a live path. A live mode is still refused from every source in
+ * loadAppConfig/parseAppConfig.
  */
 const SECRET_FILE_KEYS: ReadonlySet<string> = new Set([
   `${ENV_PREFIX}SEC_USER_AGENT_CONTACT`,
@@ -113,6 +121,8 @@ const SECRET_FILE_KEYS: ReadonlySet<string> = new Set([
   `${ENV_PREFIX}ALPACA_SECRET_KEY`,
   `${ENV_PREFIX}TIINGO_API_KEY`,
   "ANTHROPIC_API_KEY",
+  `${ENV_PREFIX}AUTO_INGEST_CHARTER`,
+  `${ENV_PREFIX}AUTO_INGEST_ACTIONS`,
 ]);
 
 function secretsFilePath(env: NodeJS.ProcessEnv): string {
@@ -127,8 +137,8 @@ function secretsFilePath(env: NodeJS.ProcessEnv): string {
 }
 
 /**
- * Optional dotenv-style secrets file at `${dataDir}/secrets.env`, honoured ONLY for the allowlisted credential
- * keys above. It exists because on some hosts (umbrelOS 1.x) the app-data .env is not injected into the
+ * Optional dotenv-style secrets file at `${dataDir}/secrets.env`, honoured ONLY for the allowlisted keys
+ * above. It exists because on some hosts (umbrelOS 1.x) the app-data .env is not injected into the
  * container environment, while the data volume is reliably mounted - so an unattended process (the serve
  * scheduler) would otherwise start with no credentials. Values here are equivalent to the same secrets in the
  * environment: kept off AppConfig's serialized surfaces, never logged. A non-allowlisted key is ignored; a
@@ -161,9 +171,9 @@ function loadSecretsFile(env: NodeJS.ProcessEnv): Record<string, string> {
 }
 
 /**
- * The environment merged with the secrets file, for credentials only: a non-empty environment value always
- * wins, and the file fills only a credential the environment leaves unset or empty. This is the single place
- * both loadAppConfig and readAnthropicApiKey obtain credentials, preserving the "load.ts is the only module
+ * The environment merged with the secrets file, for the allowlisted keys only: a non-empty environment value
+ * always wins, and the file fills only a key the environment leaves unset or empty. This is the single place
+ * both loadAppConfig and readAnthropicApiKey obtain these values, preserving the "load.ts is the only module
  * that reads secrets" invariant.
  */
 function withFileSecrets(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
