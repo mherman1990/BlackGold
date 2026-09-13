@@ -78,11 +78,17 @@ export class PointInTimeRepository {
    * Append one observation. Identical rows are deduplicated. A row with the same identity
    * (source, locator, entity, effectiveAt, vintageAt, parserVersion) but different content is a
    * DUPLICATE_CONFLICT: both are kept and the new one carries CORRECTED.
+   *
+   * "Content" is the semantic value plus its quality flags, not the source artifact's bytes. The
+   * dedup key deliberately excludes rawContentHash so that re-ingesting the same observation from a
+   * different artifact - a re-download, a wider date range, a byte-reordered payload - deduplicates
+   * instead of appending a spurious CORRECTED duplicate. Only a genuine change to the value (e.g. an
+   * adjusted price revision) is a conflict. rawContentHash is still stored per row for provenance.
    */
   append<T>(obs: PointInTimeObservation<T>): AppendResult {
     validateTimes(obs);
     const valueJson = canonicalJson(obs.value);
-    const valueHash = hashJson({ v: obs.value, h: obs.rawContentHash, f: [...obs.qualityFlags].sort() });
+    const valueHash = hashJson({ v: obs.value, f: [...obs.qualityFlags].sort() });
     return this.db.transaction(() => {
       const identity = this.db
         .prepare(

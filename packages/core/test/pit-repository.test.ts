@@ -52,6 +52,29 @@ describe("PointInTimeRepository.append", () => {
     expect(r.byId<{ v: number }>(a.id)?.value.v).toBe(1); // the original is untouched
   });
 
+  it("re-ingesting the same observation from a different artifact deduplicates (idempotent ingest)", () => {
+    // Regression: a re-fetch of the identical bar (same value, same flags) with a different
+    // rawContentHash previously flipped every row to a CORRECTED duplicate, because the dedup key
+    // folded in the whole-artifact hash. The dedup key is the semantic value + flags only, so a
+    // benign re-ingest is a no-op regardless of the artifact it came from.
+    const r = repo();
+    const a = r.append(obs());
+    const b = r.append(obs({ rawContentHash: H2 })); // same value, different artifact hash
+    expect(b).toEqual({ id: a.id, deduplicated: true, conflict: false });
+    expect(r.count()).toBe(1);
+    expect(r.byId(a.id)?.rawContentHash).toBe(H); // first artifact's provenance is retained
+  });
+
+  it("a genuine value change is still a conflict even when the artifact hash is unchanged", () => {
+    const r = repo();
+    const a = r.append(obs());
+    const c = r.append(obs({ v: 2 })); // value revised, rawContentHash identical to the original
+    expect(c.conflict).toBe(true);
+    expect(r.count()).toBe(2);
+    expect(r.byId(c.id)?.qualityFlags).toContain("CORRECTED");
+    expect(r.byId<{ v: number }>(a.id)?.value.v).toBe(1);
+  });
+
   it("observations are append-only at the database level", () => {
     const r = repo();
     r.append(obs());
