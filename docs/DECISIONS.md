@@ -857,6 +857,10 @@ allowlist** of credential keys: `BLACKGOLD_SEC_USER_AGENT_CONTACT`, `BLACKGOLD_F
 - Values are equivalent to the same secrets already at rest in the app-data `.env`; they stay off `AppConfig`'s
   serialized surfaces and are never logged (only the file path can appear in an error, never a value).
 - `load.ts` remains the single module that reads secrets; `secrets.env` is gitignored.
+- The file path is overridable with `BLACKGOLD_SECRETS_FILE`, and on Umbrel the compose mounts it into the
+  **core container only** (a read-only `${APP_DATA_DIR}/secrets` mount), not under the shared `/data` volume the
+  gateway also mounts - so the gateway, which holds no credential in Phases 0-5, cannot read these secrets. The
+  credential boundary is preserved.
 
 **What it does not do.** It adds no credential, no broker path, no egress, and no live capability. It is purely
 a second read location for credentials the owner already holds. The umbrelOS-native alternative (fixing env
