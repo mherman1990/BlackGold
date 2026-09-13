@@ -18,8 +18,8 @@ import { serve, registerPhase0Jobs } from "./serve.ts";
 import { CORE_PACKAGE_NAME, CORE_VERSION } from "./version.ts";
 import { ArtifactStore } from "./data/artifacts/store.ts";
 import { PointInTimeRepository } from "./data/pit/repository.ts";
-import { INGEST_USAGE, parseIngestArgs, parseOptions, runIngest, UsageError } from "./ingest/run.ts";
-import { admittedRiskEtfs, charterUniverseMembers, loadCharterFile, registrabilityReasons } from "./strategy/charter.ts";
+import { INGEST_USAGE, parseIngestArgs, parseOptions, resolveUniverseIngest, runIngest, UsageError } from "./ingest/run.ts";
+import { admittedRiskEtfs, charterRange, charterUniverseMembers, loadCharterFile, registrabilityReasons } from "./strategy/charter.ts";
 import { classifyCandidateFactors } from "./strategy/factors.ts";
 import { splitPlan, type SplitKind } from "./research/walkforward.ts";
 import { enumerateGrid, enumerateTiers } from "./research/robustness.ts";
@@ -151,6 +151,39 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
       }
     }
     case "ingest": {
+      if (args[0] === "universe") {
+        // Convenience wrapper: ingest every symbol the charter reads (admitted risk ETFs + cash + benchmarks)
+        // over its window span in one command, instead of listing symbols and dates by hand. Reads the charter
+        // only; the fetch itself goes through the same allowlisted runIngest path as a single-source ingest.
+        const o = parseOptions(args.slice(1), { charter: { type: "string" }, start: { type: "string" }, end: { type: "string" }, source: { type: "string" } });
+        const charterPath = o["charter"];
+        if (typeof charterPath !== "string") {
+          throw new UsageError("ingest universe requires --charter <charter.yaml> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--source tiingo|alpaca]");
+        }
+        const loaded = loadCharterFile(charterPath);
+        const c = loaded.charter;
+        const members = [...charterUniverseMembers(c), c.benchmarks.primary, c.benchmarks.cash, ...c.benchmarks.secondary];
+        const ranges = (["design", "holdout", "recent"] as const).map((seg) => charterRange(c, seg));
+        const plan = resolveUniverseIngest(members, ranges, {
+          start: typeof o["start"] === "string" ? o["start"] : undefined,
+          end: typeof o["end"] === "string" ? o["end"] : undefined,
+          source: typeof o["source"] === "string" ? o["source"] : undefined,
+        });
+        const csv = plan.symbols.join(",");
+        const requests = [parseIngestArgs([plan.source === "tiingo" ? "tiingo-bars" : "alpaca-bars", "--symbols", csv, "--start", plan.start, "--end", plan.end])];
+        // Corporate actions have a Tiingo automated path only; an alpaca bars ingest leaves actions to the
+        // operator-curated vendored file (ingest corporate-actions --file), so it emits no actions request.
+        if (plan.source === "tiingo") requests.push(parseIngestArgs(["tiingo-actions", "--symbols", csv, "--start", plan.start, "--end", plan.end]));
+        mkdirSync(config.dataDir, { recursive: true });
+        const { db } = openCoreDb(config);
+        try {
+          const reports: { source: string; report: Awaited<ReturnType<typeof runIngest>> }[] = [];
+          for (const request of requests) reports.push({ source: request.source, report: await runIngest({ db, config, calendar }, request) });
+          return { exitCode: 0, output: { charterHash: loaded.charterHash, source: plan.source, symbols: plan.symbols, start: plan.start, end: plan.end, reports } };
+        } finally {
+          db.close();
+        }
+      }
       const request = parseIngestArgs(args);
       mkdirSync(config.dataDir, { recursive: true });
       const { db } = openCoreDb(config);

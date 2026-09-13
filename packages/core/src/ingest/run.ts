@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { isoDate, nowUtc, type Db, type IsoDate, type UtcInstant } from "@blackgold/shared";
+import { addDays, isoDate, nowUtc, type Db, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import type { ExchangeCalendar } from "../calendar/types.ts";
 import { processingDelayOverridesMs, type AppConfig } from "../config/schema.ts";
 import { ArtifactBudgetExceededError, ArtifactStore } from "../data/artifacts/store.ts";
@@ -217,7 +217,36 @@ ingest cot --dataset <${COT_DATASETS.join("|")}> [--market <code>] [--from YYYY-
 ingest alpaca-bars --symbols A,B,C --start YYYY-MM-DD --end YYYY-MM-DD
 ingest tiingo-bars --symbols A,B,C --start YYYY-MM-DD --end YYYY-MM-DD
 ingest tiingo-actions --symbols A,B,C --start YYYY-MM-DD --end YYYY-MM-DD
-ingest corporate-actions --file <path.json> [--dataset <name>]`;
+ingest corporate-actions --file <path.json> [--dataset <name>]
+ingest universe --charter <charter.yaml> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--source tiingo|alpaca]`;
+
+/** Calendar-day headroom fetched before the earliest charter window, so a decision at that window's start still has its full feature lookback. Overridable with --start. */
+export const UNIVERSE_LOOKBACK_DAYS = 1095;
+
+export type UniverseIngestSource = "tiingo" | "alpaca";
+
+/**
+ * Resolve the symbols and date span for `ingest universe` from the charter's universe members and window
+ * boundaries. Pure: no charter import (members and ranges are passed in), no I/O. The span defaults to the
+ * earliest window start minus UNIVERSE_LOOKBACK_DAYS through the latest window end, each overridable.
+ */
+export function resolveUniverseIngest(
+  members: readonly string[],
+  ranges: readonly { start: IsoDate; end: IsoDate }[],
+  opts: { start?: string | undefined; end?: string | undefined; source?: string | undefined } = {},
+): { symbols: string[]; start: IsoDate; end: IsoDate; source: UniverseIngestSource } {
+  const source = opts.source ?? "tiingo";
+  if (source !== "tiingo" && source !== "alpaca") throw new UsageError('ingest universe --source must be "tiingo" or "alpaca"');
+  const symbols = [...new Set(members)].filter((s) => s.trim().length > 0).sort();
+  if (symbols.length === 0) throw new UsageError("ingest universe: the charter names no symbols to ingest");
+  if (ranges.length === 0) throw new UsageError("ingest universe: the charter has no windows");
+  const earliest = ranges.map((r) => r.start).reduce((a, b) => (a < b ? a : b));
+  const latest = ranges.map((r) => r.end).reduce((a, b) => (a > b ? a : b));
+  const start = opts.start !== undefined ? isoDate(opts.start) : addDays(earliest, -UNIVERSE_LOOKBACK_DAYS);
+  const end = opts.end !== undefined ? isoDate(opts.end) : latest;
+  if (end < start) throw new UsageError(`ingest universe: --end ${end} is before --start ${start}`);
+  return { symbols, start, end, source };
+}
 
 export function parseIngestArgs(args: readonly string[]): IngestRequest {
   const [source, ...rest] = args;
