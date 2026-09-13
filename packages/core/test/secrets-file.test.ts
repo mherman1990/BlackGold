@@ -30,6 +30,23 @@ describe("file-based secrets loader", () => {
     expect(readAnthropicApiKey(env)).toBe(FAKE_ANTHROPIC);
   });
 
+  it("supplies the opt-in auto-ingest switches from the file (the umbrelOS env-gap channel)", () => {
+    // On umbrelOS 1.x the app-data .env never reaches the container, so the secrets file is the only way to turn
+    // on the unattended ingest job. These two behavioural keys are the sole non-credential entries allowed.
+    const env = setup(`BLACKGOLD_AUTO_INGEST_CHARTER=strategies/etf-trend-vol/charter.yaml\nBLACKGOLD_AUTO_INGEST_ACTIONS=tiingo\n`);
+    const config = loadAppConfig(env);
+    expect(config.sources.autoIngestCharterPath).toBe("strategies/etf-trend-vol/charter.yaml");
+    expect(config.sources.autoIngestActions).toBe("tiingo");
+  });
+
+  it("still ignores a non-allowlisted behavioural key from the file (only the two auto-ingest keys are admitted)", () => {
+    // SCHEDULER_POLL_SECONDS is behavioural config that is NOT allowlisted: the file must not be able to set it.
+    const env = setup(`BLACKGOLD_SCHEDULER_POLL_SECONDS=5\nBLACKGOLD_AUTO_INGEST_CHARTER=strategies/etf-trend-vol/charter.yaml\n`);
+    const config = loadAppConfig(env);
+    expect(config.schedulerPollSeconds).toBe(60); // the schema default, not the file's 5
+    expect(config.sources.autoIngestCharterPath).toBe("strategies/etf-trend-vol/charter.yaml");
+  });
+
   it("lets a non-empty environment value win over the file", () => {
     const env = setup(`BLACKGOLD_TIINGO_API_KEY=${FAKE_TIINGO}\n`);
     env["BLACKGOLD_TIINGO_API_KEY"] = "env-wins-key-0123456789";

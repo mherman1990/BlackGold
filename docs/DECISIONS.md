@@ -848,10 +848,22 @@ environment variable is unset or empty, its value is taken from the file. It is 
 allowlist** of credential keys: `BLACKGOLD_SEC_USER_AGENT_CONTACT`, `BLACKGOLD_FRED_API_KEY`,
 `BLACKGOLD_ALPACA_KEY_ID`, `BLACKGOLD_ALPACA_SECRET_KEY`, `BLACKGOLD_TIINGO_API_KEY`, and `ANTHROPIC_API_KEY`.
 
+**Amendment (0.1.12, 2026-09-13).** The allowlist also admits the two opt-in auto-ingest switches,
+`BLACKGOLD_AUTO_INGEST_CHARTER` and `BLACKGOLD_AUTO_INGEST_ACTIONS` - the only non-credential keys. Without them
+the very autonomy this decision exists to serve could not be enabled on the hosts that need the file: on
+umbrelOS 1.x the app-data `.env` never reaches the container, and the scheduled-ingest switch is behavioural
+config, so before this amendment there was no channel to turn the job on. They are safe to admit because they
+can only enable an **opt-in, read-only public-data refresh** (the charter path names which universe to fetch;
+the actions switch is `tiingo|none`); they cannot touch modes, the sleeve, money, or a live path. Everything in
+"Why it is safe" below still holds - MODE, the sleeve role, ports, budgets and every other behavioural setting
+remain excluded, and a permanent test asserts both the two keys ARE honoured and that a non-allowlisted
+behavioural key (e.g. `BLACKGOLD_SCHEDULER_POLL_SECONDS`) is still ignored.
+
 **Why it is safe.**
 - The environment always wins; the file only fills a gap.
-- The allowlist excludes MODE, the sleeve role, ports, and every behavioural setting, so the file cannot change
-  what the app does and - impossible in this build regardless - could never enable a live path. The live-mode
+- The allowlist excludes MODE, the sleeve role, ports, budgets, and every behavioural setting other than the two
+  opt-in auto-ingest switches above, so the file cannot change what the app does beyond that one benign
+  read-only refresh and - impossible in this build regardless - could never enable a live path. The live-mode
   refusal in `loadAppConfig`/`parseAppConfig` still reads MODE from the environment only, and a permanent test
   asserts a `secrets.env` naming `BLACKGOLD_MODE=LIVE_MANUAL` is ignored.
 - Values are equivalent to the same secrets already at rest in the app-data `.env`; they stay off `AppConfig`'s
