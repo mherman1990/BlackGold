@@ -229,12 +229,41 @@ to accept, reject, or revise. Do not register-and-view in the same unattended se
 an agent that grades its own first result against a charter is the exact failure mode the integrity model
 guards against.
 
+## Step 6 — run the evaluation (numbers to review, never a promotion)
+
+Once the dataset is ready, `research evaluate` computes the deterministic backtest over the charter's design,
+walk-forward and recent splits and emits a per-split result report. It **never** touches the sealed holdout
+(`splitPlan` excludes it and throws if any split overlaps it), and it does not register an experiment or open
+the holdout — those stay owner-gated. Use `--source` to score against a specific bars source (e.g. the Tiingo
+default):
+
+```bash
+node packages/core/dist/main.js research evaluate \
+  --path strategies/etf-trend-vol/charter.yaml \
+  --source tiingo.eod.bars.1d
+```
+
+Read the envelope: each split carries its `reportId`, `reportHash`, `resultHash`, the primary metric with its
+bootstrap interval and pass/fail, and both arms (`B1_DETERMINISTIC` vs the `B0_PASSIVE` baseline). Two fields
+decide whether a run can back a decision:
+
+- `registrable` — whether the charter itself may be registered (approval + resolved open decisions).
+- `citableAsEvidence` / `promotionBlockingCodes` — a run is citable only when it is integrity-clean **and**
+  free of promotion-blocking data codes. A dataset built from a single source reports
+  `promotionBlockingCodes: ["UNVERIFIED_SINGLE_SOURCE"]` and `citableAsEvidence: false` even under an approved
+  charter (D-49): the numbers are usable for research and for the owner's judgement, never as promotion
+  evidence. The ≥2-source reconciled corporate-action path (D-29) is what lifts that block.
+
+This produces numbers for the owner to review; it is not a green light to register or to trade. Registering the
+experiment and citing a result remain the deliberate Phase 2 stop point above.
+
 ## Quick reference — what blocks what
 
 | To do this | You need | Owner-gated? |
 |---|---|---|
 | Ingest bars | Alpaca key + secret, SEC UA contact | No |
 | Coverage report | Ingested bars | No |
+| Evaluate (backtest over design/walk-forward/recent splits) | A ready dataset, a charter file | No (numbers only; single-source data is reported uncitable) |
 | Close CR-09 | The design-split coverage numbers above | No (record the measured date) |
 | Adjusted total-return series (features + performance) | The corporate-action ledger, vendored per D-29 (no ingest-CLI source yet) | No, but a data/code prerequisite |
 | A *ready* dataset | Bar coverage **and** corporate-action ledger **and** SPY present | No |

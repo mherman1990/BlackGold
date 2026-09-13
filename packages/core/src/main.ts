@@ -24,6 +24,7 @@ import { classifyCandidateFactors } from "./strategy/factors.ts";
 import { splitPlan } from "./research/walkforward.ts";
 import { enumerateGrid, enumerateTiers } from "./research/robustness.ts";
 import { buildCoverageReport } from "./research/coverage.ts";
+import { runEvaluation } from "./research/evaluate.ts";
 
 /**
  * blackgold-core CLI. Operational commands plus Phase 1 public-source ingestion. No broker, no model, no live path.
@@ -57,6 +58,10 @@ Phase 2 research (deterministic charters only; computes nothing that a DRAFT cha
   research coverage --path <charter.yaml> --from <date> --to <date> [--source <bars-source-id>]
                                             Point-in-time coverage report for the charter universe
                                             (--source measures a specific bars source, e.g. tiingo.eod.bars.1d; default alpaca.iex.bars.1d)
+  research evaluate --path <charter.yaml> [--source <bars-source-id>]
+                                            Deterministic backtest over the charter's design, walk-forward and recent splits
+                                            (never the sealed holdout); emits a per-split result report. Numbers only: a run over
+                                            promotion-ineligible data (e.g. single-source) is reported uncitable as evidence.
 
 Phase 3 runtime-LLM analyst (requires ANTHROPIC_API_KEY in the environment; abstains fail-closed without it):
   research analyst --manifest <model-manifest.yaml> --model <id> --candidate <SYMBOL> --at <iso-instant>
@@ -304,7 +309,28 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
           db.close();
         }
       }
-      if (sub !== "coverage") throw new UsageError("research requires a subcommand: coverage | analyst");
+      if (sub === "evaluate") {
+        const o = parseOptions(rest, { path: { type: "string" }, source: { type: "string" } });
+        const path = o["path"];
+        if (typeof path !== "string") throw new UsageError("research evaluate requires --path <charter.yaml> [--source <bars-source-id>]");
+        const source = o["source"];
+        const loaded = loadCharterFile(path);
+        // Registrability is threaded, not enforced: running a DRAFT charter on fixtures is legitimate, and the
+        // result carries the reasons it may not be cited. Signing a charter is outside standing authorization.
+        const reasons = registrabilityReasons(loaded.charter);
+        const report = withDb(config, (db) =>
+          runEvaluation({
+            charter: loaded.charter,
+            charterHash: loaded.charterHash,
+            registrabilityReasons: reasons,
+            pit: pitRepository(db, config),
+            calendar,
+            ...(typeof source === "string" ? { barsSourceId: source } : {}),
+          }),
+        );
+        return { exitCode: report.splits.length > 0 ? 0 : 1, output: report };
+      }
+      if (sub !== "coverage") throw new UsageError("research requires a subcommand: coverage | analyst | evaluate");
       const o = parseOptions(rest, { path: { type: "string" }, from: { type: "string" }, to: { type: "string" }, source: { type: "string" } });
       const path = o["path"];
       const from = o["from"];

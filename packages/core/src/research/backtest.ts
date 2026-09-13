@@ -185,7 +185,7 @@ function mondayOf(session: IsoDate): string {
   return d.toISOString().slice(0, 10);
 }
 
-type EntitySeries = { bars: LoadedBar[]; actions: CorporateAction[]; tr: TRPoint[]; qualityLabels: string[] };
+type EntitySeries = { bars: LoadedBar[]; actions: CorporateAction[]; tr: TRSeries; qualityLabels: string[] };
 
 /**
  * Load the execution and marking series.
@@ -231,7 +231,34 @@ function loadExecutionSeries(input: BacktestInput, entityId: string, decisionAt:
       actions.push(corporateActionFromValue(row.value));
     }
   }
-  return { bars: raw.bars, actions, tr: TotalReturnSeries.build(raw.bars, actions, entityId).points, qualityLabels: [...qualityLabels] };
+  return { bars: raw.bars, actions, tr: TotalReturnSeries.build(raw.bars, actions, entityId), qualityLabels: [...qualityLabels] };
+}
+
+/**
+ * The decision instant at the end of `[from, to]`. NAV marking and simulated fills read series as of this
+ * time; it is also the as-of time the benchmark and cash series a result report is built from must use, so
+ * those are the same series the run scored against. Mirrors the window-end derivation inside `runBacktest`.
+ */
+function windowEndDecisionAt(input: BacktestInput): UtcInstant {
+  const decisionSessions = weeklyDecisionSessions(input.calendar, input.from, input.to);
+  const allSessions = input.calendar.sessionDates(input.from, input.to);
+  const decisionAtOf = (session: IsoDate): UtcInstant => addMs(input.calendar.sessionClose(session), input.params.decisionOffsetMinutes * 60_000);
+  return decisionSessions.length > 0 ? decisionAtOf(allSessions[allSessions.length - 1] ?? input.to) : decisionAtOf(input.to);
+}
+
+/**
+ * The charter's primary-benchmark and cash total-return series for a result report, loaded exactly as
+ * `runBacktest` marks them: as of the end of the window, through the same point-in-time read path. Kept beside
+ * the backtest so a report's benchmarks are the very series the run scored against, never a separately-derived
+ * copy that could drift. Promotion-blocking quality flags on a benchmark's own actions still surface through
+ * the series' construction, matching `runBacktest`.
+ */
+export function reportBenchmarkSeries(input: BacktestInput): { primary: TRSeries; cash: TRSeries } {
+  const endAt = windowEndDecisionAt(input);
+  return {
+    primary: loadExecutionSeries(input, input.charter.benchmarks.primary, endAt).tr,
+    cash: loadExecutionSeries(input, input.charter.universe.cash_etf, endAt).tr,
+  };
 }
 
 function navIndex(entityId: string, nav: readonly { session: IsoDate; nav: Dec }[]): TRSeries {
@@ -266,7 +293,7 @@ export function runBacktest(input: BacktestInput): BacktestResult {
 
   // Series as of the end of the window: used for marking NAV and for simulated fills, both of which happen
   // strictly after the decision that caused them. Feature reads go through computeFeatures, never through here.
-  const endAt = decisionSessions.length > 0 ? decisionAtOf(allSessions[allSessions.length - 1] ?? input.to) : decisionAtOf(input.to);
+  const endAt = windowEndDecisionAt(input);
   const series = new Map<string, EntitySeries>();
   for (const e of universe) series.set(e, loadExecutionSeries(input, e, endAt));
 
