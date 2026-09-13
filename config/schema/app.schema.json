@@ -109,7 +109,8 @@
       "properties": {
         "secUserAgentContact": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "pattern": "[^\\s@]+@[^\\s@]+\\.[^\\s@]+"
         },
         "fredApiKey": {
           "type": "string",
