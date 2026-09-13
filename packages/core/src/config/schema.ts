@@ -59,8 +59,20 @@ const AppConfigInput = z.object({
   /** Public data sources (Phase 1). Credentials come only from the environment and are never logged. */
   sources: z
     .object({
-      /** Required by SEC fair-access policy: "BlackGold/<version> (<contact email>)". No default. */
-      secUserAgentContact: z.email().optional(),
+      /**
+       * Required by SEC fair-access policy, which asks for a declared contact in the User-Agent
+       * ("Sample Company AdminContact@sample.com"): name-plus-email is the recommended form. So this
+       * accepts any non-empty string that contains a contact email, not a bare email only - e.g.
+       * "Matt Herman ops@example.com" or "ops@example.com". The value is embedded verbatim in the
+       * User-Agent "BlackGold/<version> (<contact>)".
+       */
+      secUserAgentContact: z
+        .string()
+        .min(1)
+        .refine((s) => /[^\s@]+@[^\s@]+\.[^\s@]+/.test(s), {
+          message: 'must include a contact email, e.g. "Name ops@example.com" (SEC fair-access format)',
+        })
+        .optional(),
       fredApiKey: z.string().min(8).optional(),
       alpacaKeyId: z.string().min(8).optional(),
       alpacaSecretKey: z.string().min(8).optional(),
