@@ -50,6 +50,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-42 | The Anthropic model adapter (raw `fetch`, no SDK) as its own PR: a second egress module `packages/core/src/model/provider-http.ts` is the only outbound POST and the only reference to `api.anthropic.com`; `live-disabled.test.ts` is updated to allow exactly that while trading hosts stay forbidden and `data/http.ts` stays POST-free. The key is passed in from the environment, never in git, code, or the image | Accepted 2026-09-07 by Matt ("keep building… put the key in when things are connected") | Live CR-12/CR-13 verification against the real API is Matt's one run on the Pi; call/budget persistence and C1/D1 wiring still Phase 5 |
 | D-49 | Corporate actions may be ingested automatically from Tiingo's daily-prices feed (`divCash`/`splitFactor`), flagged `UNVERIFIED_SINGLE_SOURCE`: usable for research and decisions, never promotion evidence. Amends D-29's "vendored file until a feed is verified" to add a single-source automated path alongside it; the operator-curated, ≥2-source reconciled vendored file stays the only promotion-eligible corporate-action source | Accepted 2026-09-12 by Matt ("Item 3, use A") | - |
 | D-50 | Adopt Tiingo (`tiingo.eod.bars.1d`) as the strategy's market-data source, revising OD-4 and cutting `charter_version` 0.2.0 — a new strategy version that does not inherit 0.1.0's evidence. Prepared as a DRAFT charter (`strategies/etf-trend-vol/charter.yaml`); the owner signs the approval block to accept | **Proposed** 2026-09-12 by Claude Code (owner to sign) | etf-trend-vol registration on 0.2.0 |
+| D-51 | Reconsider the etf-trend-vol primary promotion metric: `net_sharpe_difference_vs_primary_benchmark` is nearly blind to the tail, but the strategy's thesis is drawdown reduction. Consider a Calmar/MAR- or Sortino-based gate, or an explicit max-drawdown constraint alongside the Sharpe test. Raised from the 2026-09-13 single-source machinery check (non-evidential). Any change is a new charter version | **Proposed** 2026-09-13 by Claude Code (owner to decide) | etf-trend-vol promotion criteria (charter version) |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -791,6 +792,41 @@ processing-delay entry (`packages/core/src/data/pit/repository.ts` — Tiingo ba
 runtime source therefore switches together with the signed charter. The only red before signing is the tripwire;
 on signing it goes fully green and ships in the next release (0.1.7). Until 0.2.0 is signed, the strategy still
 runs on 0.1.0 (Alpaca); `research coverage --source` already reads Tiingo without a charter change.
+
+---
+
+## D-51 Reconsider the etf-trend-vol primary promotion metric
+
+**Status:** Proposed 2026-09-13 by Claude Code. Matt must accept, replace, or reject. It is a question for the
+owner, not a change; nothing is altered by recording it.
+
+**Where it came from.** Two single-split `research evaluate` runs on 2026-09-13 (charter 0.2.0, source
+`tiingo.eod.bars.1d`) exercised the evaluation machinery end to end. Both are **single-source and
+non-evidential** — `UNVERIFIED_SINGLE_SOURCE`, `citableAsEvidence: false` — and neither is cited here as
+evidence for or against the strategy. The full write-up is
+`docs/analysis/2026-09-13-etf-trend-vol-machinery-check.md`. What surfaced is a metric-design observation, not a
+result claim.
+
+**The observation.** On the in-sample DESIGN window (2007–2018, which contains 2008) the strategy captured
+~83% of passive total return while cutting maximum drawdown by roughly four-fifths (−13% vs −54%), yet the
+primary promotion metric `net_sharpe_difference_vs_primary_benchmark` still read −0.19 (CI straddling zero) and
+`passes: false`. The metric rewards full-period risk-adjusted return and is nearly blind to the tail: a
+40-point drawdown gap barely moves a full-period Sharpe. The strategy's stated economic thesis is **tail-risk /
+drawdown reduction**, which this primary metric does not value. A strategy failing its own promotion gate on
+the very window it was fit to is worth the owner's attention — but so is the possibility that the gate measures
+the wrong thing for this strategy.
+
+**The question.** Is `net_sharpe_difference_vs_primary_benchmark` the right *primary* promotion metric for a
+strategy whose reason to exist is crash protection? Options the owner might weigh: keep it as is (accept that
+the strategy must earn its keep on Sharpe, not just drawdown); add an explicit maximum-drawdown constraint or
+a Calmar/MAR gate alongside the Sharpe test; or move to a Sortino-based primary. Any of these is defensible;
+the choice is a judgement about what the sleeve is *for*.
+
+**What this decision does not do.** It changes no metric, threshold, or charter, and it resolves nothing. The
+primary metric and its threshold live in the signed 0.2.0 charter (hash-covered); changing them is a charter
+edit and therefore a **new strategy version** that inherits none of the prior work (`CLAUDE.md`,
+versioning rule). Resolving this — and any re-signing — is the owner's act. Per the standing carve-outs, Claude
+Code may raise this with reasoning and may not decide it.
 
 ---
 
