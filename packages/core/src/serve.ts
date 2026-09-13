@@ -91,11 +91,21 @@ export function registerPhase0Jobs(scheduler: Scheduler, deps?: { config: AppCon
   });
 
   // Opt-in incremental market-data ingest. Registered only when a charter path is configured and the calendar
-  // is available (the serve loop and the run-jobs tick both provide deps). Fires after each session close and
-  // fetches ONLY the sessions newer than the store, so it never re-fetches an overlapping range (which would
-  // regrow duplicate bar rows). Bars plus Tiingo corporate actions for the charter's universe; the read-layer
-  // dedupe keeps a later reconciled action authoritative. It needs source credentials (env or secrets file);
-  // without them runIngest throws and the scheduler records a failed run in the ledger - fail-closed, visible.
+  // is available (the serve loop and the run-jobs tick both provide deps). Fires after each session close.
+  //
+  // The cursor is computed PER SYMBOL from that symbol's own latest stored bar (planIncrementalIngest), not
+  // from a source-wide maximum: a symbol that lags the rest of the universe (a newly added member, or one for
+  // which a session returned no bar) is caught up from its own earliest missing session instead of being
+  // skipped past. Symbols that share a range are fetched together; a symbol with no stored bar at all is left
+  // for a manual `ingest universe` (the initial seed) and recorded, not silently ignored.
+  //
+  // Corporate actions are fetched only when autoIngestActions is "tiingo" (default "none"), and always BEFORE
+  // the bars for the same range: the cursor is derived from stored bars, so bars must be the last thing
+  // committed. If actions fail, the run is recorded failed with the bar cursor un-advanced, so the whole range
+  // (actions included) is retried next session rather than the date's actions being skipped for good.
+  //
+  // It needs source credentials (env or secrets file); without them runIngest throws and the scheduler records
+  // a failed run in the ledger - fail-closed, visible.
   const charterPath = deps?.config.sources.autoIngestCharterPath;
   if (deps !== undefined && charterPath !== undefined && charterPath !== "") {
     const { config, calendar } = deps;
@@ -106,16 +116,47 @@ export function registerPhase0Jobs(scheduler: Scheduler, deps?: { config: AppCon
       deadlineMs: 15 * 60_000,
       handler: async (ctx) => {
         const c = loadCharterFile(charterPath).charter;
-        const symbols = [...new Set([...charterUniverseMembers(c), c.benchmarks.primary, c.benchmarks.cash, ...c.benchmarks.secondary])].sort();
+        const symbols = [...new Set([...charterUniverseMembers(c), c.benchmarks.primary, c.benchmarks.cash, ...c.benchmarks.secondary])]
+          .filter((s) => s.trim().length > 0)
+          .sort();
         const repo = new PointInTimeRepository(ctx.db, { processingDelayOverrides: processingDelayOverridesMs(config.sources) });
-        const range = nextIngestRange(repo.latestAvailableAt(DEFAULT_BARS_SOURCE_ID), ctx.now, calendar);
-        if (range === undefined) {
-          ctx.ledger.append("ingest.skipped", { scheduledFor: ctx.scheduledFor, reason: "no new sessions since the latest stored bar", source: DEFAULT_BARS_SOURCE_ID }, ctx.now);
+        const latestBySymbol = new Map(symbols.map((s) => [s, repo.latestAvailableAt(DEFAULT_BARS_SOURCE_ID, s)] as const));
+        const plan = planIncrementalIngest(latestBySymbol, ctx.now, calendar);
+        if (plan.groups.length === 0) {
+          ctx.ledger.append(
+            "ingest.skipped",
+            {
+              scheduledFor: ctx.scheduledFor,
+              reason: "no new sessions to ingest for any configured symbol",
+              source: DEFAULT_BARS_SOURCE_ID,
+              symbolsUpToDate: plan.upToDate.length,
+              symbolsWithoutData: plan.noData,
+            },
+            ctx.now,
+          );
           return;
         }
-        const csv = symbols.join(",");
-        for (const source of ["tiingo-bars", "tiingo-actions"] as const) {
-          await runIngest({ db: ctx.db, config, calendar }, parseIngestArgs([source, "--symbols", csv, "--start", range.start, "--end", range.end]));
+        const withActions = config.sources.autoIngestActions === "tiingo";
+        for (const group of plan.groups) {
+          const csv = group.symbols.join(",");
+          if (withActions) {
+            await runIngest({ db: ctx.db, config, calendar }, parseIngestArgs(["tiingo-actions", "--symbols", csv, "--start", group.start, "--end", group.end]));
+          }
+          await runIngest({ db: ctx.db, config, calendar }, parseIngestArgs(["tiingo-bars", "--symbols", csv, "--start", group.start, "--end", group.end]));
+        }
+        // A symbol added to the charter but never seeded stays uningested here (the initial ingest is manual);
+        // record it so the operator sees it needs a one-time `ingest universe`.
+        if (plan.noData.length > 0) {
+          ctx.ledger.append(
+            "ingest.skipped",
+            {
+              scheduledFor: ctx.scheduledFor,
+              reason: "symbols have no stored bars; run a manual `ingest universe` to seed them",
+              source: DEFAULT_BARS_SOURCE_ID,
+              symbolsWithoutData: plan.noData,
+            },
+            ctx.now,
+          );
         }
       },
     });
@@ -123,10 +164,9 @@ export function registerPhase0Jobs(scheduler: Scheduler, deps?: { config: AppCon
 }
 
 /**
- * The next incremental ingest window: from the first session AFTER the latest stored bar through the latest
- * completed session at `now`. Returns undefined when the store is empty (the initial ingest is a manual
- * `ingest universe`) or when no session has closed since the latest stored bar. Fetching only new sessions is
- * what keeps a nightly refresh from re-fetching an overlapping range and regrowing duplicate rows.
+ * The next incremental ingest window for ONE symbol: from the first session AFTER its latest stored bar
+ * through the latest completed session at `now`. Returns undefined when the symbol has no stored bar (its
+ * initial ingest is a manual `ingest universe`) or when no session has closed since its latest stored bar.
  */
 export function nextIngestRange(
   latestAvailable: UtcInstant | undefined,
@@ -140,6 +180,52 @@ export function nextIngestRange(
   const start = calendar.nextSession(latestAvailable);
   if (start > end) return undefined;
   return { start, end };
+}
+
+export type IngestGroup = { start: IsoDate; end: IsoDate; symbols: string[] };
+export type IncrementalIngestPlan = {
+  /** Symbols that need new sessions, grouped by identical range so shared ranges fetch in one request. */
+  groups: IngestGroup[];
+  /** Symbols with no stored bar: they need a manual initial `ingest universe`, so they are skipped here. */
+  noData: string[];
+  /** Symbols already current through the latest completed session. */
+  upToDate: string[];
+};
+
+/**
+ * Plan an incremental ingest from each symbol's OWN latest stored bar, so a lagging or newly added symbol is
+ * caught up from its earliest missing session rather than being skipped past by a source-wide maximum. Pure:
+ * takes the per-symbol latest-available map and the calendar, returns the ranges to fetch and the symbols that
+ * were skipped and why. Symbols sharing a range are grouped so the common "everyone missing today's session"
+ * case is a single request; groups are ordered by start date.
+ */
+export function planIncrementalIngest(
+  latestBySymbol: ReadonlyMap<string, UtcInstant | undefined>,
+  now: UtcInstant,
+  calendar: ExchangeCalendar,
+): IncrementalIngestPlan {
+  const byRange = new Map<string, IngestGroup>();
+  const noData: string[] = [];
+  const upToDate: string[] = [];
+  for (const [symbol, latest] of latestBySymbol) {
+    if (latest === undefined) {
+      noData.push(symbol);
+      continue;
+    }
+    const range = nextIngestRange(latest, now, calendar);
+    if (range === undefined) {
+      upToDate.push(symbol);
+      continue;
+    }
+    const key = `${range.start}:${range.end}`;
+    const group = byRange.get(key);
+    if (group === undefined) byRange.set(key, { start: range.start, end: range.end, symbols: [symbol] });
+    else group.symbols.push(symbol);
+  }
+  const groups = [...byRange.values()]
+    .map((g) => ({ start: g.start, end: g.end, symbols: [...g.symbols].sort() }))
+    .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+  return { groups, noData: noData.sort(), upToDate: upToDate.sort() };
 }
 
 export async function serve(opts: ServeOptions): Promise<ServeHandle> {

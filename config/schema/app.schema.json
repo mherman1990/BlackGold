@@ -102,6 +102,7 @@
     },
     "sources": {
       "default": {
+        "autoIngestActions": "none",
         "processingDelays": {},
         "artifactBudgetBytes": 42949672960
       },
@@ -127,6 +128,14 @@
         "autoIngestCharterPath": {
           "type": "string",
           "minLength": 1
+        },
+        "autoIngestActions": {
+          "default": "none",
+          "type": "string",
+          "enum": [
+            "tiingo",
+            "none"
+          ]
         },
         "tiingoApiKey": {
           "type": "string",

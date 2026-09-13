@@ -79,11 +79,20 @@ const AppConfigInput = z.object({
       alpacaSecretKey: z.string().min(8).optional(),
       /**
        * Opt-in: path to the charter whose universe the serve scheduler auto-ingests after each close (an
-       * incremental market-data refresh, bars + Tiingo actions, for only the sessions newer than the store).
-       * Unset (the default) leaves the job idle. Ingest still needs the source credentials in the environment
-       * or the secrets file; without them the job fails closed and the failure is recorded in the ledger.
+       * incremental bar refresh - and, when autoIngestActions is "tiingo", corporate actions too - covering
+       * only the sessions each symbol is missing). Unset (the default) leaves the job idle. Ingest still needs
+       * the source credentials in the environment or the secrets file; without them the job fails closed and
+       * the failure is recorded in the ledger.
        */
       autoIngestCharterPath: z.string().min(1).optional(),
+      /**
+       * Whether the auto-ingest job also fetches Tiingo corporate actions ("tiingo") or bars only ("none").
+       * Default "none": Tiingo actions are UNVERIFIED_SINGLE_SOURCE (D-49), so folding them into a universe
+       * whose actions come from a reconciled >=2-source vendored file would keep the arithmetic right (the
+       * read-layer dedupe) but still taint the run's citability with a superseded single-source row. Set to
+       * "tiingo" only for a universe that uses Tiingo as its corporate-action source.
+       */
+      autoIngestActions: z.enum(["tiingo", "none"]).default("none"),
       /** Tiingo EOD daily bars (deeper history than Alpaca free IEX). Read-only market data. */
       tiingoApiKey: z.string().min(8).optional(),
       /** Per-source-prefix processing delays as ISO-8601 durations; override spec defaults. */
@@ -96,7 +105,7 @@ const AppConfigInput = z.object({
       /** Storage cap for the raw artifact store in bytes (spec section 9). */
       artifactBudgetBytes: z.number().int().positive().default(40 * 1024 * 1024 * 1024),
     })
-    .default({ processingDelays: {}, artifactBudgetBytes: 40 * 1024 * 1024 * 1024 }),
+    .default({ autoIngestActions: "none", processingDelays: {}, artifactBudgetBytes: 40 * 1024 * 1024 * 1024 }),
   sleeveAccount: z
     .object({
       role: z.literal(SLEEVE_ROLE),
