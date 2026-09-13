@@ -65,7 +65,7 @@ export type BuildMarketOptions = {
   staleSessions?: Readonly<Record<string, readonly IsoDate[]>>;
   /** Sessions to omit entirely, per entity, creating a GAP. */
   omitSessions?: Readonly<Record<string, readonly IsoDate[]>>;
-  actions?: readonly { action: CorporateAction; availableAt?: UtcInstant; qualityFlags?: readonly string[] }[];
+  actions?: readonly { action: CorporateAction; availableAt?: UtcInstant; qualityFlags?: readonly string[]; sourceLocator?: string }[];
   /** Set the row's availableAt to the session close plus this many ms. Defaults to 30 minutes. */
   publishDelayMs?: number;
   db?: Db;
@@ -136,7 +136,7 @@ export function buildMarket(opts: BuildMarketOptions): FixtureMarket {
   for (const entry of opts.actions ?? []) {
     pit.append(
       corporateActionObservation(entry.action, {
-        sourceLocator: `fixture/action/${entry.action.kind}/${JSON.stringify(entry.action).length}`,
+        sourceLocator: entry.sourceLocator ?? `fixture/action/${entry.action.kind}/${JSON.stringify(entry.action).length}`,
         availableAt: entry.availableAt ?? utc(`${actionDate(entry.action)}T00:00:00Z`),
         ingestedAt,
         rawContentHash: `sha256:${sha256Hex(`action:${JSON.stringify(entry.action)}`)}`,
