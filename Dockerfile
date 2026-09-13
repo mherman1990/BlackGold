@@ -28,6 +28,9 @@ COPY --from=build --chown=1000:1000 /app/packages/core/dist ./packages/core/dist
 COPY --from=build --chown=1000:1000 /app/packages/broker-gateway/package.json ./packages/broker-gateway/package.json
 COPY --from=build --chown=1000:1000 /app/packages/broker-gateway/dist ./packages/broker-gateway/dist
 COPY --chown=1000:1000 config/examples ./config/examples
+# Strategy definitions (charters) are read at runtime by `charter show|plan` and `research coverage`
+# via `--path strategies/<id>/charter.yaml`, resolved from this WORKDIR. Small, versioned, non-secret.
+COPY --chown=1000:1000 strategies ./strategies
 USER 1000:1000
 VOLUME ["/data"]
 ENV BLACKGOLD_DATA_DIR=/data

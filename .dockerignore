@@ -4,7 +4,7 @@
 .git
 .github
 docs
-strategies
+strategies/**/*.md
 test
 scripts
 data

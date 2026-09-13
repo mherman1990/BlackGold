@@ -2,6 +2,31 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.8
+
+Ships the strategy definitions in the runtime image so the charter commands work on the Pi.
+
+**What changed**
+
+- **`strategies/` is now packaged in the image.** The Dockerfile previously copied only `packages/*/dist` and
+  `config/examples`, so `strategies/etf-trend-vol/charter.yaml` never reached the container. As a result
+  `charter show|plan` and `research coverage --path strategies/<id>/charter.yaml` failed on the Pi with
+  `ENOENT`, even though the runbooks call for exactly those commands. The runtime stage now copies
+  `strategies/` to the working directory, so the documented `--path strategies/etf-trend-vol/charter.yaml`
+  resolves. The directory holds only versioned, non-secret strategy definitions.
+
+**Required actions**
+
+- Update Black Gold in umbrelOS to pick up the new image. No configuration change. After updating,
+  `research coverage --path strategies/etf-trend-vol/charter.yaml` and `charter show` run inside the container
+  without copying the charter in by hand.
+
+**Risk / migration / rollback**
+
+- No live path, broker credential, config-schema, or database change. No runtime code change — image contents
+  only. Live trading remains disabled by construction. Rollback: reinstall the prior image tag; the charter is
+  read-only strategy metadata and needs no migration.
+
 ## 0.1.7
 
 Adopts Tiingo as the strategy's default market-data source. This is the runtime half of the owner-signed
