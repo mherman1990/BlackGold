@@ -1,9 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { nowUtc, type Db, type UtcInstant } from "@blackgold/shared";
-import type { AppConfig } from "./config/schema.ts";
+import { nowUtc, type Db, type IsoDate, type UtcInstant } from "@blackgold/shared";
+import { processingDelayOverridesMs, type AppConfig } from "./config/schema.ts";
 import type { ExchangeCalendar } from "./calendar/types.ts";
 import { Ledger, sealThroughDate } from "./ledger/ledger.ts";
 import { Scheduler } from "./scheduler/scheduler.ts";
+import { PointInTimeRepository } from "./data/pit/repository.ts";
+import { DEFAULT_BARS_SOURCE_ID } from "./market/series.ts";
+import { parseIngestArgs, runIngest } from "./ingest/run.ts";
+import { charterUniverseMembers, loadCharterFile } from "./strategy/charter.ts";
 import { runHealth, type HealthReport } from "./health/health.ts";
 import { runFullVerification } from "./health/integrity.ts";
 import { buildStatusReport } from "./status/model.ts";
@@ -34,7 +38,7 @@ export type ServeOptions = {
 
 export type ServeHandle = { port: number; close: () => Promise<void> };
 
-export function registerPhase0Jobs(scheduler: Scheduler): void {
+export function registerPhase0Jobs(scheduler: Scheduler, deps?: { config: AppConfig; calendar: ExchangeCalendar }): void {
   scheduler.register({
     jobId: "heartbeat",
     name: "Daily heartbeat ledger event",
@@ -85,6 +89,57 @@ export function registerPhase0Jobs(scheduler: Scheduler): void {
       runFullVerification(ctx.db, ctx.ledger, ctx.now);
     },
   });
+
+  // Opt-in incremental market-data ingest. Registered only when a charter path is configured and the calendar
+  // is available (the serve loop and the run-jobs tick both provide deps). Fires after each session close and
+  // fetches ONLY the sessions newer than the store, so it never re-fetches an overlapping range (which would
+  // regrow duplicate bar rows). Bars plus Tiingo corporate actions for the charter's universe; the read-layer
+  // dedupe keeps a later reconciled action authoritative. It needs source credentials (env or secrets file);
+  // without them runIngest throws and the scheduler records a failed run in the ledger - fail-closed, visible.
+  const charterPath = deps?.config.sources.autoIngestCharterPath;
+  if (deps !== undefined && charterPath !== undefined && charterPath !== "") {
+    const { config, calendar } = deps;
+    scheduler.register({
+      jobId: "ingest_market_data",
+      name: "Incremental market-data ingest for the configured charter universe",
+      schedule: { kind: "after_close", offsetMs: 90 * 60_000 },
+      deadlineMs: 15 * 60_000,
+      handler: async (ctx) => {
+        const c = loadCharterFile(charterPath).charter;
+        const symbols = [...new Set([...charterUniverseMembers(c), c.benchmarks.primary, c.benchmarks.cash, ...c.benchmarks.secondary])].sort();
+        const repo = new PointInTimeRepository(ctx.db, { processingDelayOverrides: processingDelayOverridesMs(config.sources) });
+        const range = nextIngestRange(repo.latestAvailableAt(DEFAULT_BARS_SOURCE_ID), ctx.now, calendar);
+        if (range === undefined) {
+          ctx.ledger.append("ingest.skipped", { scheduledFor: ctx.scheduledFor, reason: "no new sessions since the latest stored bar", source: DEFAULT_BARS_SOURCE_ID }, ctx.now);
+          return;
+        }
+        const csv = symbols.join(",");
+        for (const source of ["tiingo-bars", "tiingo-actions"] as const) {
+          await runIngest({ db: ctx.db, config, calendar }, parseIngestArgs([source, "--symbols", csv, "--start", range.start, "--end", range.end]));
+        }
+      },
+    });
+  }
+}
+
+/**
+ * The next incremental ingest window: from the first session AFTER the latest stored bar through the latest
+ * completed session at `now`. Returns undefined when the store is empty (the initial ingest is a manual
+ * `ingest universe`) or when no session has closed since the latest stored bar. Fetching only new sessions is
+ * what keeps a nightly refresh from re-fetching an overlapping range and regrowing duplicate rows.
+ */
+export function nextIngestRange(
+  latestAvailable: UtcInstant | undefined,
+  now: UtcInstant,
+  calendar: ExchangeCalendar,
+): { start: IsoDate; end: IsoDate } | undefined {
+  if (latestAvailable === undefined) return undefined;
+  const end = calendar.previousSession(now);
+  const lastStored = calendar.previousSession(latestAvailable);
+  if (end <= lastStored) return undefined;
+  const start = calendar.nextSession(latestAvailable);
+  if (start > end) return undefined;
+  return { start, end };
 }
 
 export async function serve(opts: ServeOptions): Promise<ServeHandle> {
@@ -98,7 +153,7 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
     dueLookbackMs: 24 * 3_600_000,
     missedLookbackMs: 7 * 24 * 3_600_000,
   });
-  registerPhase0Jobs(scheduler);
+  registerPhase0Jobs(scheduler, { config: opts.config, calendar: opts.calendar });
 
   // Run one full verification at startup so the hot path has a fresh result immediately, rather than reporting
   // "no full verification recorded yet" until the first daily job fires (up to a day later). Startup is not the

@@ -141,7 +141,7 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
         // Phase 0: a single manual tick. The daily heartbeat may be caught up within the day, so the due
         // window is one day; anything older than that is reported as missed, never run late.
         const scheduler = new Scheduler({ db, ledger, calendar, dueLookbackMs: 24 * 3_600_000, missedLookbackMs: 7 * 24 * 3_600_000 });
-        registerPhase0Jobs(scheduler);
+        registerPhase0Jobs(scheduler, { config, calendar });
         const missed = scheduler.detectMissedRuns(now);
         const outcomes = await scheduler.tick(now);
         const failed = outcomes.some((o) => o.status === "failed");
