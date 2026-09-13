@@ -66,12 +66,13 @@ const AppConfigInput = z.object({
        * "Matt Herman ops@example.com" or "ops@example.com". The value is embedded verbatim in the
        * User-Agent "BlackGold/<version> (<contact>)".
        */
+      // A .regex (not a .refine) so the constraint survives into the emitted JSON Schema as a `pattern`:
+      // editor/CI validation of a config file then matches runtime validation. Matches any string that
+      // contains a contact email, so "Name ops@example.com" (the SEC fair-access form) and a bare email pass.
       secUserAgentContact: z
         .string()
         .min(1)
-        .refine((s) => /[^\s@]+@[^\s@]+\.[^\s@]+/.test(s), {
-          message: 'must include a contact email, e.g. "Name ops@example.com" (SEC fair-access format)',
-        })
+        .regex(/[^\s@]+@[^\s@]+\.[^\s@]+/, 'must include a contact email, e.g. "Name ops@example.com" (SEC fair-access format)')
         .optional(),
       fredApiKey: z.string().min(8).optional(),
       alpacaKeyId: z.string().min(8).optional(),
