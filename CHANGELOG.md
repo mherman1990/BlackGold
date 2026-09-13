@@ -2,6 +2,37 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.7
+
+Adopts Tiingo as the strategy's default market-data source. This is the runtime half of the owner-signed
+charter decision shipped as strategy version 0.2.0 (D-50); 0.1.6 delivered the corporate-action ledger source
+but left the default bars source unchanged.
+
+**What changed**
+
+- **Tiingo is now the default bars source (D-50, charter 0.2.0).** `DEFAULT_BARS_SOURCE_ID` is
+  `tiingo.eod.bars.1d`; the previously-signed `etf-trend-vol` charter (now version 0.2.0, owner-approved)
+  names Tiingo as its market-data source. Per the versioning rule, **this is a new strategy version and
+  inherits none of the 0.1.0 evidence** — any prior run, coverage, or robustness result must be recomputed
+  against the Tiingo source before it can support a promotion decision.
+- **Tiingo processing delay corrected.** The point-in-time processing-delay table now carries an explicit
+  `tiingo.` entry (15 min) instead of silently applying the 60-min fallback, so decision-time availability for
+  Tiingo reads is computed from the source's real delay.
+
+**Required actions**
+
+- Update Black Gold in umbrelOS to pick up the new image. No configuration change.
+- Runs and coverage built under the prior default (Alpaca IEX) do not carry forward. Rebuild the total-return
+  dataset for the universe with `ingest tiingo-actions` (0.1.6) and recompute strategy artifacts against the
+  Tiingo source.
+
+**Risk / migration / rollback**
+
+- No live path, broker credential, or config-schema change. No database migration. Live trading remains
+  disabled by construction. The default-source flip and the charter's data-source adoption ship together, so a
+  0.2.0-labelled run cannot silently read the old source. Rollback: reinstall the prior image tag; the store is
+  additive (point-in-time observations under both source ids coexist) and needs no migration to revert.
+
 ## 0.1.6
 
 Ships the corporate-action ledger source for Tiingo, the baked-in historical exchange closures, and the store
