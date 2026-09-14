@@ -901,8 +901,13 @@ phase.
    RESEARCH/BACKTEST, enforcing the ladder's "BACKTEST may not write the prospective decision ledger" in code.
    The ledger is immutable per instant (unique index; append-only triggers). Touches no broker, no scheduler,
    and does not change `backtest.ts`.
-2. **Shadow decision job.** Wire slice 1 into the `serve` scheduler as a mode-gated `after_close` job, so it
-   seals decisions prospectively on the live data the auto-ingest keeps fresh.
+2. **Shadow decision loop**, split for safety since it is the first place construction and the gate compose:
+   **2a [done]** the pure per-arm target book (`decision/prospective.ts`) — B0 passive (100% benchmark) and B1
+   deterministic (features → candidates → sizing), composing the *same* leakage-audited primitives the backtest
+   composes; a permanent cross-check test binds B1's weights to `runBacktest`'s at the same instant, so the
+   prospective decision cannot drift from the backtested one. Reads only point-in-time, forms no order.
+   **2b** wire the target book through `evaluateDecisionGate`, seal it (slice 1), and register a mode-gated
+   `after_close` `serve` job so decisions are sealed prospectively on the live data the auto-ingest keeps fresh.
 3. **Counterfactual fills + reconciler/steward + incident records.** The internal simulator fills the sealed
    decisions; the reconciler records breaks. Still zero broker contact.
 4. **PAPER: Alpaca paper broker adapter + order lifecycle.** Order idempotency, protection, reconciliation
