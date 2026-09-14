@@ -260,4 +260,37 @@ CREATE TRIGGER model_calls_no_delete BEFORE DELETE ON model_calls
 BEGIN SELECT RAISE(ABORT, 'model call log is append-only'); END;
 `,
   },
+  {
+    id: "0008_decision_records",
+    up: `
+-- Append-only ledger of sealed, timestamp-locked prospective decision records
+-- (docs/AUTOMATION_AND_LIVE_GATES.md rung 2, SHADOW: "seal timestamp-locked decision records ... before
+-- outcomes are knowable"). One row per (strategy version, arm, decision instant). It carries the
+-- deterministically-constructed target book (weights as fractions of NAV) and the deterministic decision-gate
+-- verdict ONLY - never an order, an account, a credential, or a dollar total. Sealed in SHADOW or PAPER mode;
+-- RESEARCH and BACKTEST may not write it, which the mode guard in decision/decision-record.ts enforces in code.
+CREATE TABLE decision_records (
+  id               INTEGER PRIMARY KEY,
+  decision_at      TEXT NOT NULL,
+  sealed_at        TEXT NOT NULL,
+  strategy_id      TEXT NOT NULL,
+  strategy_version TEXT NOT NULL,
+  charter_hash     TEXT NOT NULL,
+  arm              TEXT NOT NULL,
+  mode             TEXT NOT NULL,
+  new_risk_allowed INTEGER NOT NULL CHECK (new_risk_allowed IN (0,1)),
+  halt_state       TEXT NOT NULL,
+  record_json      TEXT NOT NULL,
+  record_hash      TEXT NOT NULL UNIQUE
+);
+-- One sealed record per (strategy version, arm, decision instant): a second, different seal for the same
+-- instant is rejected, so the ledger is immutable per instant and "zero missing decision records" is checkable.
+CREATE UNIQUE INDEX decision_records_instant ON decision_records (strategy_id, strategy_version, arm, decision_at);
+CREATE INDEX decision_records_decision_at ON decision_records (decision_at);
+CREATE TRIGGER decision_records_no_update BEFORE UPDATE ON decision_records
+BEGIN SELECT RAISE(ABORT, 'decision records are append-only'); END;
+CREATE TRIGGER decision_records_no_delete BEFORE DELETE ON decision_records
+BEGIN SELECT RAISE(ABORT, 'decision records are append-only'); END;
+`,
+  },
 ];

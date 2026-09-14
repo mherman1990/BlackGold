@@ -51,7 +51,8 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-49 | Corporate actions may be ingested automatically from Tiingo's daily-prices feed (`divCash`/`splitFactor`), flagged `UNVERIFIED_SINGLE_SOURCE`: usable for research and decisions, never promotion evidence. Amends D-29's "vendored file until a feed is verified" to add a single-source automated path alongside it; the operator-curated, ≥2-source reconciled vendored file stays the only promotion-eligible corporate-action source | Accepted 2026-09-12 by Matt ("Item 3, use A") | - |
 | D-50 | Adopt Tiingo (`tiingo.eod.bars.1d`) as the strategy's market-data source, revising OD-4 and cutting `charter_version` 0.2.0 — a new strategy version that does not inherit 0.1.0's evidence. Prepared as a DRAFT charter (`strategies/etf-trend-vol/charter.yaml`); the owner signs the approval block to accept | **Proposed** 2026-09-12 by Claude Code (owner to sign) | etf-trend-vol registration on 0.2.0 |
 | D-51 | Reconsider the etf-trend-vol primary promotion metric: `net_sharpe_difference_vs_primary_benchmark` is nearly blind to the tail, but the strategy's thesis is drawdown reduction. Consider a Calmar/MAR- or Sortino-based gate, or an explicit max-drawdown constraint alongside the Sharpe test. Raised from the 2026-09-13 single-source machinery check (non-evidential). Any change is a new charter version | **Proposed** 2026-09-13 by Claude Code (owner to decide) | etf-trend-vol promotion criteria (charter version) |
-| D-52 | Optional file-based secrets fallback: `config/load.ts` reads a dotenv `${dataDir}/secrets.env` for a closed allowlist of credential keys (the data-source keys + `ANTHROPIC_API_KEY`) when the environment leaves them empty, because umbrelOS 1.x does not inject the app-data `.env` into the container while the data volume is reliably mounted. Environment always wins; the file can never set MODE, the sleeve role, or any behavioural config, so it cannot enable a live path | **Proposed** 2026-09-13 by Claude Code (owner to accept) | unattended/autonomous ingest and the analyst key under the umbrelOS env gap |
+| D-52 | Optional file-based secrets fallback: `config/load.ts` reads a dotenv `${dataDir}/secrets.env` for a closed allowlist of credential keys (the data-source keys + `ANTHROPIC_API_KEY`) when the environment leaves them empty, because umbrelOS 1.x does not inject the app-data `.env` into the container while the data volume is reliably mounted. Environment always wins; the file can never set MODE, the sleeve role, or any behavioural config, so it cannot enable a live path | **Proposed** 2026-09-13 by Claude Code (owner to accept). Amended 0.1.12 (2026-09-13) to admit the two opt-in auto-ingest switches | unattended/autonomous ingest and the analyst key under the umbrelOS env gap |
+| D-53 | Build the paper/shadow track toward live as bounded per-rung PRs (docs/AUTOMATION_AND_LIVE_GATES.md): (1) the sealed prospective decision record + append-only ledger + SHADOW/PAPER mode guard [this PR]; (2) the mode-gated `after_close` shadow decision job; (3) counterfactual fills + reconciler; (4) the Alpaca **paper** broker adapter + order lifecycle. Building the machinery does not climb the ladder: Rung-2 shadow **evidence** still cannot precede the Rung-1 experiment, and a strategy still has to pass its own gate (D-51). No live mode, `LIVE_AUTHORIZATION`, or broker credential is added by any slice; slice 4 needs the owner's paper keys and the D-12 sleeve decision | **Proposed** 2026-09-14 by Claude Code (owner chose the paper/shadow track this session) | prospective decision loop; PAPER rung needs paper Alpaca keys + D-12 |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -878,6 +879,41 @@ behavioural key (e.g. `BLACKGOLD_SCHEDULER_POLL_SECONDS`) is still ignored.
 a second read location for credentials the owner already holds. The umbrelOS-native alternative (fixing env
 injection via the app manifest) would need no code but depends on platform behaviour currently broken for this
 app; this fallback is self-contained and in our control.
+
+## D-53 Paper/shadow track toward live, as bounded per-rung PRs
+
+**Status:** Proposed 2026-09-14 by Claude Code. Matt chose the paper/shadow track this session ("keep pushing
+toward live"); this records the decomposition and the boundaries so the direction is on record for review.
+
+**Why.** The next code toward live is the prospective decision loop (Phase 5's "still to come": wiring the
+construction + gate into a persisted counterfactual decision ledger; the prospective paper/shadow run). It is
+financial-critical, so it is built one bounded, reviewed PR at a time up the automation ladder, not as one
+phase.
+
+**Decision.** Four slices, each its own PR, `npm run check` green, stop-for-review between:
+
+1. **Sealed prospective decision record + append-only ledger + mode guard [this PR].** A timestamp-locked
+   artifact (`decision/decision-record.ts`, migration `0008_decision_records`): one row per (strategy version,
+   arm, decision instant), carrying the deterministically-constructed target book (weights as fractions of NAV)
+   and the deterministic decision-gate verdict only. It has no field for an order, a client-order id, a broker,
+   an account, or a fill; a redaction guard rejects a currency total or a secret; sealing is `canonicalJson` +
+   `sha256`. `sealsProspectiveDecisions(mode)` admits SHADOW/PAPER (and the absent live modes) and refuses
+   RESEARCH/BACKTEST, enforcing the ladder's "BACKTEST may not write the prospective decision ledger" in code.
+   The ledger is immutable per instant (unique index; append-only triggers). Touches no broker, no scheduler,
+   and does not change `backtest.ts`.
+2. **Shadow decision job.** Wire slice 1 into the `serve` scheduler as a mode-gated `after_close` job, so it
+   seals decisions prospectively on the live data the auto-ingest keeps fresh.
+3. **Counterfactual fills + reconciler/steward + incident records.** The internal simulator fills the sealed
+   decisions; the reconciler records breaks. Still zero broker contact.
+4. **PAPER: Alpaca paper broker adapter + order lifecycle.** Order idempotency, protection, reconciliation
+   against the paper endpoint. Needs the owner's paper Alpaca keys (scoped to the paper base URL) and the D-12
+   sleeve-account decision (an `OrderIntent` carries the sleeve account id; the gateway re-checks it).
+
+**What it does not do.** Building this machinery does not climb the ladder. Rung-2 shadow *evidence* still
+cannot precede the Rung-1 experiment (register + run design/walk-forward → a result), and a strategy still has
+to pass its own preregistered gate — which per D-51 the current etf-trend-vol version may not. No slice adds a
+live mode, a `LIVE_AUTHORIZATION`, or a broker credential; those remain the owner's acts that no autonomy
+reaches.
 
 ---
 
