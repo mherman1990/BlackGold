@@ -52,7 +52,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-50 | Adopt Tiingo (`tiingo.eod.bars.1d`) as the strategy's market-data source, revising OD-4 and cutting `charter_version` 0.2.0 — a new strategy version that does not inherit 0.1.0's evidence. Prepared as a DRAFT charter (`strategies/etf-trend-vol/charter.yaml`); the owner signs the approval block to accept | **Proposed** 2026-09-12 by Claude Code (owner to sign) | etf-trend-vol registration on 0.2.0 |
 | D-51 | Reconsider the etf-trend-vol primary promotion metric: `net_sharpe_difference_vs_primary_benchmark` is nearly blind to the tail, but the strategy's thesis is drawdown reduction. Consider a Calmar/MAR- or Sortino-based gate, or an explicit max-drawdown constraint alongside the Sharpe test. Raised from the 2026-09-13 single-source machinery check (non-evidential). Any change is a new charter version | **Proposed** 2026-09-13 by Claude Code (owner to decide) | etf-trend-vol promotion criteria (charter version) |
 | D-52 | Optional file-based secrets fallback: `config/load.ts` reads a dotenv `${dataDir}/secrets.env` for a closed allowlist of credential keys (the data-source keys + `ANTHROPIC_API_KEY`) when the environment leaves them empty, because umbrelOS 1.x does not inject the app-data `.env` into the container while the data volume is reliably mounted. Environment always wins; the file can never set MODE, the sleeve role, or any behavioural config, so it cannot enable a live path | **Proposed** 2026-09-13 by Claude Code (owner to accept). Amended 0.1.12 (2026-09-13) to admit the two opt-in auto-ingest switches | unattended/autonomous ingest and the analyst key under the umbrelOS env gap |
-| D-53 | Build the paper/shadow track toward live as bounded per-rung PRs (docs/AUTOMATION_AND_LIVE_GATES.md): (1) the sealed prospective decision record + append-only ledger + SHADOW/PAPER mode guard [this PR]; (2) the mode-gated `after_close` shadow decision job; (3) counterfactual fills + reconciler; (4) the Alpaca **paper** broker adapter + order lifecycle. Building the machinery does not climb the ladder: Rung-2 shadow **evidence** still cannot precede the Rung-1 experiment, and a strategy still has to pass its own gate (D-51). No live mode, `LIVE_AUTHORIZATION`, or broker credential is added by any slice; slice 4 needs the owner's paper keys and the D-12 sleeve decision | **Proposed** 2026-09-14 by Claude Code (owner chose the paper/shadow track this session) | prospective decision loop; PAPER rung needs paper Alpaca keys + D-12 |
+| D-53 | Build the paper/shadow track toward live as bounded per-rung PRs (docs/AUTOMATION_AND_LIVE_GATES.md): (1) the sealed prospective decision record + append-only ledger + SHADOW/PAPER mode guard; (2) the shadow decision loop — 2a the pure per-arm target book, 2b the pure gate-and-seal function, 2c the mode-gated `after_close` job; (3) counterfactual fills + reconciler; (4) the Alpaca **paper** broker adapter + order lifecycle. Building the machinery does not climb the ladder: Rung-2 shadow **evidence** still cannot precede the Rung-1 experiment, and a strategy still has to pass its own gate (D-51). No live mode, `LIVE_AUTHORIZATION`, or broker credential is added by any slice; slice 4 needs the owner's paper keys and the D-12 sleeve decision | **Proposed** 2026-09-14 by Claude Code (owner chose the paper/shadow track this session) | prospective decision loop; PAPER rung needs paper Alpaca keys + D-12 |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -906,8 +906,20 @@ phase.
    deterministic (features → candidates → sizing), composing the *same* leakage-audited primitives the backtest
    composes; a permanent cross-check test binds B1's weights to `runBacktest`'s at the same instant, so the
    prospective decision cannot drift from the backtested one. Reads only point-in-time, forms no order.
-   **2b** wire the target book through `evaluateDecisionGate`, seal it (slice 1), and register a mode-gated
-   `after_close` `serve` job so decisions are sealed prospectively on the live data the auto-ingest keeps fresh.
+   **2b [this PR]** the pure gate-and-seal function (`decision/shadow-decision.ts`): for each arm, wire the
+   slice-2a target book through `evaluateDecisionGate` (B1 runs the full halt + limits + new-risk-compliance
+   gate; B0, the passive benchmark comparator, is bound only by the halt state) and seal the slice-1
+   `ProspectiveDecisionRecord`. Pure — every input (charter, read surface, `RiskConfig`, `RestrictedListConfig`,
+   shadow book state, decision/seal instants) is passed in; it reads no config, env, clock, or DB, forms no
+   order, and touches no broker. Compliance fails closed honestly: ETF theme look-through is not yet wired, so a
+   candidate's `themeExposures` is `undefined`, which blocks B1 new risk (`UNKNOWN_LOOK_THROUGH`); the sealed
+   target weights — byte-for-byte the backtested ones — are the rung-2 evidence, and the gate verdict truthfully
+   reports that no new exposure cleared. Slice 2b carries no cross-session shadow state (each decision is from an
+   empty book); does not touch `serve.ts` or `backtest.ts`.
+   **2c** register the mode-gated `after_close` `serve` job that drives 2b on the live data the auto-ingest keeps
+   fresh (weekly cadence, `appendDecisionRecord` per arm). Split out because it needs an explicit decision on
+   where the operative `risk.yaml`/`restricted-list.yaml` load from on umbrelOS given the D-52 env gap (only
+   `config/examples/` exist today), and that risk-policy source deserves its own review.
 3. **Counterfactual fills + reconciler/steward + incident records.** The internal simulator fills the sealed
    decisions; the reconciler records breaks. Still zero broker contact.
 4. **PAPER: Alpaca paper broker adapter + order lifecycle.** Order idempotency, protection, reconciliation
