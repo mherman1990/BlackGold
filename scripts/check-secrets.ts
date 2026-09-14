@@ -21,7 +21,7 @@ const patterns: { name: string; re: RegExp }[] = [
   { name: "Env assignment with secret-like value", re: /^(?:export\s+)?[A-Z_]*(SECRET|TOKEN|PASSWORD|API_KEY)[A-Z_]*\s*=\s*['"]?[A-Za-z0-9_\-/+=]{16,}['"]?\s*$/m },
 ];
 
-const skip = /^(package-lock\.json|.*\.svg|.*\.png|.*\.jpg)$/;
+const skip = /^(package-lock\.json|.*\.svg|.*\.png|.*\.jpg|.*\.xlsx)$/;
 const problems: string[] = [];
 for (const f of files) {
   if (skip.test(f) || f === "scripts/check-secrets.ts") continue;
