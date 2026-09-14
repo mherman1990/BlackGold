@@ -919,7 +919,27 @@ phase.
    **2c** register the mode-gated `after_close` `serve` job that drives 2b on the live data the auto-ingest keeps
    fresh (weekly cadence, `appendDecisionRecord` per arm). Split out because it needs an explicit decision on
    where the operative `risk.yaml`/`restricted-list.yaml` load from on umbrelOS given the D-52 env gap (only
-   `config/examples/` exist today), and that risk-policy source deserves its own review.
+   `config/examples/` exist today). **Decided (Matt, 2026-09-14): bake them into the image** at a fixed path —
+   versioned policy that ships with the release, hashed like `risk_yaml` in a `LIVE_AUTHORIZATION`. Owner
+   ordering (2026-09-14): do the look-through slices (below) **before** 2c, so the shadow B1 gate is not
+   uniformly `UNKNOWN_LOOK_THROUGH` when the loop first runs.
+   **3a — ETF theme look-through** (owner chose the **full holdings computation** over an interim declared map):
+   the literal ALPHA_CHARTER §2.2 rule — a diversified ETF is admissible when the *aggregate* weight of
+   restricted-theme issuers in its latest published holdings is at or below the compliance threshold (§2.2
+   proposes 10% of NAV), re-checked quarterly by deterministic code. Built as bounded PRs:
+   **3a-1 [this PR]** the pure engine (`compliance/look-through.ts`): `evaluateLookThrough(holdings, membership,
+   params, now)` sums the DISTINCT restricted-theme issuers' weight and clears (empty `themeExposures`) at or
+   below the threshold, else names the present restricted themes so compliance blocks; unknown (no holdings, or
+   staler than the owner-set freshness limit) returns `undefined` → `UNKNOWN_LOOK_THROUGH` (fail closed). Plus
+   `lookThroughResolver`, the `(etf) => themeExposures | undefined` adapter `shadow-decision.ts` consumes. Pure,
+   no ingest, no network, no charter change, no owner content (holdings + membership are inputs). The threshold,
+   the freshness limit, and the issuer→theme membership are owner compliance content, passed in — never authored
+   here. **3a-2** the point-in-time issuer-holdings ingest adapter (allowlisted issuer hosts, vintaged per
+   `DATA_PROVENANCE_SPEC` §… holdings row) + the owner-authored theme-membership config (schema + fake example
+   only). **3a-3** wire the resolver into the shadow decision / serve job (reads holdings as-of the decision
+   instant). Note: §2.2's phrasing is an *aggregate* threshold; 3a-1 implements exactly that. Per-theme vs
+   aggregate, the threshold value, and the freshness limit are compliance-policy details for the owner (OD-1 is
+   marked interim pending counsel).
 3. **Counterfactual fills + reconciler/steward + incident records.** The internal simulator fills the sealed
    decisions; the reconciler records breaks. Still zero broker contact.
 4. **PAPER: Alpaca paper broker adapter + order lifecycle.** Order idempotency, protection, reconciliation
