@@ -122,15 +122,26 @@ describe("evaluateLookThrough: the section 2.2 aggregate rule", () => {
     ]);
   });
 
-  it("de-duplicates a constituent split across lines by taking its greatest weight, not the sum", () => {
+  it("sums an issuer's separate holding lines (e.g. share classes), not just the largest", () => {
     const h = holdings([
-      { symbol: "SOY", entityId: "ent-soy", weight: D("0.07") },
-      { symbol: "SOY", entityId: "ent-soy", weight: D("0.06") },
+      { symbol: "SOYA", entityId: "ent-soy", weight: D("0.07") },
+      { symbol: "SOYB", entityId: "ent-soy", weight: D("0.06") },
     ]);
     const v = evaluateLookThrough(h, membershipFrom({ "ent-soy": ["soybean_processing"] }), params(), NOW);
-    // Max 0.07, not 0.13, so the single issuer is within the threshold and the ETF is admissible.
-    expect(v?.aggregateThemeWeight.toFixed()).toBe("0.07");
-    expect(v?.admissible).toBe(true);
+    // Two share classes 0.07 + 0.06 = 0.13, over the 0.10 threshold; taking only the max (0.07) would fail open.
+    expect(v?.aggregateThemeWeight.toFixed()).toBe("0.13");
+    expect(v?.admissible).toBe(false);
+    expect(v?.themeExposures).toEqual(["soybean_processing"]);
+  });
+
+  it("fails closed on an empty holdings report (unknown, not 'holds nothing')", () => {
+    expect(evaluateLookThrough(holdings([]), membershipFrom({}), params(), NOW)).toBeUndefined();
+  });
+
+  it("fails closed on holdings dated after the decision instant (no future data)", () => {
+    // asOf 2026-09-20 is after NOW (2026-09-11): a negative age must be treated as unknown, not fresh.
+    const h = holdings([{ symbol: "SOY", weight: D("0.20") }], "2026-09-20");
+    expect(evaluateLookThrough(h, membershipFrom({ SOY: ["soybean_processing"] }), params(), NOW)).toBeUndefined();
   });
 });
 

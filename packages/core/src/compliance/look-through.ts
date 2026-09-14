@@ -1,4 +1,4 @@
-import { Dec, ZERO, sumDec, type IsoDate, type UtcInstant } from "@blackgold/shared";
+import { Dec, ZERO, type IsoDate, type UtcInstant } from "@blackgold/shared";
 
 /**
  * Deterministic ETF theme look-through (strategies/etf-trend-vol/ALPHA_CHARTER.md section 2.2; D-53 slice 3a).
@@ -10,18 +10,20 @@ import { Dec, ZERO, sumDec, type IsoDate, type UtcInstant } from "@blackgold/sha
  *
  * The rule, verbatim from the charter, is a **compliance decision, not a research parameter**: "a diversified
  * ETF is admissible when the aggregate weight of restricted-theme issuers in the latest published holdings is at
- * or below 10% of ETF NAV". So this engine sums the weight of the DISTINCT constituents that belong to any
- * restricted theme and compares that one aggregate against the owner-set threshold:
+ * or below 10% of ETF NAV". So this engine sums the weight of every holding line that belongs to any restricted
+ * theme (each line once) and compares that one aggregate against the owner-set threshold:
  *
  *  - aggregate restricted-theme weight <= threshold -> the ETF is admissible; `themeExposures` is empty (a de
  *    minimis restricted holding does not block, exactly as section 2.2 intends).
  *  - aggregate restricted-theme weight >  threshold -> the ETF is NOT admissible; `themeExposures` names every
  *    restricted theme present among its constituents, so the compliance engine blocks new risk and reports it.
  *
- * It is pure and fail-closed. It reads no model, broker, or network. Two states are unknown, and unknown blocks
- * new risk rather than defaulting to admissible: absent holdings (`undefined`) and holdings older than the
- * owner-set freshness limit both return `undefined`, which the resolver forwards as `themeExposures: undefined`
- * -> `UNKNOWN_LOOK_THROUGH`. Which issuers belong to which restricted theme is owner-authored compliance content
+ * It is pure and fail-closed. It reads no model, broker, or network. Several states are unknown, and unknown
+ * blocks new risk rather than defaulting to admissible: absent holdings (`undefined`), an empty holdings report
+ * (a truncated download or parser error is not "holds nothing"), and holdings older than the owner-set freshness
+ * limit OR dated after the decision instant (a future-dated snapshot would leak later information) all return
+ * `undefined`, which the resolver forwards as `themeExposures: undefined` -> `UNKNOWN_LOOK_THROUGH`. Which
+ * issuers belong to which restricted theme is owner-authored compliance content
  * (a positive membership list — an issuer absent from it is simply not a restricted-theme issuer); this engine
  * never authors it, it consumes it. The threshold and the freshness limit are likewise owner policy, passed in.
  */
@@ -73,7 +75,7 @@ export type LookThroughVerdict = {
   themeExposures: string[];
   /** True iff the aggregate restricted-theme weight is at or below the threshold. */
   admissible: boolean;
-  /** Aggregate weight of the distinct restricted-theme constituents, as a fraction of ETF NAV. */
+  /** Aggregate weight of the restricted-theme holding lines (each line once), as a fraction of ETF NAV. */
   aggregateThemeWeight: Dec;
   /** Per-theme aggregate constituent weight (a constituent can count toward more than one theme), for the record. */
   perThemeWeight: { theme: string; weight: Dec }[];
@@ -101,33 +103,35 @@ export function evaluateLookThrough(
   now: UtcInstant,
 ): LookThroughVerdict | undefined {
   // Unknown holdings block new risk rather than defaulting to admissible (section 2.2; the compliance engine's
-  // UNKNOWN_LOOK_THROUGH). Absent, or staler than the owner-set freshness limit, is unknown.
+  // UNKNOWN_LOOK_THROUGH). Absent, empty, stale, or future-dated is unknown.
   if (holdings === undefined) return undefined;
-  if (ageDays(now, holdings.asOf) > params.maxHoldingsAgeDays) return undefined;
+  // An empty holdings report is unknown, not "holds nothing": a truncated download or a parser error must fail
+  // closed, not read as a completed clean look-through (downstream, an empty exposure list admits new risk).
+  if (holdings.lines.length === 0) return undefined;
+  const age = ageDays(now, holdings.asOf);
+  // Staler than the owner-set limit, or dated AFTER the decision instant (negative age) - a future-dated snapshot
+  // would base the decision on information from a later date (temporal leakage). Both are unknown -> fail closed.
+  if (age < 0 || age > params.maxHoldingsAgeDays) return undefined;
 
   const restricted = new Set(params.restrictedThemes);
   const perTheme = new Map<string, Dec>();
-  // The aggregate is over DISTINCT constituents: an issuer in two restricted themes is one issuer's weight in the
-  // aggregate, though it counts toward each of its themes in the per-theme breakdown. Dedupe by canonical
-  // identity (entity id, or symbol when unresolved), matching how the membership content is keyed.
-  const restrictedWeightByConstituent = new Map<string, Dec>();
   const presentThemes = new Set<string>();
-
+  // Aggregate over restricted-theme holding LINES, each counted once. Every distinct restricted security counts,
+  // so an issuer's two share classes (two lines at 6% each) sum to its true 12% exposure rather than collapsing
+  // to 6%; a single line mapped to more than one restricted theme still counts once in the aggregate (it counts
+  // toward each of its themes only in the per-theme breakdown, which is diagnostic). Ingest is responsible for
+  // not emitting a duplicate identical row; over-counting one would only fail closed, never admit exposure it
+  // should block.
+  let aggregateThemeWeight = ZERO;
   for (const line of holdings.lines) {
     const themes = membership({ symbol: line.symbol, entityId: line.entityId }).filter((t) => restricted.has(t));
     if (themes.length === 0) continue;
-    const key = line.entityId ?? line.symbol;
-    // A constituent can appear on more than one line (rare, but holdings files split share classes); take the
-    // greatest weight seen for it rather than summing duplicates into a phantom over-weight.
-    const prior = restrictedWeightByConstituent.get(key);
-    if (prior === undefined || line.weight.gt(prior)) restrictedWeightByConstituent.set(key, line.weight);
+    aggregateThemeWeight = aggregateThemeWeight.plus(line.weight);
     for (const t of themes) {
       presentThemes.add(t);
       perTheme.set(t, (perTheme.get(t) ?? ZERO).plus(line.weight));
     }
   }
-
-  const aggregateThemeWeight = sumDec([...restrictedWeightByConstituent.values()]);
   const admissible = aggregateThemeWeight.lte(params.maxAggregateThemeWeightPct);
   const perThemeWeight = [...perTheme]
     .map(([theme, weight]) => ({ theme, weight }))
