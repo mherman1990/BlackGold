@@ -1,6 +1,20 @@
 import readXlsxFile from "read-excel-file/node";
 import { Dec, isoDate, type IsoDate } from "@blackgold/shared";
-import { decimalString, SchemaDriftError } from "./common.ts";
+import type { ArtifactStore } from "../artifacts/store.ts";
+import type { AllowlistedHttpClient } from "../http.ts";
+import { issuerHoldingsPublication } from "../lag-rules.ts";
+import type { PointInTimeObservation } from "../pit/types.ts";
+import {
+  baseObservation,
+  decimalString,
+  fetchAndStore,
+  midnightUtc,
+  SchemaDriftError,
+  type AdapterContext,
+  type ArtifactRef,
+  type FetchOutcome,
+  type ParseContext,
+} from "./common.ts";
 
 /**
  * Decoder for State Street (SSGA) SPDR ETF daily holdings files (D-53 slice 3a-2, look-through data source).
@@ -28,7 +42,12 @@ import { decimalString, SchemaDriftError } from "./common.ts";
  * against a real file on first run (like every adapter's first CR verification).
  */
 
-export const SSGA_HOLDINGS_DECODER_VERSION = "ssga-holdings-1.0.0";
+export const SSGA_HOLDINGS_ADAPTER_VERSION = "1.0.0";
+export const SSGA_HOLDINGS_PARSER_VERSION = "1.0.0";
+const VERSIONS = { adapterVersion: SSGA_HOLDINGS_ADAPTER_VERSION, parserVersion: SSGA_HOLDINGS_PARSER_VERSION };
+
+/** Excel MIME for the stored raw artifact. */
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /** The point-in-time source-id prefix for SSGA holdings; the per-ETF id appends the ticker. */
 export const SSGA_HOLDINGS_SOURCE_PREFIX = "etf_holdings.ssga";
@@ -205,4 +224,66 @@ export async function decodeSsgaHoldings(bytes: Uint8Array, opts: { etf: string 
   }
 
   return { etf: wantEtf, asOf, lines };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fetch + point-in-time observation wrapping
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The stored point-in-time value for one ETF's holdings snapshot. Weights are fractions of NAV as decimal
+ * strings (no binary float in the store); the look-through engine rehydrates them to `Dec`. `name` is decode-
+ * internal and deliberately not stored — the value carries only what compliance needs (issuer + weight).
+ */
+export type SsgaHoldingsValue = { etf: string; asOf: IsoDate; lines: { symbol: string; weight: string }[] };
+
+/**
+ * Decode SSGA holdings bytes and wrap them as ONE point-in-time observation for the ETF. `effectiveAt` is the
+ * file's holdings as-of date; `availableAt` and `vintageAt` are the next-business-day publication instant
+ * ({@link issuerHoldingsPublication}) — each day's file supersedes the prior vintage, and availability strictly
+ * follows the as-of date so no decision reads a file before it was public. Decoding failures propagate as
+ * {@link SchemaDriftError}; nothing is emitted.
+ */
+export async function ssgaHoldingsObservations(bytes: Uint8Array, ctx: ParseContext & { etf: string }): Promise<PointInTimeObservation<SsgaHoldingsValue>[]> {
+  const decoded = await decodeSsgaHoldings(bytes, { etf: ctx.etf });
+  const publication = issuerHoldingsPublication(decoded.asOf, ctx.calendar);
+  const value: SsgaHoldingsValue = { etf: decoded.etf, asOf: decoded.asOf, lines: decoded.lines.map((l) => ({ symbol: l.symbol, weight: l.weight })) };
+  return [
+    baseObservation(
+      {
+        sourceId: ssgaHoldingsSourceId(decoded.etf),
+        sourceLocator: `ssga/holdings/${decoded.etf}/${decoded.asOf}`,
+        entityId: decoded.etf,
+        effectiveAt: midnightUtc(decoded.asOf),
+        availableAt: publication.availableAt,
+        vintageAt: publication.availableAt,
+        value,
+        qualityFlags: publication.flags,
+      },
+      ctx,
+      VERSIONS,
+    ),
+  ];
+}
+
+export type SsgaHoldingsFetchContext = AdapterContext & { etfs: readonly string[] };
+
+/**
+ * Fetch each ETF's daily holdings `.xlsx` from `www.ssga.com`, store the raw bytes, and append one holdings
+ * observation per ETF. Unauthenticated public download — no header, no secret. One request per ETF; the files
+ * are tiny. A decode/schema failure on any ETF aborts the run (nothing partial is written), matching the
+ * decoder's fail-closed contract.
+ */
+export async function fetchSsgaHoldings(client: AllowlistedHttpClient, store: ArtifactStore, ctx: SsgaHoldingsFetchContext): Promise<FetchOutcome<SsgaHoldingsValue>> {
+  const etfs = [...new Set(ctx.etfs.map((e) => e.trim().toUpperCase()).filter((e) => e.length > 0))].sort();
+  if (etfs.length === 0) throw new RangeError("at least one ETF is required");
+  const artifacts: ArtifactRef[] = [];
+  const observations: PointInTimeObservation<SsgaHoldingsValue>[] = [];
+  for (const etf of etfs) {
+    const url = ssgaHoldingsUrl(etf);
+    const { put, ref } = await fetchAndStore(client, store, url, { locator: url, mime: XLSX_MIME, retention: "market" });
+    artifacts.push(ref);
+    observations.push(...(await ssgaHoldingsObservations(store.get(put.hash), { calendar: ctx.calendar, ingestedAt: ctx.ingestedAt, rawContentHash: put.hash, etf })));
+  }
+  return { artifacts, observations };
 }

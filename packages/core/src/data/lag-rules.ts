@@ -90,6 +90,19 @@ export function treasuryPublicationEstimate(date: IsoDate): LagResult {
   return { availableAt: zonedToUtc(date, 16, 0, NY), flags: ["AVAILABLE_AT_ESTIMATED"] };
 }
 
+/**
+ * ETF issuer holdings file (docs/DATA_PROVENANCE_SPEC.md): the "Holdings as of" date is the effective date; the
+ * file is published on the next business day. availableAt is that next session at 12:00 ET (a conservative
+ * midday estimate, AVAILABLE_AT_ESTIMATED) and doubles as the file's vintage - each day's file supersedes the
+ * prior one. Next-business-day is always after the as-of date, so a decision on the as-of date never reads a
+ * file that was not yet public. Uses the exchange calendar as the business-day proxy for issuer publication.
+ */
+export function issuerHoldingsPublication(asOf: IsoDate, calendar: ExchangeCalendar): LagResult {
+  let next = addDays(asOf, 1);
+  while (!calendar.isSession(next)) next = addDays(next, 1);
+  return { availableAt: zonedToUtc(next, 12, 0, NY), flags: ["AVAILABLE_AT_ESTIMATED"] };
+}
+
 /** Quarter end containing or preceding a date. */
 export function quarterEndOf(date: IsoDate): IsoDate {
   const y = Number(date.slice(0, 4));

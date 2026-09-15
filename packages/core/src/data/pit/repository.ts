@@ -48,6 +48,7 @@ export const DEFAULT_PROCESSING_DELAY_MS: Readonly<Record<string, number>> = {
   "bea.": 60 * 60_000,
   "universe.": 0,
   "corporate_action.": 15 * 60_000,
+  "etf_holdings.": 15 * 60_000,
   "test.": 0,
 };
 const FALLBACK_DELAY_MS = 60 * 60_000;
