@@ -14,6 +14,7 @@ import { COT_DATASETS, fetchCot, type CotDataset } from "../data/adapters/cftc-c
 import { fetchSeriesVintages } from "../data/adapters/fred.ts";
 import { fetchSubmissions } from "../data/adapters/sec-edgar.ts";
 import { ingestCorporateActions } from "../data/adapters/corporate-actions.ts";
+import { fetchSsgaHoldings } from "../data/adapters/ssga-holdings.ts";
 import { MissingSourceCredentialError } from "../errors.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { CORE_VERSION } from "../version.ts";
@@ -31,10 +32,11 @@ export type IngestRequest =
   | { source: "alpaca-bars"; symbols: string[]; start: IsoDate; end: IsoDate }
   | { source: "tiingo-bars"; symbols: string[]; start: IsoDate; end: IsoDate }
   | { source: "tiingo-actions"; symbols: string[]; start: IsoDate; end: IsoDate }
-  | { source: "corporate-actions"; file: string; dataset?: string | undefined };
+  | { source: "corporate-actions"; file: string; dataset?: string | undefined }
+  | { source: "ssga-holdings"; etfs: string[] };
 
 export type IngestSource = IngestRequest["source"];
-export const INGEST_SOURCES: readonly IngestSource[] = ["sec-submissions", "fred", "cot", "alpaca-bars", "tiingo-bars", "tiingo-actions", "corporate-actions"];
+export const INGEST_SOURCES: readonly IngestSource[] = ["sec-submissions", "fred", "cot", "alpaca-bars", "tiingo-bars", "tiingo-actions", "corporate-actions", "ssga-holdings"];
 
 export type IngestReport = {
   source: IngestSource;
@@ -158,6 +160,10 @@ async function dispatch(
       }
       return ingestCorporateActions(store, bytes, { ...ctx, ...(request.dataset !== undefined ? { dataset: request.dataset } : {}) });
     }
+    case "ssga-holdings":
+      // ETF issuer holdings from www.ssga.com (the look-through data source). Unauthenticated public download,
+      // so no credential is threaded; the decoder fails closed on any malformed file.
+      return fetchSsgaHoldings(getClient(), store, { ...ctx, etfs: request.etfs });
   }
 }
 
@@ -218,6 +224,7 @@ ingest alpaca-bars --symbols A,B,C --start YYYY-MM-DD --end YYYY-MM-DD
 ingest tiingo-bars --symbols A,B,C --start YYYY-MM-DD --end YYYY-MM-DD
 ingest tiingo-actions --symbols A,B,C --start YYYY-MM-DD --end YYYY-MM-DD
 ingest corporate-actions --file <path.json> [--dataset <name>]
+ingest ssga-holdings --etfs XLI,XLP
 ingest universe --charter <charter.yaml> --actions <tiingo|none> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--source tiingo|alpaca]`;
 
 /** Calendar-day headroom fetched before the earliest charter window, so a decision at that window's start still has its full feature lookback. Overridable with --start. */
@@ -314,6 +321,12 @@ export function parseIngestArgs(args: readonly string[]): IngestRequest {
     case "corporate-actions": {
       const o = parseOptions(rest, { file: { type: "string" }, dataset: { type: "string" } });
       return { source, file: required(str(o["file"]), "file"), dataset: str(o["dataset"]) };
+    }
+    case "ssga-holdings": {
+      const o = parseOptions(rest, { etfs: { type: "string" } });
+      const etfs = required(str(o["etfs"]), "etfs").split(",").map((x) => x.trim()).filter((x) => x.length > 0);
+      if (etfs.length === 0) throw new UsageError("--etfs must name at least one ETF");
+      return { source, etfs };
     }
     default:
       throw new UsageError(`Unknown ingest source: ${source}\n${INGEST_USAGE}`);
