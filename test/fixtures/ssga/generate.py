@@ -64,4 +64,17 @@ badsum = book([
 ])
 badsum.save("test/fixtures/ssga/holdings-badsum.xlsx")
 
-print("wrote holdings-xli / holdings-wrongfund / holdings-noheader / holdings-badsum .xlsx")
+# A real constituent (valid ticker) with a blank Weight cell -> the whole file must fail closed, because a
+# silently dropped issuer could be a restricted one and let the ETF fail-open through compliance.
+blankweight = book([
+    ["Fund Name:", "The Industrial Select Sector SPDR Fund"],
+    ["Ticker Symbol:", "XLI"],
+    ["As of Date:", "08/29/2026"],
+    [],
+    HEADER,
+    ["GE Aerospace", "GE", "369604301", "2380498", "", "Industrials", "1", "USD"],
+    ["Caterpillar Inc.", "CAT", "149123101", "2180201", "60.00", "Industrials", "1", "USD"],
+])
+blankweight.save("test/fixtures/ssga/holdings-blankweight.xlsx")
+
+print("wrote holdings-xli / holdings-wrongfund / holdings-noheader / holdings-badsum / holdings-blankweight .xlsx")

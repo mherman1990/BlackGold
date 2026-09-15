@@ -54,7 +54,12 @@ describe("decodeSsgaHoldings: fails closed on every surprise", () => {
     await expect(decodeSsgaHoldings(fixture("holdings-noheader.xlsx"), { etf: "XLI" })).rejects.toBeInstanceOf(SchemaDriftError);
   });
 
-  it("rejects a file whose constituent weights do not sum near 100%", async () => {
+  it("rejects a file whose holdings do not sum near 100%", async () => {
     await expect(decodeSsgaHoldings(fixture("holdings-badsum.xlsx"), { etf: "XLI" })).rejects.toBeInstanceOf(SchemaDriftError);
+  });
+
+  it("rejects a real constituent with a blank/unreadable weight rather than silently dropping it", async () => {
+    // Silently dropping a valid-ticker row with no weight could hide a restricted issuer and fail open.
+    await expect(decodeSsgaHoldings(fixture("holdings-blankweight.xlsx"), { etf: "XLI" })).rejects.toBeInstanceOf(SchemaDriftError);
   });
 });

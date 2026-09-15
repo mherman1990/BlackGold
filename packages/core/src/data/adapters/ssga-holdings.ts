@@ -17,9 +17,10 @@ import { decimalString, SchemaDriftError } from "./common.ts";
  *    zero-CVE reader) rather than SheetJS's npm `xlsx`, whose published build carries unfixed
  *    prototype-pollution/ReDoS advisories - not something to point at attacker-influenceable bytes.
  *  - **Fail closed on any surprise.** Every shape the file is not - unreadable workbook, no recognizable header,
- *    a fund ticker that does not match the ETF requested, no as-of date, no constituents, or weights that do not
- *    sum near 100% - raises {@link SchemaDriftError}, and nothing is emitted. A misread holdings file must never
- *    silently become a wrong (and possibly fail-open) look-through base.
+ *    a fund ticker that does not match the ETF requested, no as-of date, no constituents, a constituent whose
+ *    weight is blank or unreadable, or a total that does not sit near 100% of NAV - raises
+ *    {@link SchemaDriftError}, and nothing is emitted. A dropped or misread constituent must never silently
+ *    become a wrong (and possibly fail-open) look-through base; the whole file is rejected instead.
  *
  * The layout it targets is SSGA's: a few preamble rows (fund name, ticker, an as-of date), then a header row
  * naming at least Name / Ticker / Weight, then one row per constituent. Columns are located by header name, not
@@ -52,6 +53,12 @@ export type SsgaHoldings = { etf: string; asOf: IsoDate; lines: SsgaHoldingLine[
 const TICKER_RE = /^[A-Z][A-Z.-]{0,9}$/;
 
 const HUNDRED = new Dec(100);
+
+// The acceptable band for a decoded file's total weight (constituents + cash), in percent of NAV. SPDR sector
+// funds are essentially fully invested, so the total sits just under 100%; anything materially below means rows
+// were dropped or mis-scaled. Narrow by design (a compliance-completeness guard, not a research parameter).
+const MIN_TOTAL_PCT = new Dec(98);
+const MAX_TOTAL_PCT = new Dec(101);
 
 /** Trimmed text of a cell; a Date is rendered ISO so it never matches a header or ticker by accident. */
 function cellText(cell: unknown): string {
@@ -148,29 +155,53 @@ export async function decodeSsgaHoldings(bytes: Uint8Array, opts: { etf: string 
   if (asOf === undefined) throw new SchemaDriftError(sourceId, "no holdings as-of date found in the preamble");
 
   const lines: SsgaHoldingLine[] = [];
-  let percentSum = new Dec(0);
+  // The completeness total sums EVERY row's numeric weight — constituents AND any cash/other line — so a
+  // fully-invested SPDR fund totals ~100%. Reconciling cash into the total (rather than dropping it) is what
+  // lets a narrow band catch a partial or mis-scaled file even though cash never enters `lines`.
+  let totalPct = new Dec(0);
   for (let i = header.index + 1; i < rows.length; i++) {
     const row = rows[i];
     if (row === undefined) continue;
     const symbol = cellText(row[header.ticker]).toUpperCase();
-    if (!TICKER_RE.test(symbol)) continue; // cash, "-", disclaimer, or blank rows carry no restricted issuer
     const rawWeight = row[header.weight];
+    const weightText = typeof rawWeight === "number" ? String(rawWeight) : cellText(rawWeight);
+
+    if (!TICKER_RE.test(symbol)) {
+      // A cash, "-", disclaimer, or footer row is no restricted issuer, so it is not a constituent line. Its
+      // weight, when numeric, still reconciles into the completeness total (the fund's cash allocation); a
+      // non-numeric one (a disclaimer cell) is ignored.
+      if (weightText !== "") {
+        try {
+          const p = new Dec(decimalString(weightText));
+          if (!p.isNegative()) totalPct = totalPct.plus(p);
+        } catch {
+          /* a non-numeric weight on a non-constituent row is a disclaimer/footer cell; ignore it */
+        }
+      }
+      continue;
+    }
+
+    // A real constituent (valid ticker) MUST carry a readable, non-negative weight. A blank or unparseable
+    // weight is never a row to silently drop — the dropped issuer could be restricted, which would let the ETF
+    // fail-open through compliance — so fail closed on the whole file instead.
+    if (weightText === "") throw new SchemaDriftError(sourceId, `constituent ${symbol} has no weight`);
     let percent: Dec;
     try {
-      percent = new Dec(decimalString(typeof rawWeight === "number" ? rawWeight : cellText(rawWeight)));
+      percent = new Dec(decimalString(weightText));
     } catch {
-      continue; // a constituent line whose weight is not numeric is not usable; skip it
+      throw new SchemaDriftError(sourceId, `constituent ${symbol} has an unreadable weight "${weightText}"`);
     }
     if (percent.isNegative()) throw new SchemaDriftError(sourceId, `${symbol} has a negative weight`);
-    percentSum = percentSum.plus(percent);
+    totalPct = totalPct.plus(percent);
     lines.push({ symbol, name: cellText(row[header.name]), weight: percent.div(HUNDRED).toFixed() });
   }
 
   if (lines.length === 0) throw new SchemaDriftError(sourceId, "no constituent rows parsed");
-  // SSGA weights are percentages of NAV that sum to ~100% (less a little cash). A gross deviation means the
-  // file was misread - a wrong column, a scaling change - so fail closed rather than emit a wrong exposure base.
-  if (percentSum.lt(50) || percentSum.gt(150)) {
-    throw new SchemaDriftError(sourceId, `constituent weights sum to ${percentSum.toFixed(2)}%, outside the expected ~100%`);
+  // A fully-invested SPDR sector fund's holdings total ~100% of NAV; a shortfall beyond a small cash allowance
+  // means constituents were dropped or the weights are mis-scaled, so fail closed rather than emit a partial
+  // (undercounting) look-through base. The band is deliberately narrow around 100%.
+  if (totalPct.lt(MIN_TOTAL_PCT) || totalPct.gt(MAX_TOTAL_PCT)) {
+    throw new SchemaDriftError(sourceId, `holdings weights sum to ${totalPct.toFixed(2)}%, outside the expected ${MIN_TOTAL_PCT.toFixed()}-${MAX_TOTAL_PCT.toFixed()}% of NAV`);
   }
 
   return { etf: wantEtf, asOf, lines };
