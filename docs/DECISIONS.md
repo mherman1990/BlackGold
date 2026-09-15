@@ -948,9 +948,11 @@ phase.
    binary-skip list. **3a-2 fetch [this PR]** the fetch + PIT wiring: `fetchSsgaHoldings` (one request per ETF to
    `www.ssga.com`, added to the http allowlist; unauthenticated, no credential) stores the raw `.xlsx` and wraps
    each decoded file as ONE observation under the per-ETF source `etf_holdings.ssga.<ETF>` — effectiveAt is the
-   holdings as-of date; availableAt = vintageAt is the next-business-day publication at 12:00 ET
-   (`AVAILABLE_AT_ESTIMATED`, from the new `issuerHoldingsPublication` lag rule), so availability always follows
-   the as-of date and no decision reads a not-yet-public file; `etf_holdings.` gets a 15-min processing delay;
+   holdings as-of date; availableAt = vintageAt is the **fetch instant** (`ingestedAt`), not a function of the
+   as-of date, so a corrected workbook SSGA republishes under the same as-of date is admissible (and supersedes)
+   only from when it was actually ingested rather than reading back retroactively via `asOf`'s row-id tiebreak
+   (a Codex P1); `AVAILABLE_AT_ESTIMATED` (the fetch instant is a conservative proxy for public availability);
+   `etf_holdings.` gets a 15-min processing delay;
    `ingest ssga-holdings --etfs XLI,XLP` CLI + an e2e ingest test. It lands point-in-time data only and forms no
    decision. **3a-3** the owner-authored theme-membership config (schema + fake example) + wiring the resolver
    into the shadow/serve loop (reads holdings as-of the decision instant). Note: §2.2's phrasing is an *aggregate* threshold; 3a-1

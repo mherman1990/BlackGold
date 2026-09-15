@@ -2,7 +2,6 @@ import readXlsxFile from "read-excel-file/node";
 import { Dec, isoDate, type IsoDate } from "@blackgold/shared";
 import type { ArtifactStore } from "../artifacts/store.ts";
 import type { AllowlistedHttpClient } from "../http.ts";
-import { issuerHoldingsPublication } from "../lag-rules.ts";
 import type { PointInTimeObservation } from "../pit/types.ts";
 import {
   baseObservation,
@@ -239,14 +238,20 @@ export type SsgaHoldingsValue = { etf: string; asOf: IsoDate; lines: { symbol: s
 
 /**
  * Decode SSGA holdings bytes and wrap them as ONE point-in-time observation for the ETF. `effectiveAt` is the
- * file's holdings as-of date; `availableAt` and `vintageAt` are the next-business-day publication instant
- * ({@link issuerHoldingsPublication}) — each day's file supersedes the prior vintage, and availability strictly
- * follows the as-of date so no decision reads a file before it was public. Decoding failures propagate as
- * {@link SchemaDriftError}; nothing is emitted.
+ * file's holdings as-of date; `availableAt` and `vintageAt` are the FETCH instant (`ingestedAt`), NOT a function
+ * of the as-of date.
+ *
+ * That distinction is the point-in-time-integrity guard: SSGA republishes a corrected workbook under the SAME
+ * holdings as-of date, so deriving availability/vintage from that date alone would give the correction the same
+ * timestamps as the original, and `PointInTimeRepository.asOf` would break the tie by row id — letting a
+ * decision made BEFORE the correction read it retroactively. Stamping the fetch instant makes each ingested
+ * version strictly later than the one before, so a correction is admissible (and supersedes) only from when it
+ * was actually ingested. The fetch instant is a conservative proxy for public availability (we hold only what
+ * we have fetched), hence `AVAILABLE_AT_ESTIMATED`. Decoding failures propagate as {@link SchemaDriftError};
+ * nothing is emitted.
  */
 export async function ssgaHoldingsObservations(bytes: Uint8Array, ctx: ParseContext & { etf: string }): Promise<PointInTimeObservation<SsgaHoldingsValue>[]> {
   const decoded = await decodeSsgaHoldings(bytes, { etf: ctx.etf });
-  const publication = issuerHoldingsPublication(decoded.asOf, ctx.calendar);
   const value: SsgaHoldingsValue = { etf: decoded.etf, asOf: decoded.asOf, lines: decoded.lines.map((l) => ({ symbol: l.symbol, weight: l.weight })) };
   return [
     baseObservation(
@@ -255,10 +260,10 @@ export async function ssgaHoldingsObservations(bytes: Uint8Array, ctx: ParseCont
         sourceLocator: `ssga/holdings/${decoded.etf}/${decoded.asOf}`,
         entityId: decoded.etf,
         effectiveAt: midnightUtc(decoded.asOf),
-        availableAt: publication.availableAt,
-        vintageAt: publication.availableAt,
+        availableAt: ctx.ingestedAt,
+        vintageAt: ctx.ingestedAt,
         value,
-        qualityFlags: publication.flags,
+        qualityFlags: ["AVAILABLE_AT_ESTIMATED"],
       },
       ctx,
       VERSIONS,

@@ -75,17 +75,18 @@ describe("ssgaHoldingsObservations: point-in-time wrapping", () => {
     etf: "XLI",
   };
 
-  it("wraps a decoded file into one observation with next-business-day availability and vintage", async () => {
+  it("wraps a decoded file into one observation stamped with the fetch instant as availability and vintage", async () => {
     const obs = await ssgaHoldingsObservations(fixture("holdings-xli.xlsx"), ctx);
     expect(obs).toHaveLength(1);
     const o = obs[0];
     expect(o?.sourceId).toBe("etf_holdings.ssga.XLI");
     expect(o?.entityId).toBe("XLI");
     expect(o?.sourceLocator).toBe("ssga/holdings/XLI/2026-08-29");
-    // The as-of date is the effective date; the file publishes the next business day (2026-08-29 is a Saturday,
-    // so the next NYSE session is Monday 2026-08-31) at 12:00 ET = 16:00Z, which also serves as the vintage.
+    // The as-of date is the effective date; availableAt and vintageAt are the fetch instant (ingestedAt), so a
+    // corrected file re-published under the same as-of date can never read back retroactively.
     expect(o?.effectiveAt).toBe(utc("2026-08-29T00:00:00Z"));
-    expect(o?.availableAt).toBe(utc("2026-08-31T16:00:00Z"));
+    expect(o?.availableAt).toBe(utc("2026-09-02T00:00:00Z"));
+    expect(o?.availableAt).toBe(ctx.ingestedAt);
     expect(o?.vintageAt).toBe(o?.availableAt);
     expect(o?.qualityFlags).toContain("AVAILABLE_AT_ESTIMATED");
     expect(o?.value.etf).toBe("XLI");
