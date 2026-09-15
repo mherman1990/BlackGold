@@ -934,12 +934,23 @@ phase.
    `lookThroughResolver`, the `(etf) => themeExposures | undefined` adapter `shadow-decision.ts` consumes. Pure,
    no ingest, no network, no charter change, no owner content (holdings + membership are inputs). The threshold,
    the freshness limit, and the issuer→theme membership are owner compliance content, passed in — never authored
-   here. **3a-2** the point-in-time issuer-holdings ingest adapter (allowlisted issuer hosts, vintaged per
-   `DATA_PROVENANCE_SPEC` §… holdings row) + the owner-authored theme-membership config (schema + fake example
-   only). **3a-3** wire the resolver into the shadow decision / serve job (reads holdings as-of the decision
-   instant). Note: §2.2's phrasing is an *aggregate* threshold; 3a-1 implements exactly that. Per-theme vs
-   aggregate, the threshold value, and the freshness limit are compliance-policy details for the owner (OD-1 is
-   marked interim pending counsel).
+   here. **3a-2** the issuer-holdings ingest, split for review because it adds a dependency and parses an
+   untrusted file:
+   **3a-2 decoder [this PR]** `compliance`/`data/adapters/ssga-holdings.ts`: `decodeSsgaHoldings(bytes, {etf})`
+   turns an SSGA SPDR daily-holdings `.xlsx` (SSGA publishes XLI/XLP only as Excel) into a validated
+   `{ etf, asOf, lines: {symbol, name, weight} }`, weights converted from percent-of-NAV to fractions. Excel is
+   decoded with `read-excel-file` — a small, ESM-native, zero-CVE **read-only** reader — chosen over SheetJS's
+   npm `xlsx` (unfixed prototype-pollution/ReDoS advisories; the file is untrusted external data) and over
+   hand-rolling ZIP+XML (owner picked "add a small dep", 2026-09-14). Fail-closed on every surprise
+   (unreadable workbook, no Name/Ticker/Weight header, a fund ticker ≠ the ETF requested, no as-of date, no
+   constituents, weights not summing near 100%) via `SchemaDriftError`; nothing is emitted. `read-excel-file`
+   is the first `packages/core` runtime dep beyond decimal.js/yaml/zod; `.xlsx` added to `check-secrets`'
+   binary-skip list. **3a-2 fetch** the fetch adapter (`www.ssga.com` on the http allowlist, per-ETF PIT source
+   `etf_holdings.ssga.<ETF>`, next-business-day availability + vintage, `run.ts`/CLI wiring). **3a-3** the
+   owner-authored theme-membership config (schema + fake example) + wiring the resolver into the shadow/serve
+   loop (reads holdings as-of the decision instant). Note: §2.2's phrasing is an *aggregate* threshold; 3a-1
+   implements exactly that. Per-theme vs aggregate, the threshold value, and the freshness limit are
+   compliance-policy details for the owner (OD-1 is marked interim pending counsel).
 3. **Counterfactual fills + reconciler/steward + incident records.** The internal simulator fills the sealed
    decisions; the reconciler records breaks. Still zero broker contact.
 4. **PAPER: Alpaca paper broker adapter + order lifecycle.** Order idempotency, protection, reconciliation
