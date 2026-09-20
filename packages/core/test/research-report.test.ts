@@ -195,6 +195,20 @@ describe("buildResultReport", () => {
   // Section 16.1's second prong is decisive, and an approximated comparator has no safe direction of error.
   // So an index that could not place every rebalance exactly loses the registered name and takes the prong
   // with it, rather than being published as though it were the charter's Secondary 2.
+  it("treats a result with no withhold field as withheld, not as usable", () => {
+    // A BacktestResult written by an earlier schema - deserialized from a store, or built by an external
+    // caller of the exported buildResultReport - has no `secondary2Withheld`. Read as a truthiness test,
+    // `undefined` would mean "not withheld" and hand that result the registered arm name and the prong. The
+    // gate would then be defeated by a schema gap rather than by any argument about the comparator.
+    const base = run();
+    const legacy = { ...base.backtest } as Record<string, unknown>;
+    delete legacy["secondary2Withheld"];
+    const r = buildResultReport({ ...base, backtest: legacy as unknown as typeof base.backtest });
+    expect(r.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT");
+    expect(r.benchmarks.map((b) => b.arm)).not.toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
+    expect(r.primaryVersusSecondary2).toBeUndefined();
+  });
+
   it("withholds the second prong and renames the arm whenever Secondary 2 is withheld", () => {
     const base = run();
     // Every real run is withheld today by SECONDARY_2_KNOWN_DEFECT, so the usable case has to be constructed.

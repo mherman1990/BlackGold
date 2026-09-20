@@ -31,7 +31,7 @@ import type { LeakageAuditor } from "./leakage.ts";
  * result carries `registrable` and the labels that bar promotion evidence.
  */
 
-export const BACKTEST_VERSION = 2;
+export const BACKTEST_VERSION = 3;
 
 /**
  * An unconditional withhold on section 16.1's second prong while a known defect in `legSplit` stands.

@@ -20,7 +20,7 @@ import type { ArmResult, BacktestResult } from "./backtest.ts";
  *    charters, optimistic delays, survivorship labels and synthetic missing data all land there.
  */
 
-export const REPORT_VERSION = 2;
+export const REPORT_VERSION = 3;
 
 export type ArmMetrics = {
   arm: string;
@@ -252,6 +252,10 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
   const passive = bt.arms["B0_PASSIVE"];
   if (!candidate) throw new RangeError("a result report needs the B1_DETERMINISTIC arm");
 
+  // Read ONCE, here, and used for both the arm name and the prong. An earlier revision of this change read it
+  // separately at each site while carrying a comment claiming otherwise, and the duplication hid a mutation:
+  // flipping one read left the other correct, and the belt-and-braces name lookup masked the difference.
+  const secondary2Withheld = (bt as { secondary2Withheld?: boolean }).secondary2Withheld !== false;
   const weightBySession = new Map(bt.equityWeights.map((w) => [w.session, w.weight]));
   const exposureMatched: BlendSpec = { equity: input.primary, cash: input.cash, equityWeight: (session) => weightBySession.get(session) ?? ZERO };
   const benchmarkSeries: { name: string; series: TRSeries }[] = [{ name: `${c.benchmarks.primary}_TR`, series: input.primary }];
@@ -261,11 +265,21 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
   // it. Absent when the primary is not a risk ETF: the registered estimator produces no volatility for it,
   // and no stand-in is offered in its place.
   if (c.benchmarks.volatility_controlled_primary && bt.secondary2Index !== undefined) {
-    // An index that could not place every rebalance exactly is published under a name that says so, and the
-    // decisive prong below is withheld from it. The name rather than a warnings field, for the same reason as
-    // before: a name is the only warning that survives the number being copied into a spreadsheet or a log
-    // line. The registered, unqualified name is reserved for a comparator built exactly.
-    const name = bt.secondary2Withheld ? "SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT" : "SECONDARY_2_VOL_TARGET_PRIMARY";
+    // A withheld comparator is published under a name that says so, and the decisive prong below is withheld
+    // from it. The name rather than a warnings field, for the same reason as before: a name is the only
+    // warning that survives the number being copied into a spreadsheet or a log line. The registered,
+    // unqualified name is reserved for a comparator that may actually be used.
+    //
+    // `!== false`, not a truthiness test. A `BacktestResult` deserialized from a store written before
+    // `secondary2Withheld` existed has no such field, and `undefined` read as "not withheld" would hand an
+    // older result the registered name and the prong - the gate defeated by a schema gap rather than by any
+    // argument. Only an explicit `false` from a result that carries the field counts as usable, which is the
+    // repository's standing rule that unknown or unclassified state fails closed.
+    // The cast is the honest part: `BacktestResult` declares this `boolean`, but the type is a compile-time
+    // claim about a value that can arrive from JSON, where the field may simply be absent. Reading it at its
+    // declared type would let the compiler argue the guard away as redundant - which is what a schema gap
+    // looks like from inside the type system.
+    const name = secondary2Withheld ? "SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT" : "SECONDARY_2_VOL_TARGET_PRIMARY";
     benchmarkSeries.push({ name, series: bt.secondary2Index });
   }
   if (c.benchmarks.volatility_controlled_primary) {
@@ -369,7 +383,7 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
      * `decisiveRejection: undefined` rather than deciding from a number whose error has an unknown sign.
      */
     primaryVersusSecondary2:
-      secondary2 === undefined || candidateMetrics === undefined || bt.secondary2Withheld
+      secondary2 === undefined || candidateMetrics === undefined || secondary2Withheld
         ? undefined
         : candidateMetrics.totalReturn.minus(secondary2.totalReturn),
     taxScenarios: tax,
