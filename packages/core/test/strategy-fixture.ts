@@ -68,6 +68,17 @@ export type BuildMarketOptions = {
   actions?: readonly { action: CorporateAction; availableAt?: UtcInstant; qualityFlags?: readonly string[]; sourceLocator?: string }[];
   /** Set the row's availableAt to the session close plus this many ms. Defaults to 30 minutes. */
   publishDelayMs?: number;
+  /**
+   * Per-entity open as a fraction of the same session's close, e.g. "0.99" to open 1% below it. Absent
+   * entities open at their close.
+   *
+   * Two things a test exercising an open-split benchmark needs to know. The default (`open = close`) makes
+   * every session's move entirely overnight, so a benchmark that decomposes a session at the open is
+   * indistinguishable from one that does not. And a ratio applied UNIFORMLY across entities is no better: the
+   * intraday factor is then the same on every leg, so a blend of them is weight-independent and the split
+   * cancels out exactly. Give the legs DIFFERENT ratios.
+   */
+  openRatio?: Readonly<Record<string, Dec>>;
   db?: Db;
 };
 
@@ -90,12 +101,14 @@ export function buildMarket(opts: BuildMarketOptions): FixtureMarket {
       if (session === undefined || omitted.has(session)) continue;
       const close = pathClose(p, i);
       perEntity.set(session, close);
+      const ratio = opts.openRatio?.[p.entityId];
+      const open = ratio === undefined ? close : close.times(ratio);
       const bar: RawBar = {
         symbol: p.entityId,
         session,
-        open: close,
-        high: close,
-        low: close,
+        open,
+        high: open.gt(close) ? open : close,
+        low: open.lt(close) ? open : close,
         close,
         volume: p.volumeShares,
         venue: "iex",
@@ -108,7 +121,7 @@ export function buildMarket(opts: BuildMarketOptions): FixtureMarket {
         effectiveAt: utc(`${session}T00:00:00Z`),
         availableAt,
         ingestedAt,
-        rawContentHash: `sha256:${sha256Hex(`${p.entityId}:${session}:${close.toFixed()}`)}`,
+        rawContentHash: `sha256:${sha256Hex(`${p.entityId}:${session}:${open.toFixed()}:${close.toFixed()}`)}`,
         adapterVersion: ADAPTER_VERSION,
         parserVersion: ADAPTER_VERSION,
         value: rawBarToValue(bar),

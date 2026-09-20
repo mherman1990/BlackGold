@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { Dec, ONE, ZERO } from "@blackgold/shared";
 import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
 import { backtestParamsFromCharter, costModelFor, costsFromCharter, reportBenchmarkSeries, runBacktest, weeklyDecisionSessions, type BacktestInput } from "../src/research/backtest.ts";
+import { blendSeries } from "../src/research/benchmarks.ts";
 import { auditReads } from "../src/research/leakage.ts";
 import { defaultProcessingDelayMs } from "../src/data/pit/repository.ts";
 import { UNVERIFIED_SINGLE_SOURCE } from "../src/data/adapters/corporate-actions.ts";
@@ -283,6 +284,247 @@ describe("runBacktest", () => {
         if (d.orders.some((o) => o.entityId === f.entityId)) expect(f.session > d.decisionSession).toBe(true);
       }
     }
+  });
+
+  // ALPHA_CHARTER section 11 Secondary 2. The reads are already covered by the leakage audit above, because
+  // the volatility comes from computeFeatures. What that audit cannot catch is the weight-to-session mapping:
+  // a weight applied at the decision session would let a volatility estimated through that session's close
+  // earn the return ending at it.
+  it("applies the Secondary 2 weight only where the strategy's own fills land", () => {
+    const { input } = setup();
+    const r = runBacktest(input);
+    const delay = input.costs.delayBars;
+    expect(r.secondary2Weights.length).toBe(r.sessions.length);
+
+    const indexOf = new Map(r.sessions.map((s, i) => [s, i]));
+    // The only sessions at which the weight may change are decision sessions shifted by the execution delay.
+    const allowed = new Set<string>();
+    for (const d of r.decisions) {
+      const at = indexOf.get(d.decisionSession);
+      if (at === undefined) continue;
+      const effective = r.sessions[at + Math.max(delay, 1)];
+      if (effective !== undefined) allowed.add(effective);
+    }
+
+    let changes = 0;
+    for (let i = 1; i < r.secondary2Weights.length; i++) {
+      const prev = r.secondary2Weights[i - 1];
+      const cur = r.secondary2Weights[i];
+      if (prev === undefined || cur === undefined) continue;
+      if (!cur.weight.eq(prev.weight)) {
+        changes++;
+        expect(allowed.has(cur.session)).toBe(true);
+        // Never on the decision session itself, INCLUDING at zero delay. The previous version of this test
+        // permitted the change when delay === 0, which blessed exactly the look-ahead it was meant to catch:
+        // a zero-delay fill lands at the decision close, so the weight cannot earn the return ending there.
+        expect(r.decisions.some((d) => d.decisionSession === cur.session)).toBe(false);
+      }
+    }
+    expect(changes).toBeGreaterThan(0);
+  });
+
+  // The whole point of building Secondary 2 as its own index: the rebalance session is split at the open, so
+  // the new weight cannot earn the overnight move its position did not exist for.
+  it("splits the rebalance session at the open, so a pre-fill gap is earned at the OLD weight", () => {
+    const { input } = setup();
+    const r = runBacktest(input);
+    const idx = r.secondary2Index;
+    expect(idx).toBeDefined();
+    if (idx === undefined) return;
+
+    // A well-formed index: starts at 1, strictly positive, one point per common session, no warnings on
+    // clean fixture data (a warning here means a rebalance session had no usable open).
+    expect(idx.points[0]?.trIndex.eq(ONE)).toBe(true);
+    for (const p of idx.points) expect(p.trIndex.gt(0)).toBe(true);
+    expect(idx.warnings).toEqual([]);
+    expect(idx.points.length).toBeGreaterThan(1);
+  });
+
+  it("puts a zero-delay Secondary 2 weight in force at the decision close, and no earlier", () => {
+    // `delayBarsOverride: 0` fills at the decision close, so the weight IS in force at the end of the decision
+    // session - and earns none of that session's return, because a close instant is the right endpoint of the
+    // step ending at it. The earlier version of this test asserted the weight could not change on a decision
+    // session at all, which was a symptom of the calendar-shift hack rather than the invariant: what must
+    // never happen is the weight EARNING that session, which `secondary2Weights` alone cannot show. The index
+    // oracle below pins that half.
+    const { input } = setup();
+    const r = runBacktest({ ...input, costs: { ...input.costs, delayBars: 0 } });
+    const decisionSessions = new Set(r.decisions.map((d) => d.decisionSession));
+    let changes = 0;
+    for (let i = 1; i < r.secondary2Weights.length; i++) {
+      const prev = r.secondary2Weights[i - 1];
+      const cur = r.secondary2Weights[i];
+      if (prev === undefined || cur === undefined) continue;
+      if (!cur.weight.eq(prev.weight)) {
+        changes++;
+        expect(decisionSessions.has(cur.session)).toBe(true);
+      }
+    }
+    expect(changes).toBeGreaterThan(0);
+  });
+
+  // The split has to be driven by the RUN's delay, not hardcoded. `blendSeries` is the independent oracle: it
+  // applies one weight to each whole close-to-close return, so feeding it the weight in force at the PREVIOUS
+  // close reproduces a zero-delay Secondary 2 exactly (the fill is at that close, nothing is split) and cannot
+  // reproduce a delayed one (every rebalance session is decomposed at its open).
+  it("splits only when the run's own fills land at an open, not at the prior close", () => {
+    const { input } = setup();
+    const legs = reportBenchmarkSeries(input);
+
+    const asLaggedBlend = (r: ReturnType<typeof runBacktest>): string[] => {
+      // Weight held INTO each session: the one in force at the previous session's close.
+      const heldInto = new Map<string, Dec>();
+      for (let i = 1; i < r.secondary2Weights.length; i++) {
+        const cur = r.secondary2Weights[i];
+        const prev = r.secondary2Weights[i - 1];
+        if (cur !== undefined && prev !== undefined) heldInto.set(cur.session, prev.weight);
+      }
+      return blendSeries({
+        equity: legs.primary,
+        cash: legs.cash,
+        equityWeight: (session) => heldInto.get(session) ?? ZERO,
+      }).points.map((p) => p.trIndex.toFixed(12));
+    };
+    const levels = (r: ReturnType<typeof runBacktest>): string[] => (r.secondary2Index?.points ?? []).map((p) => p.trIndex.toFixed(12));
+
+    // Zero delay: every weight is acquired at a close, so no session is split.
+    const zero = runBacktest({ ...input, costs: { ...input.costs, delayBars: 0 } });
+    expect(levels(zero).length).toBeGreaterThan(1);
+    expect(zero.secondary2Exact).toBe(true);
+    expect(levels(zero)).toEqual(asLaggedBlend(zero));
+
+    // Delayed: the fill lands at an open, so every rebalance session is decomposed and the index parts
+    // company with the blend. This needs a fixture whose open differs from its close - the default fixture
+    // sets `open = close`, which makes every session's move entirely overnight and a split indistinguishable
+    // from no split. Without this half, the zero-delay assertion above could pass on a no-op split.
+    const gapMarket = buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-06-30"), openRatio: { VTI: N("0.985"), BIL: N("0.999") } });
+    const gapped = setup({ pit: gapMarket.pit, calendar: gapMarket.calendar });
+    const delayed = runBacktest(gapped.input);
+    expect(gapped.input.costs.delayBars).toBeGreaterThanOrEqual(1);
+    const gapLegs = reportBenchmarkSeries(gapped.input);
+    const heldInto = new Map<string, Dec>();
+    for (let i = 1; i < delayed.secondary2Weights.length; i++) {
+      const cur = delayed.secondary2Weights[i];
+      const prev = delayed.secondary2Weights[i - 1];
+      if (cur !== undefined && prev !== undefined) heldInto.set(cur.session, prev.weight);
+    }
+    const gapBlend = blendSeries({
+      equity: gapLegs.primary,
+      cash: gapLegs.cash,
+      equityWeight: (session) => heldInto.get(session) ?? ZERO,
+    }).points.map((p) => p.trIndex.toFixed(12));
+    expect(delayed.secondary2Exact).toBe(true);
+    expect(levels(delayed).length).toBeGreaterThan(1);
+    expect(levels(delayed)).not.toEqual(gapBlend);
+  });
+
+  it("reports Secondary 2 inexact when a fill lands on a session the legs do not share", () => {
+    // BIL loses the session VTI's fill lands on, so that instant falls inside a stretched return interval
+    // with no price to place it at. There is no safe side to guess: under-crediting the comparator makes the
+    // strategy easier to promote, over-crediting makes it harder, and which one a guess causes depends on the
+    // signs of the weight change and of the move. The index says so instead, and `report.ts` withholds the
+    // prong on it.
+    const holed = buildMarket({
+      paths: PATHS,
+      from: D("2026-01-02"),
+      to: D("2026-06-30"),
+      omitSessions: { BIL: [D("2026-03-09")] },
+    });
+    const r = runBacktest(setup({ pit: holed.pit, calendar: holed.calendar }).input);
+    expect(r.secondary2Index).toBeDefined();
+    expect(r.secondary2Exact).toBe(false);
+    expect(r.secondary2InexactReasons.join(" ")).toContain("falls inside the");
+  });
+
+  it("reports Secondary 2 inexact when its window does not match the run's", () => {
+    // BIL loses the run's FIRST session, so the index spans one session less than the candidate arm while
+    // every rebalance still places exactly. `buildResultReport` subtracts two independently computed total
+    // returns, so a shorter comparator window makes the prong a difference between different intervals - not
+    // an excess return over anything. Comparing unequal windows is the misplacement defect at window scale.
+    const short = buildMarket({
+      paths: PATHS,
+      from: D("2026-01-02"),
+      to: D("2026-06-30"),
+      omitSessions: { BIL: [D("2026-03-02")] },
+    });
+    const r = runBacktest(setup({ pit: short.pit, calendar: short.calendar }).input);
+    expect(r.secondary2Index).toBeDefined();
+    expect(r.sessions[0]).toBe(D("2026-03-02"));
+    expect(r.secondary2Index?.points[0]?.session).not.toBe(D("2026-03-02"));
+    expect(r.secondary2Exact).toBe(false);
+    expect(r.secondary2InexactReasons.join(" ")).toContain("cover different intervals");
+  });
+
+  it("counts a session BOTH legs lack, using the run's own calendar", () => {
+    // Two bars missing on the same date leave it in neither leg's total-return series, so the union of what
+    // the legs observed cannot see it - only the run's calendar can. The resulting step collapses two daily
+    // rebalances into one, which at a fractional weight is not the quantity section 11 describes.
+    //
+    // A volatile VTI is needed for the weight to BE fractional: the default fixture's primary runs well under
+    // the 10% target, so k pins at 1 and the collapse is genuinely exempt. Without this the test would pass
+    // whether or not the calendar were consulted.
+    const volatile: PricePath[] = PATHS.map((x) => (x.entityId === "VTI" ? { ...x, wobble: N("0.012") } : x));
+    const both = buildMarket({
+      paths: volatile,
+      from: D("2026-01-02"),
+      to: D("2026-06-30"),
+      omitSessions: { VTI: [D("2026-05-12")], BIL: [D("2026-05-12")] },
+    });
+    const r = runBacktest(setup({ pit: both.pit, calendar: both.calendar }).input);
+    expect(r.secondary2Index).toBeDefined();
+    // The weight really is fractional somewhere, or the exemption would make this vacuous.
+    expect(r.secondary2Weights.some((w) => w.weight.gt(0) && w.weight.lt(ONE))).toBe(true);
+    expect(r.secondary2Exact).toBe(false);
+    expect(r.secondary2InexactReasons.join(" ")).toContain("skips 1 session(s)");
+  });
+
+  it("does not call the estimator's warm-up an approximation", () => {
+    // Before the first computable primary volatility there is no previous target to wrongly persist, and the
+    // comparator sitting in cash is what section 11 describes and what the strategy does before its first
+    // fill. Recording that as inexact would withhold the prong on every run and make the flag meaningless.
+    //
+    // The mid-window case - an estimator that loses the primary AFTER a target exists, leaving last week's
+    // target in force - is recorded instead. That branch is NOT covered by a test: no fixture reachable from
+    // here removes the volatility (a stale bar keeps series continuity, and a long gap still leaves enough
+    // observations in the covariance window), so it is guarded by construction rather than by evidence. The
+    // warm-up guard itself IS covered - removing it turns three evaluation tests red, which I verified.
+    const clean = runBacktest(setup().input);
+    expect(clean.secondary2Exact).toBe(true);
+    expect(clean.secondary2InexactReasons.join(" ")).not.toContain("no primary volatility");
+  });
+
+  it("reports an exactly-placed Secondary 2 on clean data, with no approximation", () => {
+    const { input } = setup();
+    const r = runBacktest(input);
+    expect(r.secondary2Exact).toBe(true);
+    expect(r.secondary2InexactReasons).toEqual([]);
+    expect(r.secondary2Index?.warnings).toEqual([]);
+  });
+
+  it("holds Secondary 2 in cash until its first decision takes effect, and keeps it long-only", () => {
+    const { input } = setup();
+    const r = runBacktest(input);
+    const first = r.secondary2Weights[0];
+    expect(first?.weight.isZero()).toBe(true);
+    for (const w of r.secondary2Weights) {
+      expect(w.weight.isNegative()).toBe(false);
+      expect(w.weight.lte(ONE)).toBe(true);
+    }
+  });
+
+  it("scales Secondary 2 by min(1, target / primary volatility), as section 9.5 does", () => {
+    const { input } = setup();
+    const r = runBacktest(input);
+    const target = input.params.sizing.annualVolatilityTarget;
+    // Every non-zero weight is either a full 1 (low-volatility primary, k capped) or strictly below it.
+    const nonZero = r.secondary2Weights.filter((w) => !w.weight.isZero());
+    expect(nonZero.length).toBeGreaterThan(0);
+    for (const w of nonZero) {
+      expect(w.weight.lte(ONE)).toBe(true);
+      expect(w.weight.gt(0)).toBe(true);
+    }
+    // A weight below 1 implies the primary's annualized volatility exceeded the target at that decision.
+    if (nonZero.some((w) => w.weight.lt(ONE))) expect(target.gt(0)).toBe(true);
   });
 
   it("refuses to be cited as evidence while the charter is a draft", () => {

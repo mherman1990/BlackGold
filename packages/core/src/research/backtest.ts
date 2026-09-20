@@ -8,6 +8,7 @@ import { admittedRiskEtfs, type Charter } from "../strategy/charter.ts";
 import { candidateParamsFromCharter, selectCandidates, type CandidateParams, type CandidateSet } from "../strategy/candidates.ts";
 import { computeFeatures, featureParamsFromCharter, type FeatureParams } from "../strategy/features.ts";
 import { constructTargets, rebalanceOrders, shareTargets, sizingParamsFromCharter, type SizingParams, type TargetWeights } from "../strategy/construct.ts";
+import { instantKey, volatilityTargetedSeries, type AcquisitionInstant, type VolTargetActivation } from "./benchmarks.ts";
 import { dailyNavSeries, type PortfolioEvent } from "./nav.ts";
 import { simulateFill, type CostModel } from "./simulator.ts";
 import type { LeakageAuditor } from "./leakage.ts";
@@ -30,7 +31,7 @@ import type { LeakageAuditor } from "./leakage.ts";
  * result carries `registrable` and the labels that bar promotion evidence.
  */
 
-export const BACKTEST_VERSION = 1;
+export const BACKTEST_VERSION = 2;
 export const COST_MODEL_VERSION = 1;
 
 export type CostTierName = "base" | "adverse" | "stress";
@@ -111,6 +112,43 @@ export type BacktestResult = {
   sessions: IsoDate[];
   /** Realized equity weight of the deterministic arm per session, for the exposure-matched benchmark. */
   equityWeights: { session: IsoDate; weight: Dec }[];
+  /**
+   * ALPHA_CHARTER section 11 Secondary 2: the equity weight of "VTI scaled to a 10% ex-ante volatility
+   * target with the same 63-day estimator, remainder in BIL", per session.
+   *
+   * Built to mirror section 9.5 with the holding set reduced to the primary benchmark alone: at each weekly
+   * decision the scale factor is `k = min(1, annual_volatility_target / sigma_primary)`, where
+   * `sigma_primary` is the primary's annualized volatility from the very `computeFeatures` covariance window
+   * the strategy sizes with - the same estimator, not a second implementation of it. The weight takes effect
+   * `execution_delay_bars` sessions later, where the strategy's own fills land, and holds until the next
+   * decision takes effect. Sessions before the first effective decision carry zero, exactly as the strategy
+   * holds no equity before its first fill.
+   *
+   * Empty when the primary benchmark is not among the charter's risk ETFs, because then `computeFeatures`
+   * computes no volatility for it and Secondary 2 cannot be built from the registered estimator. It is left
+   * absent rather than approximated - approximating this comparator is what D-51 had to unwind.
+   */
+  secondary2Weights: { session: IsoDate; weight: Dec }[];
+  /**
+   * ALPHA_CHARTER section 11 Secondary 2 as a total-return index, with each rebalance session split at the
+   * open so the new weight earns only from where `simulateFill` would have acquired the position. Absent
+   * when Secondary 2 cannot be built (the primary is not a risk ETF, so the registered estimator produces no
+   * volatility for it). See `volatilityTargetedSeries`.
+   */
+  secondary2Index?: TRSeries;
+  /**
+   * True only when every Secondary 2 rebalance was placed at the exact instant `simulateFill` would have
+   * acquired it. False when any was approximated, or when a decision never reached a bar at all.
+   *
+   * Section 16.1's second prong compares against this index, and there is no safe direction to approximate a
+   * decisive comparator in: under-crediting it makes the strategy easier to promote, over-crediting makes it
+   * harder, and which one a misplacement causes depends on the sign of the weight change and of the move it
+   * misassigns. So `report.ts` withholds the prong when this is false rather than publishing a number whose
+   * error has an unknown sign.
+   */
+  secondary2Exact: boolean;
+  /** Why `secondary2Exact` is false. Empty when it is true or Secondary 2 was not built at all. */
+  secondary2InexactReasons: string[];
   labels: string[];
   /**
    * Fills that landed on or before the decision that caused them. Must be empty: a non-empty list is a
@@ -273,6 +311,97 @@ export function reportBenchmarkSeries(input: BacktestInput): { primary: TRSeries
   };
 }
 
+/**
+ * Where each Secondary 2 weight change was acquired, mirroring `simulateFill` bar for bar.
+ *
+ * The delay is counted on the EQUITY LEG'S OWN BARS, not on the run's session calendar. `simulateFill`
+ * indexes the entity's `bars` array and skips an untradable one, so with `delayBars >= 2` and a session
+ * missing from the leg, a calendar-derived target lands a session early and the comparator earns a return
+ * before its position exists. Counting where the simulator counts removes the whole class.
+ *
+ *   - `delayBars === 0` and the decision bar tradable: acquired at that bar's CLOSE, exactly where
+ *     `simulateFill` fills. Note this is the decision session itself, and it is not look-ahead: a close
+ *     instant earns none of the step ending at it.
+ *   - otherwise: acquired at the OPEN of the first tradable bar at or after `decisionIdx + max(delayBars, 1)`,
+ *     which is `simulateFill`'s own start index and its own skip rule.
+ *
+ * A decision whose weight never reaches a bar is reported rather than dropped: it is a rebalance the strategy
+ * made and the comparator did not.
+ */
+function secondary2Activations(
+  perDecision: readonly { decisionSession: IsoDate; weight: Dec }[],
+  equityBars: readonly LoadedBar[],
+  delayBars: number,
+): { activations: VolTargetActivation[]; unplaced: string[] } {
+  const activations: VolTargetActivation[] = [];
+  const unplaced: string[] = [];
+  const indexOf = new Map<IsoDate, number>(equityBars.map((b, i) => [b.session, i]));
+  let previous: Dec | undefined;
+  for (const { decisionSession, weight } of perDecision) {
+    if (previous !== undefined && weight.eq(previous)) continue;
+    const at = indexOf.get(decisionSession);
+    if (at === undefined) {
+      unplaced.push(`decision ${decisionSession} has no bar on the Secondary 2 equity leg`);
+      continue;
+    }
+    const acquiredAt = acquisitionInstant(equityBars, at, delayBars);
+    if (acquiredAt === undefined) {
+      unplaced.push(`the weight decided on ${decisionSession} has no tradable bar to be acquired on`);
+      continue;
+    }
+    activations.push({ weight, acquiredAt });
+    previous = weight;
+  }
+  return { activations, unplaced };
+}
+
+/** `simulateFill`'s acquisition point for one decision, on that entity's bars. */
+function acquisitionInstant(bars: readonly LoadedBar[], decisionIdx: number, delayBars: number): AcquisitionInstant | undefined {
+  const decisionBar = bars[decisionIdx];
+  if (delayBars === 0 && decisionBar?.tradable === true) {
+    return { kind: "close", session: decisionBar.session };
+  }
+  for (let i = decisionIdx + Math.max(delayBars, 1); i < bars.length; i++) {
+    const bar = bars[i];
+    if (bar === undefined) break;
+    if (!bar.tradable) continue;
+    return { kind: "open", session: bar.session };
+  }
+  return undefined;
+}
+
+/**
+ * The equity weight in force at each session's close, projected from the activations.
+ *
+ * Reporting only. The INDEX is authoritative - it is built from the same activation list, against the legs'
+ * actual return intervals - and this projection exists so a reader can see the weight path without
+ * reconstructing it. Deriving both from one list is deliberate: the previous version computed the path and
+ * the index from separate rules, and they disagreed wherever a session was missing from a leg.
+ */
+function secondary2WeightPath(
+  activations: readonly VolTargetActivation[],
+  allSessions: readonly IsoDate[],
+): { session: IsoDate; weight: Dec }[] {
+  if (activations.length === 0) return [];
+  const sorted = [...activations].sort((a, b) => {
+    const ka = instantKey(a.acquiredAt);
+    const kb = instantKey(b.acquiredAt);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+  const out: { session: IsoDate; weight: Dec }[] = [];
+  let cursor = 0;
+  let weight = ZERO;
+  for (const session of allSessions) {
+    for (; cursor < sorted.length; cursor++) {
+      const a = sorted[cursor];
+      if (a === undefined || instantKey(a.acquiredAt) > `${session}|1`) break;
+      weight = a.weight;
+    }
+    out.push({ session, weight });
+  }
+  return out;
+}
+
 function navIndex(entityId: string, nav: readonly { session: IsoDate; nav: Dec }[]): TRSeries {
   const first = nav[0]?.nav;
   const points: TRPoint[] = [];
@@ -338,6 +467,13 @@ export function runBacktest(input: BacktestInput): BacktestResult {
   const missingRate = input.missingDataRate ?? ZERO;
   let missingCounter = 0;
 
+  // ALPHA_CHARTER section 11 Secondary 2, accumulated per decision and turned into a per-session step
+  // function after the loop. Recorded here rather than rebuilt later so the volatility it scales by is the
+  // one `computeFeatures` produced at this decision instant, under the same leakage audit as the strategy's.
+  const secondary2ByDecision: { decisionSession: IsoDate; weight: Dec }[] = [];
+  /** Decisions where the registered estimator produced no volatility for the primary. */
+  const secondary2MissingVol: IsoDate[] = [];
+
   for (const session of decisionSessions) {
     const decisionAt = decisionAtOf(session);
     const fs = computeFeatures(
@@ -345,6 +481,26 @@ export function runBacktest(input: BacktestInput): BacktestResult {
       { riskEntities: riskEtfs, cashEntityId: cashEtf, decisionAt, params: params.features },
     );
     for (const l of fs.labels) labels.add(l);
+
+    // Secondary 2's scale factor, mirroring section 9.5 with the holding set reduced to the primary alone:
+    // k = min(1, target / sigma_primary). sigma_primary is read from the same covariance window the strategy
+    // sizes with, so this is the charter's "same 63-day estimator" literally rather than a reimplementation.
+    // A missing or zero volatility leaves the weight unscaled at 1, exactly as `constructTargets` does.
+    const primaryVol = fs.features.get(benchmark)?.vol;
+    if (primaryVol !== undefined) {
+      const k = primaryVol.gt(0) ? params.sizing.annualVolatilityTarget.div(primaryVol) : ONE;
+      secondary2ByDecision.push({ decisionSession: session, weight: k.lt(ONE) ? k : ONE });
+    } else if (secondary2ByDecision.length > 0) {
+      // No volatility for the primary at a decision that follows a computed one - a stale or missing anchor
+      // bar, say. Skipping it silently would leave the PREVIOUS week's target in force and publish it as
+      // though it had been computed for this week. Absence of an estimate is not absence of a rebalance.
+      //
+      // The guard matters: before the FIRST computable target there is no previous target to wrongly persist.
+      // The estimator's warm-up leaves the comparator in cash, which is what section 11 describes and what
+      // the strategy itself does before its first fill - expected behaviour, not an approximation. Treating
+      // the warm-up as inexact would withhold the prong on every clean run and make the flag meaningless.
+      secondary2MissingVol.push(session);
+    }
 
     // Missing-data sensitivity (protocol section 5.8): drop a deterministic share of feature rows and let
     // the charter's own missing-data handling deal with it. Deterministic so the trial reproduces.
@@ -480,6 +636,66 @@ export function runBacktest(input: BacktestInput): BacktestResult {
   const passive = runPassiveArm(input, series, allSessions, closesAt, benchmark);
 
   const equityWeights = deterministic.points.map((p) => ({ session: p.session, weight: p.investedWeight }));
+  // The RUN's resolved delay, not the charter default: the adverse and stress tiers and `delayBarsOverride`
+  // change when the strategy's fills land (`simulateFill` takes `input.costs.delayBars`), and a comparator
+  // that shifted by a different number of bars would quietly break the delay-sensitivity test it feeds.
+  // ALPHA_CHARTER section 11 Secondary 2, built as its own index with each rebalance placed at the instant
+  // `simulateFill` would have acquired it (research/benchmarks.ts). Not a weight fed into `blendSeries`:
+  // that applies one weight to a whole close-to-close return, which would hand the new weight an overnight
+  // gap its position did not exist for.
+  //
+  // The RUN's resolved delay, not the charter default: the adverse and stress tiers and `delayBarsOverride`
+  // change when the strategy's fills land, and a comparator that shifted by a different number of bars would
+  // quietly break the delay-sensitivity test (F3) it feeds.
+  const s2Equity = series.get(benchmark);
+  const s2Cash = series.get(cashEtf);
+  const s2 =
+    s2Equity === undefined || s2Cash === undefined
+      ? undefined
+      : secondary2Activations(secondary2ByDecision, s2Equity.bars, input.costs.delayBars);
+  const secondary2Weights = s2 === undefined ? [] : secondary2WeightPath(s2.activations, allSessions);
+  const built =
+    s2 === undefined || s2.activations.length === 0 || s2Equity === undefined || s2Cash === undefined
+      ? undefined
+      : volatilityTargetedSeries({
+          equity: { bars: s2Equity.bars, tr: s2Equity.tr },
+          cash: { bars: s2Cash.bars, tr: s2Cash.tr },
+          activations: s2.activations,
+          // The run's own calendar, so a session BOTH legs lack is still counted as a skipped rebalance.
+          expectedSessions: allSessions,
+        });
+  const secondary2Index = built?.series;
+  // A comparator that could not be placed exactly is reported as such, never quietly consumed: section 16.1's
+  // second prong has no safe direction to approximate in. `report.ts` withholds the prong on this.
+  //
+  // Endpoints are part of "exactly". The index spans the sessions the two legs SHARE, while the candidate arm
+  // spans the run's sessions, and the prong subtracts two independently computed total returns. If a leg is
+  // missing the window's first or last session the two returns cover different intervals, and the difference
+  // is not an excess return over anything - with no activation near the edge, every other check would still
+  // pass. Comparing unequal windows is the same defect as misplacing a rebalance, at the scale of the window.
+  const s2Points = built?.series.points;
+  const windowMismatch: string[] = [];
+  if (s2Points !== undefined && s2Points.length > 0) {
+    const runFrom = allSessions[0];
+    const runTo = allSessions[allSessions.length - 1];
+    const s2From = s2Points[0]?.session;
+    const s2To = s2Points[s2Points.length - 1]?.session;
+    if (s2From !== runFrom || s2To !== runTo) {
+      windowMismatch.push(
+        `Secondary 2 spans ${String(s2From)}..${String(s2To)} but the run spans ${String(runFrom)}..${String(runTo)}; the two total returns cover different intervals`,
+      );
+    }
+  }
+  const missingVol =
+    built === undefined || secondary2MissingVol.length === 0
+      ? []
+      : [
+          `the registered estimator produced no primary volatility on ${String(secondary2MissingVol.length)} decision(s) (${secondary2MissingVol.slice(0, 3).join(", ")}${secondary2MissingVol.length > 3 ? ", ..." : ""}), so the previous target stayed in force`,
+        ];
+  const secondary2Exact =
+    built !== undefined && built.exact && (s2?.unplaced.length ?? 0) === 0 && windowMismatch.length === 0 && missingVol.length === 0;
+  const secondary2InexactReasons =
+    built === undefined ? [] : [...built.inexactReasons, ...(s2?.unplaced ?? []), ...windowMismatch, ...missingVol];
   const citability: string[] = [...(input.registrabilityReasons ?? [])];
   for (const l of ["SURVIVORSHIP_BIASED", "OPTIMISTIC_DELAY"]) if (labels.has(l)) citability.push(`run carries the ${l} label`);
   if (labels.has("SYNTHETIC_MISSING_DATA")) citability.push("run injected synthetic missing data for the sensitivity grid");
@@ -506,6 +722,11 @@ export function runBacktest(input: BacktestInput): BacktestResult {
     to: input.to,
     costsTier: input.costs.tier,
     delayBars: input.costs.delayBars,
+    // Whether the decisive comparator was placed exactly is part of what this result IS, not a note about it:
+    // two runs agreeing on every other field here mean different things if one's Secondary 2 was approximated
+    // and the other's was not. Leaving it out would let them share a `resultHash`, which is the same defect
+    // the tri-state verdict hash fixed one layer up.
+    secondary2Exact,
     decisionSeals: decisions.map((d) => d.sealHash),
     finalNav: Object.fromEntries(Object.entries(arms).map(([k, v]) => [k, (v.nav.at(-1)?.nav ?? ZERO).toFixed()])),
     labels: [...labels].sort(),
@@ -522,6 +743,10 @@ export function runBacktest(input: BacktestInput): BacktestResult {
     arms,
     sessions: allSessions,
     equityWeights,
+    secondary2Weights,
+    ...(secondary2Index === undefined ? {} : { secondary2Index }),
+    secondary2Exact,
+    secondary2InexactReasons,
     labels: [...labels].sort(),
     executionOrderViolations,
     citableAsEvidence: citability.length === 0,

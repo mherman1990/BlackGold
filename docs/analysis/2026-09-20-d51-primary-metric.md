@@ -15,9 +15,10 @@ changes the question. The short version:
 4. So "the strategy fails its own gate" is wrong twice over. The DESIGN primary-metric number is a
    **per-window diagnostic, not an F1 verdict** — §13 defines the pass rule "on the aggregate walk-forward
    out-of-sample set", and DESIGN is in-sample (§2c). And §16.1's status is not merely unknown.
-5. **§16.1 cannot be computed today at all**, because the benchmark it names — Secondary 2 — is not
-   implemented (§2a). (Both this and the point above were found by Codex review of earlier drafts of this
-   note, not by the drafts themselves.)
+5. §16.1 could not be computed at all, because the benchmark it names — Secondary 2 — was not implemented
+   (§2a). (Both this and the point above were found by Codex review of earlier drafts of this note, not by
+   the drafts themselves.) **Secondary 2 is now built — see §2d — so the prong is computable; it has still
+   not been run on real data.**
 
 Changing the primary metric now, having seen that it failed, would be metric-shopping. Computing a number the
 charter preregistered and nobody looked at is not. That ordering is the whole recommendation.
@@ -103,6 +104,77 @@ Implementing Secondary 2 is a bounded, preregistered piece of work: the estimato
 ex-ante) and the cash leg (BIL) are all frozen in §11, so it involves no judgement and contaminates nothing.
 It is a prerequisite to answering D-51, and it is listed in §5.
 
+## 2d. Secondary 2 is now implemented (2026-09-20)
+
+Built to mirror §9.5 with the holding set reduced to the primary alone:
+
+- **Estimator.** `sigma_primary` is read from the very `computeFeatures` covariance window the strategy sizes
+  with — the annualized 63-session sample covariance of log total-return returns. It is the charter's "same
+  63-day estimator" literally, not a second implementation, so the two cannot drift apart.
+- **Scale factor.** `k = min(1, annual_volatility_target / sigma_primary)`, matching `constructTargets`
+  exactly, including leaving `k = 1` when sigma is zero. Remainder in BIL. Long-only and unlevered by the cap.
+- **Timing.** The weight takes effect `execution_delay_bars` sessions after the decision, where the
+  strategy's own fills land, and holds until the next decision takes effect. This matters: `blendSeries`
+  multiplies the weight by session *t*'s own return, so applying it at the decision session would let a
+  volatility estimated through that session's close earn that session's return. A test asserts the weight
+  changes **only** at `decision session + delay`.
+- **Availability.** Empty when the primary is not among the charter's risk ETFs, because `computeFeatures`
+  then produces no volatility for it. In that case §16.1's prong reports `undefined` and **nothing is
+  substituted** — a test pins that the average-exposure approximation is never promoted into its place.
+
+`evaluateFalsifiers` now takes `primaryVersusSecondary2` and decides `decisiveRejection` from the registered
+comparator. That closes the latent defect recorded below: it previously decided rejection from the
+approximation.
+
+**The fill-timing problem, and how it was finally fixed.** The first implementation fed a per-session weight
+into `blendSeries`, and Codex took four rounds to dismantle it. Each round refuted the justification given in
+the round before:
+
+1. *"`EXPOSURE_MATCHED` sets the precedent."* — §11 defines Secondary 1 as a calendar-month **ex-post**
+   average; the code uses a per-session weight, so it is not the registered benchmark either.
+2. *"An exact treatment is not expressible in the series model."* — it is: `runBacktest` already loads raw
+   opens for both legs.
+3. *Withhold the prong instead.* — `evaluateFalsifiers` treated an absent prong as "does not beat", so
+   withholding would have emitted a §16.1 rejection on **every** run whose primary metric failed. And the
+   published series let anyone rebuild the withheld number by subtracting two fields.
+
+The owner's call after round four was to **stop patching and build it properly**, which was right: every
+defect above traced to one mismatch — `blendSeries` applies a single weight to a whole close-to-close return,
+and Secondary 2 needs a weight that changes intraday.
+
+**`volatilityTargetedSeries` (`research/benchmarks.ts`) builds Secondary 2 as its own index.** The rebalance
+session is split at the open: the **old** weight earns `prevClose → open`, the **new** weight earns
+`open → close` — exactly where `simulateFill` acquires the strategy's position. Two consequences:
+
+- **The pre-fill gap is gone.** The new weight no longer earns an overnight move its position did not exist
+  for.
+- **The common-session stretch stops mattering.** Whatever interval precedes the open — one session or five —
+  the old weight earns it, which is correct, because the new position did not exist for any of it. The fix
+  for the second defect fell out of the fix for the first.
+
+The split preserves the session's total return exactly: the distribution rides the overnight leg and the
+intraday leg carries it through, so the two multiply back to the index's own step. Only rebalance sessions are
+decomposed; everywhere else the index steps by the plain blended close-to-close return.
+
+Fail-closed where it cannot be done: if a rebalance session has no usable open on either leg, the **old**
+weight earns the whole session and a warning is recorded — under-crediting the new position rather than
+handing it a move it did not earn.
+
+With the timing exact, **the prong is restored**: `primaryVersusSecondary2` is published again, and the
+`__TIMING_BIASED` suffix that labelled the interim series is gone. `evaluateFalsifiers` keeps the corrected
+three-state `decisiveRejection`, because "unmeasured" and "failed" remain different things.
+
+A bug the new unit tests caught immediately, worth recording because it is the kind the previous approach hid:
+an activation on the **first** session was silently ignored, since the loop starts at the second, so the whole
+series would have run at zero weight.
+
+**One charter ambiguity this forced into the open, and an owner call.****One charter ambiguity this forced into the open, and an owner call.** §11 does not state a re-scaling
+cadence. The implementation re-scales **weekly, at the strategy's decision instants**, chosen so that
+everything except selection matches the strategy and the comparison isolates what §11 says it isolates. The
+literal alternative — re-scaling every session — is defensible and would give a different number. This is the
+same shape as D-32: Claude Code implemented a reading, and the owner should confirm or overrule it before the
+number is treated as decisive. It is not a code question.
+
 ## 2b. §16.1 is an aggregate verdict, not a per-split one
 
 Also caught on review. §16.1 applies "on the **aggregate walk-forward out-of-sample set**". A per-split verdict
@@ -157,10 +229,8 @@ recovers information the charter already committed to; the second spends the cha
 
 **Three steps, in order. None of them changes a charter value or decides D-51.**
 
-**Step 1 — implement the registered Secondary 2** (engineering, no judgement). §11 freezes every parameter:
-VTI scaled to a 10% ex-ante volatility target using the 63-day estimator, remainder in BIL. Nothing is chosen
-after the fact, so this contaminates nothing. Until it exists, §16.1's second prong is not computable and no
-§16.1 verdict should be produced by anything.
+**Step 1 — implement the registered Secondary 2.** ~~Outstanding.~~ **Done** — see §2d for how, and for the
+one charter ambiguity it forced into the open.
 
 **Step 2 — evaluate §16.1 over the aggregate walk-forward set**, not per split, and only once Step 1 lands.
 This needs the walk-forward splits pooled into the one out-of-sample set the charter registers.

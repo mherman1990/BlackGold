@@ -22,7 +22,7 @@ function passingMetrics(): FalsifierMetrics {
     primaryUnderExtraDelay: 0.16,
     primaryWithoutBestYear: 0.19,
     gridPointEstimates: Array.from({ length: 72 }, (_, i) => (i < 60 ? 0.2 : -0.05)),
-    primaryVersusVolatilityControlled: 0.12,
+    primaryVersusSecondary2: new Dec("0.12"),
     independentDecisions: 160,
   };
 }
@@ -199,16 +199,44 @@ describe("evaluateFalsifiers", () => {
     expect(v.passes).toBe(false);
   });
 
-  it("rejects decisively only when both the primary and the volatility-controlled bar are missed", () => {
-    const onlyPrimaryFails = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusVolatilityControlled: 0.05 });
+  it("gives a withheld verdict a different hash from a measured rejection", () => {
+    // decisiveRejection is derived from the second prong, which is not an F1-F6 outcome, so two runs can
+    // agree on every hashed falsifier and still differ here. If it is not in the hashed body, a verdict that
+    // says "unknown" and one that says "rejected" share an identity, and persisted evidence cannot tell them
+    // apart - the specific failure the verdict hash exists to prevent.
+    const base = { ...passingMetrics(), primaryPointEstimate: 0.02 };
+    const withheld = evaluateFalsifiers(charter(), { ...base, primaryVersusSecondary2: undefined });
+    const rejected = evaluateFalsifiers(charter(), { ...base, primaryVersusSecondary2: new Dec("-0.03") });
+    const beaten = evaluateFalsifiers(charter(), { ...base, primaryVersusSecondary2: new Dec("0.05") });
+
+    expect(withheld.decisiveRejection).toBeUndefined();
+    expect(rejected.decisiveRejection).toBe(true);
+    expect(beaten.decisiveRejection).toBe(false);
+
+    // All three agree on every F1-F6 outcome, so only the tri-state field distinguishes them.
+    expect(withheld.failedIds).toEqual(rejected.failedIds);
+    expect(withheld.failedIds).toEqual(beaten.failedIds);
+
+    const hashes = new Set([withheld.verdictHash, rejected.verdictHash, beaten.verdictHash]);
+    expect(hashes.size).toBe(3);
+  });
+
+  it("rejects decisively only when both the primary metric and the registered Secondary 2 are missed", () => {
+    const onlyPrimaryFails = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusSecondary2: new Dec("0.05") });
     expect(onlyPrimaryFails.passes).toBe(false);
     expect(onlyPrimaryFails.decisiveRejection).toBe(false);
 
-    const both = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusVolatilityControlled: -0.03 });
+    const both = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusSecondary2: new Dec("-0.03") });
     expect(both.decisiveRejection).toBe(true);
 
-    const noComparator = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusVolatilityControlled: undefined });
-    expect(noComparator.decisiveRejection).toBe(true);
+    // An unmeasured second prong yields NO VERDICT. Section 16.1 rejects only "if both fail", and absence is
+    // not failure. This returned `true` until 2026-09-20; combined with the owner's decision to withhold the
+    // prong until Secondary 2's fill timing is exact, that would have emitted a section 16.1 rejection on
+    // every run whose primary metric failed - manufacturing the verdict the withholding exists to prevent.
+    const noComparator = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusSecondary2: undefined });
+    expect(noComparator.decisiveRejection).toBeUndefined();
+    // The other falsifiers still evaluate: withholding one prong does not blind the rest.
+    expect(noComparator.passes).toBe(false);
   });
 
   it("treats an empty grid as zero agreement rather than as a pass", () => {

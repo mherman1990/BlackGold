@@ -16,7 +16,9 @@ import type { Charter } from "../strategy/charter.ts";
  * without a backtest.
  */
 
-export const ROBUSTNESS_VERSION = 1;
+// 2: `decisiveRejection` became tri-state (unknown / false / true) and entered the hashed verdict body. An
+// output-semantic change, so the version moves with it rather than leaving v1 to mean two different shapes.
+export const ROBUSTNESS_VERSION = 2;
 
 // ---------------------------------------------------------------------------------------------
 // Sensitivity grid
@@ -191,8 +193,20 @@ export type FalsifierMetrics = {
   primaryWithoutBestYear: number;
   /** Signs of the primary metric across every evaluated grid member. */
   gridPointEstimates: readonly number[];
-  /** Primary metric against the volatility-controlled benchmark: the charter's decisive second bar. */
-  primaryVersusVolatilityControlled: number | undefined;
+  /**
+   * ALPHA_CHARTER section 16.1's second prong: the strategy's **excess return** over the **registered**
+   * Secondary 2
+   * ("VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator, remainder in BIL").
+   *
+   * This must be the registered comparator. It previously received an average-exposure approximation, which
+   * would have decided a rejection against a benchmark the charter never registered (D-51).
+   *
+   * `undefined` means the prong was not measured, which is NOT the same as failing it. It is currently
+   * treated as "does not beat", so a rejection can rest on an absent number. That is conservative for
+   * promotion but it is not what section 16.1 says, and changing it is an owner reading rather than a bug
+   * fix - see `docs/analysis/2026-09-20-d51-primary-metric.md`.
+   */
+  primaryVersusSecondary2: Dec | undefined;
   /** Independent (non-overlapping) out-of-sample decision blocks the result rests on. */
   independentDecisions: number;
 };
@@ -218,7 +232,17 @@ export type RobustnessVerdict = {
    * beats neither the primary benchmark nor the volatility-controlled variant. A single failure elsewhere
    * sends the charter to owner review; both failures reject it.
    */
-  decisiveRejection: boolean;
+  /**
+   * ALPHA_CHARTER section 16.1's decisive falsifier: reject only when the strategy fails the primary metric
+   * AND fails to beat Secondary 2. `undefined` when the second prong was not measured - **absence is not
+   * failure**, and section 16.1 says "if both fail".
+   *
+   * This previously returned `true` in that case, on the reasoning that rejecting is conservative for
+   * promotion. Combined with the owner's 2026-09-20 decision to withhold the prong until Secondary 2's fill
+   * timing is exact, that would have made this function emit a section 16.1 rejection on every run where the
+   * primary metric failed - manufacturing the exact verdict the withholding exists to prevent.
+   */
+  decisiveRejection: boolean | undefined;
   failedIds: string[];
   robustnessVersion: number;
   verdictHash: string;
@@ -317,12 +341,20 @@ export function evaluateFalsifiers(c: Charter, m: FalsifierMetrics): RobustnessV
 
   const failedIds = outcomes.filter((o) => o.triggered).map((o) => o.id);
   const beatsPrimary = m.primaryPointEstimate >= threshold && !outcomes.some((o) => o.id === "F1" && o.triggered);
-  const beatsVolControlled = m.primaryVersusVolatilityControlled !== undefined && m.primaryVersusVolatilityControlled > 0;
+  const beatsSecondary2 = m.primaryVersusSecondary2?.gt(0) === true;
+  // `decisiveRejection` is derived from the second prong, which is NOT one of the F1-F6 outcomes, so it can
+  // differ between two runs that agree on everything else hashed here. Left out, a WITHHELD verdict and a
+  // measured rejection would share a verdictHash, and persisted evidence could not tell them apart. Encoded
+  // as a string because a JSON `undefined` key would simply vanish, collapsing unknown into absent.
+  // Unknown second prong => no verdict. Treating absence as failure would turn an unmeasured number into an
+  // automatic rejection; section 16.1 rejects only "if both fail".
+  const decisiveRejection = m.primaryVersusSecondary2 === undefined ? undefined : !beatsPrimary && !beatsSecondary2;
   const body = {
     strategyId: c.strategy_id,
     charterVersion: c.charter_version,
     outcomes: outcomes.map((o) => [o.id, o.triggered]),
     gridSignAgreement: agreement.toFixed(6),
+    decisiveRejection: decisiveRejection === undefined ? "unknown" : decisiveRejection ? "true" : "false",
   };
 
   return {
@@ -331,7 +363,7 @@ export function evaluateFalsifiers(c: Charter, m: FalsifierMetrics): RobustnessV
     outcomes,
     gridSignAgreement: agreement,
     passes: failedIds.length === 0,
-    decisiveRejection: !beatsPrimary && !beatsVolControlled,
+    decisiveRejection,
     failedIds,
     robustnessVersion: ROBUSTNESS_VERSION,
     verdictHash: `sha256:${hashJson(body)}`,

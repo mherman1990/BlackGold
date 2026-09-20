@@ -1,5 +1,6 @@
 import { Dec, dec, ONE, ZERO, type IsoDate } from "@blackgold/shared";
-import { simpleReturns, TR_ADJUSTMENT_VERSION, type TRPoint, type TRSeries } from "../market/series.ts";
+import { simpleReturns, TR_ADJUSTMENT_VERSION, type LoadedBar, type TRPoint, type TRSeries } from "../market/series.ts";
+import type { RawBar } from "../market/types.ts";
 
 /**
  * Benchmark engine (docs/EXPERIMENT_PROTOCOL.md section 9 benchmark policy; PLAN.md Phase 1).
@@ -69,6 +70,327 @@ export function blendSeries(spec: BlendSpec): TRSeries {
     points.push({ session: e.session, trIndex: index, adjClose: index, distribution: ZERO, terminal: false });
   }
   return { entityId: `BLEND(${spec.equity.entityId}/${spec.cash.entityId})`, points, adjustmentVersion: TR_ADJUSTMENT_VERSION, warnings: [] };
+}
+
+export type VolTargetLeg = {
+  /** Raw bars, for the open that splits a rebalance session. */
+  bars: readonly (RawBar | LoadedBar)[];
+  /** The leg's total-return index: the authority for every close-to-close return. */
+  tr: TRSeries;
+};
+
+/**
+ * When a weight was acquired, as an instant on the exchange timeline.
+ *
+ * Earlier versions expressed this as a mode relative to a landing session ("this weight activates on session
+ * X, at its open"). That could not survive a session missing from one leg: the landing session and the
+ * session the fill actually happened on came apart, and every attempt to reconcile them by shifting the
+ * landing session introduced a different off-by-one. An instant does not have that failure mode - it is the
+ * same instant whatever sessions the legs happen to share, and the index places it or declares that it
+ * cannot.
+ */
+export type AcquisitionInstant = { kind: "open" | "close"; session: IsoDate };
+
+export type VolTargetActivation = { weight: Dec; acquiredAt: AcquisitionInstant };
+
+export type VolTargetSpec = {
+  equity: VolTargetLeg;
+  cash: VolTargetLeg;
+  /** Weight changes with the instant each was acquired. Order is irrelevant; the index sorts them. */
+  activations: readonly VolTargetActivation[];
+  /**
+   * The exchange sessions the comparator is supposed to rebalance on - the run's own calendar.
+   *
+   * Without it, a session BOTH legs lack is invisible: it appears in neither leg's points, so a step that
+   * skips it looks like an ordinary consecutive step while actually collapsing two daily rebalances into
+   * one. Two stale bars on the same date do exactly that. Sessions either leg observed are always counted,
+   * so omitting this still catches the one-leg case.
+   */
+  expectedSessions?: readonly IsoDate[];
+};
+
+export type VolTargetIndex = {
+  series: TRSeries;
+  /**
+   * True only when every activation landed on an instant the index can represent exactly: the close of a
+   * session both legs share (the new weight takes the next whole step) or the open of one (the step is
+   * split). False the moment any approximation was made.
+   *
+   * **This is not a cosmetic flag.** Secondary 2 feeds section 16.1's decisive second prong, and an
+   * approximation there has no safe direction: under-crediting the comparator makes it easier to beat and
+   * over-crediting makes it harder, and which one a given misplacement causes depends on the sign of the
+   * weight change and the sign of the move it misassigns. There is no "conservative" way to guess, so the
+   * caller must withhold the prong rather than consume a number built this way.
+   */
+  exact: boolean;
+  /** Why `exact` is false, one entry per approximation. Empty when `exact`. */
+  inexactReasons: string[];
+};
+
+/**
+ * Total order on acquisition instants: an open precedes the close of the same session. Exported so every
+ * consumer sorts and compares the same way - two definitions of this order is how the previous version's
+ * weight path and index came to disagree.
+ */
+export function instantKey(at: AcquisitionInstant): string {
+  return `${at.session}|${at.kind === "open" ? "0" : "1"}`;
+}
+
+/**
+ * ALPHA_CHARTER section 11 Secondary 2, built as its own index rather than as a weight fed into
+ * `blendSeries`.
+ *
+ * `blendSeries` cannot express this comparator: it applies one weight to a whole close-to-close return, so a
+ * weight acquired at a fill would still earn the part of the session that preceded the fill. Here each
+ * activation carries the instant its position was acquired, and the index places it against the legs' own
+ * return intervals:
+ *
+ *   - acquired at the CLOSE of a shared session - `execution_delay_bars === 0`, where `simulateFill` fills at
+ *     the decision close - the new weight earns the whole of the next step, overnight leg included, and none
+ *     of the step ending at that close.
+ *   - acquired at the OPEN of a shared session - `execution_delay_bars >= 1` - that step is decomposed: the
+ *     old weight earns `prevClose -> open`, the new weight `open -> close`.
+ *   - anywhere else - an instant inside a return interval, with no observable price to split it at - the
+ *     index says so through `exact: false` instead of guessing.
+ *
+ * **Distributions stay with the holder that earned them.** On an ex-date the distribution rides the overnight
+ * leg only: a buyer at the open has no claim to it. So the pre-open holder earns `(adjOpen + dist) /
+ * prevAdjClose` and the new weight the pure price move `adjClose / adjOpen`. These deliberately do NOT
+ * multiply back to the index's own `(adjClose + dist) / prevAdjClose` step when the weights differ, and they
+ * should not: the portfolio changed composition mid-session, so its return is not a static full-day return.
+ * Forcing that identity was an earlier mistake here, and it paid the new weight part of the old holder's
+ * dividend.
+ *
+ * **A stretched interval is reported, not absorbed.** Whatever precedes a split open - one session or five,
+ * after a missing or stale bar - is earned by the old weight, which is right, because the new position did
+ * not exist for any of it. But an acquisition instant that falls strictly inside such an interval cannot be
+ * placed at all, and that is what `exact` exists to say.
+ */
+export function volatilityTargetedSeries(spec: VolTargetSpec): VolTargetIndex {
+  const warnings: string[] = [];
+  const inexactReasons: string[] = [];
+  const sessions = commonSessions(spec.equity.tr.points, spec.cash.tr.points);
+  const first = sessions[0];
+  const empty = (reason: string): VolTargetIndex => ({
+    series: { entityId: "VOL_TARGET", points: [], adjustmentVersion: TR_ADJUSTMENT_VERSION, warnings: [reason] },
+    exact: false,
+    inexactReasons: [reason],
+  });
+  if (first === undefined) return empty("no common sessions");
+
+  for (const a of spec.activations) {
+    if (a.weight.isNegative() || a.weight.gt(1)) {
+      throw new RangeError(`equity weight ${a.weight.toFixed()} outside [0, 1] at ${a.acquiredAt.kind} of ${a.acquiredAt.session}`);
+    }
+  }
+
+  const eqTr = new Map(spec.equity.tr.points.map((p) => [p.session, p]));
+  const cashTr = new Map(spec.cash.tr.points.map((p) => [p.session, p]));
+  const eqBar = new Map(spec.equity.bars.map((b) => [b.session, b]));
+  const cashBar = new Map(spec.cash.bars.map((b) => [b.session, b]));
+
+  const acts = [...spec.activations].sort((a, b) => {
+    const ka = instantKey(a.acquiredAt);
+    const kb = instantKey(b.acquiredAt);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+
+  // Every session the comparator was supposed to rebalance on: the run's calendar where one was supplied,
+  // plus anything either leg observed. `commonSessions` silently collapses the rest, and a collapsed step is
+  // not the daily-rebalanced quantity section 11 describes. The calendar is what makes a date BOTH legs lack
+  // visible - two stale bars on the same session would otherwise leave no trace to detect.
+  const unionSessions = [
+    ...new Set([
+      ...[...spec.equity.tr.points, ...spec.cash.tr.points].map((q) => q.session),
+      ...(spec.expectedSessions ?? []),
+    ]),
+  ].sort();
+
+  const points: TRPoint[] = [{ session: first, trIndex: ONE, adjClose: ONE, distribution: ZERO, terminal: false }];
+  let index = ONE;
+  let cursor = 0;
+  let unionCursor = 0;
+  // Anything acquired at or before the base session's close is simply the weight the index opens with: the
+  // base session earns no return, so there is nothing for it to be placed against.
+  let weight = ZERO;
+  for (; cursor < acts.length; cursor++) {
+    const a = acts[cursor];
+    if (a === undefined || instantKey(a.acquiredAt) > `${first}|1`) break;
+    weight = a.weight;
+  }
+
+  for (let i = 1; i < sessions.length; i++) {
+    const cur = sessions[i];
+    const prev = sessions[i - 1];
+    if (cur === undefined || prev === undefined) continue;
+    const openKey = `${cur}|0`;
+    const closeKey = `${cur}|1`;
+
+    // Everything acquired in (close of prev, close of cur]. An instant at cur's close belongs to the NEXT
+    // step - it earns none of the step ending at it - so it is held back rather than applied here.
+    let atOpen: Dec | undefined;
+    let atClose: Dec | undefined;
+    // Tracks what is in force as the interval's activations are consumed, so a rebalance that changes nothing
+    // is not reported as an approximation: it makes no difference where an unplaceable no-op would have gone.
+    let running = weight;
+    while (cursor < acts.length) {
+      const a = acts[cursor];
+      if (a === undefined) break;
+      const k = instantKey(a.acquiredAt);
+      if (k > closeKey) break;
+      if (k === closeKey) {
+        atClose = a.weight;
+      } else {
+        if (k !== openKey && !a.weight.eq(running)) {
+          inexactReasons.push(
+            `a weight acquired at the ${a.acquiredAt.kind} of ${a.acquiredAt.session} falls inside the ${prev} -> ${cur} return interval, which has no price to split it at`,
+          );
+        }
+        atOpen = a.weight;
+      }
+      running = a.weight;
+      cursor++;
+    }
+
+    // A step that skips an expected session collapses several daily rebalances into one. Blending the legs'
+    // COMPOUNDED endpoint returns is not the same number as compounding their daily blends: at a 50% weight,
+    // +10% then -9.09% against flat cash gives +0.23% daily and 0% collapsed. The data needed to reconstruct
+    // the intervening steps is exactly what is missing, so this cannot be repaired here - only reported.
+    //
+    // Weights of 0 and 1 are exempt: a single-leg blend compounds identically either way. The exemption is
+    // tested against the PRE-OPEN weight, never the newly acquired one. The collapsed stretch is everything
+    // before this session's open and is priced at the old weight in both branches below, so a rebalance to
+    // exactly 1 at the end of a stretched interval would otherwise exempt a collapse that happened entirely
+    // at the old fractional weight.
+    for (; unionCursor < unionSessions.length; unionCursor++) {
+      const u = unionSessions[unionCursor];
+      if (u === undefined || u >= cur) break;
+    }
+    const skipped = unionSessions.slice(0, unionCursor).filter((u) => u > prev);
+    if (skipped.length > 0 && !weight.isZero() && !weight.eq(ONE)) {
+      inexactReasons.push(
+        `the ${prev} -> ${cur} step skips ${String(skipped.length)} session(s) one leg observed, collapsing that many daily rebalances into one`,
+      );
+    }
+
+    if (atOpen === undefined || atOpen.eq(weight)) {
+      index = index.times(ONE.plus(plainStep(weight, cur, prev, eqTr, cashTr)));
+      if (atOpen !== undefined) weight = atOpen;
+    } else {
+      const split = splitAtOpen(cur, prev, eqTr, cashTr, eqBar, cashBar);
+      if (split === undefined) {
+        const reason = `no usable open on ${cur}, so the rebalance could not be priced where the fill landed`;
+        warnings.push(reason);
+        inexactReasons.push(reason);
+        index = index.times(ONE.plus(plainStep(weight, cur, prev, eqTr, cashTr)));
+      } else {
+        const overnight = weight.times(split.eqOvernight).plus(ONE.minus(weight).times(split.cashOvernight));
+        const intraday = atOpen.times(split.eqIntraday).plus(ONE.minus(atOpen).times(split.cashIntraday));
+        index = index.times(ONE.plus(overnight)).times(ONE.plus(intraday));
+      }
+      weight = atOpen;
+    }
+    if (atClose !== undefined) weight = atClose;
+    points.push({ session: cur, trIndex: index, adjClose: index, distribution: ZERO, terminal: false });
+  }
+
+  // A rebalance the comparator never reflected is a divergence from the strategy, not a tidy end-of-window
+  // detail: the weight the strategy went on holding is not the weight this index held.
+  for (; cursor < acts.length; cursor++) {
+    const a = acts[cursor];
+    if (a === undefined || a.weight.eq(weight)) continue;
+    const reason = `a weight acquired at the ${a.acquiredAt.kind} of ${a.acquiredAt.session} falls after the last shared session and was never applied`;
+    warnings.push(reason);
+    inexactReasons.push(reason);
+    weight = a.weight;
+  }
+
+  return {
+    series: { entityId: "VOL_TARGET", points, adjustmentVersion: TR_ADJUSTMENT_VERSION, warnings },
+    exact: inexactReasons.length === 0,
+    inexactReasons,
+  };
+}
+
+type SessionSplit = { eqOvernight: Dec; eqIntraday: Dec; cashOvernight: Dec; cashIntraday: Dec };
+
+/** One session's blended close-to-close return at a single weight, straight from the legs' indices. */
+function plainStep(
+  weight: Dec,
+  session: IsoDate,
+  prev: IsoDate,
+  eqTr: ReadonlyMap<string, TRPoint>,
+  cashTr: ReadonlyMap<string, TRPoint>,
+): Dec {
+  const eq = closeToClose(eqTr, session, prev);
+  const cash = closeToClose(cashTr, session, prev);
+  return weight.times(eq).plus(ONE.minus(weight).times(cash));
+}
+
+function closeToClose(tr: ReadonlyMap<string, TRPoint>, session: IsoDate, prev: IsoDate): Dec {
+  const cur = tr.get(session);
+  const before = tr.get(prev);
+  if (cur === undefined || before?.trIndex.gt(0) !== true) return ZERO;
+  return cur.trIndex.div(before.trIndex).minus(ONE);
+}
+
+/** Decompose both legs' session return at the open. `undefined` when either leg cannot be split. */
+function splitAtOpen(
+  session: IsoDate,
+  prev: IsoDate,
+  eqTr: ReadonlyMap<string, TRPoint>,
+  cashTr: ReadonlyMap<string, TRPoint>,
+  eqBar: ReadonlyMap<string, RawBar | LoadedBar>,
+  cashBar: ReadonlyMap<string, RawBar | LoadedBar>,
+): SessionSplit | undefined {
+  const eq = legSplit(eqTr, eqBar, session, prev);
+  const cash = legSplit(cashTr, cashBar, session, prev);
+  if (eq === undefined || cash === undefined) return undefined;
+  return { eqOvernight: eq.overnight, eqIntraday: eq.intraday, cashOvernight: cash.overnight, cashIntraday: cash.intraday };
+}
+
+/**
+ * Split one leg's return interval at the open of its closing session.
+ *
+ *   intraday  = adjClose / adjOpen            the open buyer: the price move, and nothing else
+ *   overnight = trStep / intraday             everything else the leg earned, by residual
+ *
+ * The raw open is scaled by the same factor the index applied to this session's close (`adjClose / close`),
+ * so both sides of the split are in the index's share units.
+ *
+ * **Only the intraday leg is defined directly; the other is a residual.** That ordering is the whole design.
+ * A leg's return over `(prev close, cur close]` is by definition the product of its return over the two
+ * sub-periods, so deriving one from the authoritative `trIndex` step guarantees the decomposition neither
+ * creates nor destroys return - for any interval, however long, and whatever it contains. Writing both legs
+ * out explicitly does not: an earlier version used `(adjOpen + dist) / prevAdjClose` for the overnight leg,
+ * which reinvests the distribution at the OPEN where the index reinvests it at the close, and silently drops
+ * any distribution paid on a session between `prev` and `cur` that only one leg observes.
+ *
+ * The distribution still lands entirely with the pre-open holder, which is what an ex-date requires: the
+ * intraday factor is a pure price ratio, so every cent of income falls into the residual. The residual form
+ * simply also gets the reinvestment convention and the stretched-interval case right.
+ *
+ * Note that the two legs multiplying back to the leg's own step is an invariant for a SINGLE leg and is not
+ * the same claim as the blended index reproducing a static-weight blend of both legs' steps. That one is
+ * false whenever the weight changes across the split, because the portfolio changed composition mid-session.
+ * Conflating the two is what produced the explicit-overnight version.
+ */
+function legSplit(
+  tr: ReadonlyMap<string, TRPoint>,
+  bars: ReadonlyMap<string, RawBar | LoadedBar>,
+  session: IsoDate,
+  prev: IsoDate,
+): { overnight: Dec; intraday: Dec } | undefined {
+  const cur = tr.get(session);
+  const before = tr.get(prev);
+  const bar = bars.get(session);
+  if (cur === undefined || before === undefined || bar === undefined) return undefined;
+  if (!before.trIndex.gt(0) || !cur.trIndex.gt(0) || !cur.adjClose.gt(0) || !bar.close.gt(0) || !bar.open.gt(0)) return undefined;
+  const adjOpen = bar.open.times(cur.adjClose).div(bar.close);
+  if (!adjOpen.gt(0)) return undefined;
+  const intraday = cur.adjClose.div(adjOpen);
+  const step = cur.trIndex.div(before.trIndex);
+  return { overnight: step.div(intraday).minus(ONE), intraday: intraday.minus(ONE) };
 }
 
 // ---------------------------------------------------------------------------------------------
