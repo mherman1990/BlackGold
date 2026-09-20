@@ -460,47 +460,27 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
 
   const citableAsEvidence = citabilityReasons.length === 0 && ordered.length > 0;
 
-  const body = {
-    aggregateVersion: AGGREGATE_VERSION,
-    strategyId: c.strategy_id,
-    charterVersion: c.charter_version,
-    // The charter's CONTENT hash, not just its version string. Contents change without the version moving -
-    // routinely, while a version is being drafted - and most charter values never reach this body directly.
-    // `primary_threshold` is the sharpest case: move it from 0.10 to 0.20 with an estimate that fails both
-    // and the numbers, the prong state, the verdict and the citability are all unchanged, so the verdict
-    // would keep its identity while the rule it was judged against had changed underneath it. `runBacktest`
-    // and `buildResultReport` have always hashed this; the aggregate identified its charter by version
-    // alone. Found by Codex on PR #94.
-    charterHash: input.charterHash,
-    splitIds,
-    complete,
-    sessions: pooledSessions.length,
-    // Evidence eligibility is hashed, not just reported. The same windows and the same arithmetic can be
-    // citable on one run and barred on the next - a charter that stops being registrable, a
-    // promotion-blocking data code appearing on a source - without a single number moving. Leave these out
-    // and an aggregate that may be cited shares an `aggregateHash` with one that may not, which is the one
-    // thing this hash exists to prevent: it is what a PR body quotes to identify a result. The reasons and
-    // codes ride along with the flag, so a result barred for one reason cannot be mistaken for the same
-    // result barred for another. Found by Codex on PR #94.
-    citableAsEvidence,
-    citabilityReasons,
-    promotionBlockingCodes,
-    // `passes` is a string because a JSON `undefined` simply vanishes, which would collapse a withheld
-    // prong into a failed one and let two different verdicts share a hash.
-    primary:
-      primaryMetric === undefined
-        ? "unmeasured"
-        : [
-            primaryMetric.pointEstimate,
-            primaryMetric.interval.lower,
-            primaryMetric.interval.upper,
-            primaryMetric.passes === undefined ? "withheld" : primaryMetric.passes ? "true" : "false",
-          ],
-    secondary2: secondary2 === undefined ? "unmeasured" : [secondary2.excessReturn, secondary2.beats],
-    verdict,
-  };
-
-  return {
+  /**
+   * Everything this verdict reports, except its own hash.
+   *
+   * The hash covers **the whole payload**, not a hand-picked subset of it. The subset was wrong three
+   * review rounds running on PR #94, each time for the same reason and each time found by someone else:
+   * first the charter was identified by version string rather than by content hash, then evidence
+   * eligibility was missing, then the two linked return totals behind the excess. Every one of those was a
+   * field the aggregate REPORTED and did not hash, so two materially different published results could
+   * share an identity - and `aggregateHash` is what a PR body quotes to name a result.
+   *
+   * Curating the list again would only move the next omission somewhere else. The rule that actually holds
+   * is structural: if a reader can see it, it is part of what the verdict says, so it is part of what the
+   * verdict IS. Hashing the payload makes that true by construction rather than by vigilance, and a field
+   * added here later is covered without anyone remembering to add it.
+   *
+   * One consequence, accepted deliberately: a purely presentational change - new wording in
+   * `verdictReasons`, an added `evidenceCaveats` entry - moves the hash. That is the right side to err on.
+   * A caveat is part of what the result tells an owner, and `aggregateVersion` is there to mark a shape
+   * change when one happens.
+   */
+  const payload: Omit<AggregateWalkForward, "aggregateHash"> = {
     aggregateVersion: AGGREGATE_VERSION,
     strategyId: c.strategy_id,
     charterVersion: c.charter_version,
@@ -524,6 +504,7 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
     citabilityReasons,
     promotionBlockingCodes,
     evidenceCaveats,
-    aggregateHash: `sha256:${hashJson(body)}`,
   };
+
+  return { ...payload, aggregateHash: `sha256:${hashJson(payload)}` };
 }

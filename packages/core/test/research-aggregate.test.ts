@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Dec, isoDate, type IsoDate } from "@blackgold/shared";
+import { Dec, hashJson, isoDate, type IsoDate } from "@blackgold/shared";
 import { fileURLToPath } from "node:url";
 import { charterHash, loadCharterFile, type Charter } from "../src/strategy/charter.ts";
 import { aggregateWalkForward, AggregateScopeError, SECONDARY_2_OPEN_READINGS, type AggregateSplitInput } from "../src/research/aggregate.ts";
@@ -79,7 +79,10 @@ function run(c: Charter, splits: readonly AggregateSplitInput[], planned?: reado
     // Derived from the charter under test, not a constant, so a charter edit really does move it.
     charterHash: charterHash(c),
     splits,
-    plannedSplitIds: planned ?? splits.map((s) => s.splitId),
+    // Sorted, not in arrival order: the charter's schedule is a property of the charter, not of the order a
+    // runner happened to produce results in. `splitPlan` always emits it in the same order for a given
+    // charter, so letting it vary here would only test the fixture.
+    plannedSplitIds: planned ?? [...splits.map((s) => s.splitId)].sort(),
     bootstrapResamples: RESAMPLES,
     bootstrapSeed: SEED,
   });
@@ -434,39 +437,36 @@ describe("aggregateWalkForward: hash", () => {
     expect(draft.aggregateHash).not.toBe(synthetic.aggregateHash);
   });
 
-  it("separates a withheld first prong from a failed one", () => {
-    // These two runs agree on EVERYTHING else the body carries - same splits, same sessions, same point
-    // estimate and interval, same second prong, same OWNER_REVIEW verdict. Only the threshold differs, so
-    // only the prong's tri-state differs. An earlier version of this test used fixtures that also differed
-    // in the second prong, so it passed against a body with the tri-state removed: it was proving something
-    // other than what it claimed.
-    //
-    // The distinction is not bookkeeping. The failed-prong run is the case sections 16.1 and 17 disagree
-    // on; the withheld one is not. Two verdicts that route the charter differently must not share a hash.
-    const splits = [split("walk_forward/a", 2, 40, CLEARING, BEATS_SECONDARY_2), split("walk_forward/b", 42, 40, CLEARING, BEATS_SECONDARY_2)];
-    const withheld = run(charter(SMALL_MINIMUM), splits);
-    const failed = run(
-      charter((c) => {
-        SMALL_MINIMUM(c);
-        // Unreachably high, so the same interval fails the threshold test instead of clearing it.
-        c.pass_fail.primary_threshold = "1000000";
-      }),
-      splits,
-    );
+  // Codex P2 on PR #94, round five. `[excessReturn, beats]` alone cannot distinguish candidate/Secondary 2
+  // totals of 0.10/0.20 from 0.20/0.30: both give an excess of -0.10 and `beats: false`, while the aggregate
+  // reports two different pairs of linked returns.
+  it("separates two aggregates with the same excess but different linked returns", () => {
+    const pair = (candidate: string, secondary2: string) =>
+      run(charter(SMALL_MINIMUM), [
+        split("walk_forward/a", 2, 40, LOSING, { candidateTotalReturn: new Dec(candidate), secondary2TotalReturn: new Dec(secondary2) }),
+        split("walk_forward/b", 42, 40, LOSING, { candidateTotalReturn: new Dec("0"), secondary2TotalReturn: new Dec("0") }),
+      ]);
+    const low = pair("0.10", "0.20");
+    const high = pair("0.20", "0.30");
 
-    expect(withheld.primaryMetric?.passes).toBeUndefined();
-    expect(failed.primaryMetric?.passes).toBe(false);
-    expect(withheld.verdict).toBe("OWNER_REVIEW");
-    expect(failed.verdict).toBe("OWNER_REVIEW");
-    // Everything else the hashed body reads is identical...
-    expect(failed.primaryMetric?.pointEstimate).toBe(withheld.primaryMetric?.pointEstimate);
-    expect(failed.primaryMetric?.interval.lower).toBe(withheld.primaryMetric?.interval.lower);
-    expect(failed.primaryMetric?.interval.upper).toBe(withheld.primaryMetric?.interval.upper);
-    expect(failed.secondary2).toEqual(withheld.secondary2);
-    expect(failed.splitIds).toEqual(withheld.splitIds);
-    // ...and only one of them is the sections 16.1 / 17 conflict.
-    expect(withheld.charterConflict).toBeUndefined();
-    expect(failed.charterConflict).toBeDefined();
-    expect(withheld.aggregateHash).not.toBe(failed.aggregateHash);
+    expect(low.secondary2?.excessReturn).toBe(high.secondary2?.excessReturn);
+    expect(low.secondary2?.beats).toBe(high.secondary2?.beats);
+    expect(low.verdict).toBe(high.verdict);
+    expect(low.secondary2?.candidateTotalReturn).not.toBe(high.secondary2?.candidateTotalReturn);
+    expect(low.aggregateHash).not.toBe(high.aggregateHash);
+  });
+
+  // The test that ends this class. Three review rounds running found a field the aggregate REPORTED and did
+  // not hash - the charter's content hash, then evidence eligibility, then the linked return totals - so the
+  // hash now covers the whole payload rather than a curated subset. This asserts exactly that, and fails the
+  // moment anyone goes back to hand-picking fields, whichever field they forget.
+  it("hashes the entire reported payload, not a curated subset", () => {
+    const r = run(charter(SMALL_MINIMUM), [split("walk_forward/a", 2, 40, LOSING), split("walk_forward/b", 42, 40, CLEARING, BEATS_SECONDARY_2)]);
+    const { aggregateHash, ...payload } = r;
+    expect(aggregateHash).toBe(`sha256:${hashJson(payload)}`);
+    // Not vacuous only if the payload actually carries the fields the earlier rounds missed.
+    expect(payload.charterHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(payload.secondary2?.candidateTotalReturn).toBeDefined();
+    expect(typeof payload.citableAsEvidence).toBe("boolean");
   });
 });
