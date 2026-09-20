@@ -20,7 +20,7 @@ import type { ArmResult, BacktestResult } from "./backtest.ts";
  *    charters, optimistic delays, survivorship labels and synthetic missing data all land there.
  */
 
-export const REPORT_VERSION = 3;
+export const REPORT_VERSION = 4;
 
 export type ArmMetrics = {
   arm: string;

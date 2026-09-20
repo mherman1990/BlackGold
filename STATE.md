@@ -12,7 +12,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 |---|---|
 | Phase | Discovery through Phase 3 merged to `main`. Phase 4's four deterministic engines (factor classifier, halt-state machine, risk-limit engine, compliance engine) and Phase 5's decision gate (PR #35) merged. **D-53 slices 1, 2a, 2b, 3a-1, 3a-2 decoder and 3a-2 fetch are all merged** (PRs #81, #82, #83, #85, #86, #87), plus **PR #91 (Secondary 2)** on 2026-09-20. `main` is at `4135453`. The machinery is complete through the shadow rung; **what does not exist is evidence** — see the Registered experiments row |
 | Application code | `packages/shared`, `packages/core` (Phase 0 foundation, Phase 1 data/market/universe/research, Phase 2 strategy/research), `packages/broker-gateway` |
-| Tests | **870 passing** (unit 803, policy 41, temporal 26; 76 files) - `4135453` plus this branch's two new withhold tests, each project count verified by a separate run on 2026-09-20 rather than quoted. The whole `npm run check` set is green: `eslint .`, all five typecheck projects, the three vitest projects, `check:identity`, and `check:secrets` (301 tracked files). Counts in this row have been stale three times; re-run rather than trusting it |
+| Tests | **871 passing** (unit 804, policy 41, temporal 26; 76 files) - `5e82bee` plus this branch, each project count verified by a separate run on 2026-09-20 rather than quoted. The whole `npm run check` set is green: `eslint .`, all five typecheck projects, the three vitest projects, `check:identity`, and `check:secrets` (301 tracked files). Counts in this row have been stale three times; re-run rather than trusting it |
 | Live trading | Absent by construction. Config loader and gateway both refuse `LIVE_MANUAL` and `LIVE_LIMITED`; CI asserts the image refuses them too |
 | Broker credentials | None exist anywhere in this project. Only the synthetic broker adapter exists |
 | Runtime LLM | **Phase 3 machinery merged to `main`** (PR #22, #23, #25): provider-agnostic analyst pipeline + safety surface, the Anthropic adapter behind the single egress module, call archiving/budget persistence, the `research analyst` CLI, and status-page visibility. **No live call has been made** and the one CR-12/CR-13 verification run is still pending — but it is no longer blocked: since D-52, `secrets.env` gives `ANTHROPIC_API_KEY` a route into the container that umbrelOS 1.x's missing `.env` injection previously denied it. The `etf-trend-vol` charter declares no LLM in the signal and only two arms, so nothing wires the analyst into a decision |
@@ -44,39 +44,27 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 
 **What now exists.** Secondary 2 is built as its own total-return index (`packages/core/src/research/benchmarks.ts`), not as a weight fed into `blendSeries`. Each rebalance carries the **instant** `simulateFill` would have acquired it — the decision close at `execution_delay_bars = 0`, otherwise the open of the first tradable bar, counted on the equity leg's **own bars** rather than the session calendar. `k = min(1, target / sigma_primary)` reads the covariance diagonal the strategy already sizes with, so the estimator is literally the registered one and B1's weights are unchanged. Re-scaling is **weekly, at the strategy's decision instants** (owner's call; §11 states no cadence). The prong is measured as **excess return** (owner's reading of §13), as a `Dec`.
 
-**It fails closed.** When the comparator cannot be built exactly the prong is withheld, the arm publishes as `SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT`, and `decisiveRejection` reports **unknown** rather than a verdict. Five conditions set that flag: an unplaceable rebalance, an unusable open, a window whose endpoints differ from the run's, a step collapsing daily rebalances because an expected session is missing from either or both legs (exempt when the **pre-open** weight is 0 or 1), and a primary volatility lost after a target exists. Approximating a decisive comparator has no safe direction — under-crediting it makes the strategy easier to promote, over-crediting harder, and which one a given error causes depends on signs you do not control.
+**It fails closed.** When the comparator cannot be built exactly the prong is withheld, the arm publishes as `SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT`, `decisiveRejection` reports **unknown** rather than a verdict, and a result carrying no withhold field at all is treated as withheld. Five conditions set that flag: an unplaceable rebalance, an unusable open, a window whose endpoints differ from the run's, a step collapsing daily rebalances because an expected session is missing from either or both legs (exempt when the **pre-open** weight is 0 or 1), and a primary volatility lost after a target exists. Approximating a decisive comparator has no safe direction — under-crediting it makes the strategy easier to promote, over-crediting harder, and which one a given error causes depends on signs you do not control.
 
 **The enumeration is presumed incomplete.** It reached five conditions by enumeration rather than construction, each added because the previous set was incomplete. Treat a sixth as likely.
 
-### Three findings merged open — one of them is a gate
+### The ex-date defect is fixed; the gate is lifted
 
-Owner decision 2026-09-20: stop the fix loop and merge on round eleven. All three were verified, none rebutted, none fixed. Full detail on PR #91.
+`legSplit` decomposes a rebalance session into **three** parts, not two: each leg's price move to the open, the distributions that went ex in the interval credited to the **pre-open** holder as cash, and the open-to-close price move at the new weight. Income is a difference of cumulative distributions, so an ex-date on a session the legs do not share is still counted.
 
-1. **(P1) `legSplit` puts the pre-open holder's distribution through the new allocation's intraday factor.** With `prevClose 100, open 90, close 100, dist 10`, rebalancing from weight 1 to 0, the index falls 1% where the truth is flat. This is not a formula bug but a **proof the shape is wrong**: a two-factor multiplicative split cannot both reproduce the leg's total-return step (required so intermediate distributions are not dropped) and keep the distribution out of the intraday factor. A distribution is cash, not a scaled position, so the decomposition needs three parts.
-2. **(P2) `EVALUATION_VERSION` is not bumped** for the added `primaryVersusSecondary2` field, so v2 records before and after PR #91 are indistinguishable to a consumer decoding by version.
-3. **(P2) The `min(1, target / sigma)` test does not test that formula** — its assertions survive replacing it with any positive fraction.
+Three earlier versions failed in three different ways, all from trying to make the split two factors that multiply back to the leg's own total-return step. They cannot: **the leg's index reinvests its distribution at the close, while a portfolio rebalanced at the open allocates that cash at the open.** Codex's counterexample is the clearest statement — `prevClose 100, open 90, close 100, dist 10`, rebalancing from weight 1 to 0: the holder sells at 90 and keeps the 10, so the portfolio is flat, and the residual form said −1%.
 
-> **GATE: no Secondary 2 number may be generated or cited until finding 1 is fixed.** Not merely "the
-> aggregate slice must not land" — that was this gate's first wording and it rested on a false premise. It
-> claimed no run is citable because the charter is `DRAFT`. **The charter is `APPROVED`** (0.2.0, owner-signed
-> 2026-09-12); the DRAFT reason comes from the synthetic charter in the backtest tests, and reading a test
-> fixture's citability reason as production state is how the error got in. The real remaining citability
-> blocker is **reconciled ≥2-source corporate actions**, which is curable and is the very next thing on the
-> list — so once it is cleared, `research evaluate` emits a **citable per-split** result carrying
-> `primaryVersusSecondary2` computed through the defect, with the aggregate slice nowhere in sight. Curating
-> those actions is therefore inside this gate, not outside it.
+> **Owner reading, not a code choice.** §11 does not say when ex-date income is reallocated. The implementation allocates it **at the open**, with the rebalance, because that is when the portfolio's composition changes. The alternative is the index's close-reinvestment convention. The two differ only on a session that is both ex-dividend and a rebalance. Same shape as the weekly re-scaling cadence — confirm or overrule before the number is treated as decisive.
 
-> Merging PR #91 with finding 1 open is still defensible, because today's runs are blocked by
-> `UNVERIFIED_SINGLE_SOURCE` and no experiment is registered. But the protection is **narrower and more
-> perishable** than the merge rationale on PR #91 claimed, and that rationale is corrected here rather than
-> left standing.
+`SECONDARY_2_KNOWN_DEFECT` and the unconditional withhold are gone with the defect. `primaryVersusSecondary2` is emitted again whenever the comparator placed exactly, so **D-51 step 2 is unblocked**.
 
-**A gate written from a wrong premise is the failure mode this file exists to prevent.** It was caught by
-review, not by the session that wrote it — the same session that had just recorded "mutation-check any test
-guarding a financial invariant" as a standing lesson. The analogous rule for prose: a gate that names a
-*reason* should be checked against the code, because a wrong reason silently narrows the gate.
+### Still open from #91 and #92
 
-### Standing lesson: five tests certified behaviour they could not detect
+1. **(P2) The documented gate was broader than the implemented withhold** — that text is now retired with the gate, but the underlying question survives: the `__INEXACT` arm still publishes `totalReturn` next to `B1_DETERMINISTIC.totalReturn`, so subtracting two published fields reconstructs a withheld prong. Decide whether an inexact comparator should be published at all.
+2. **(P2) `EVALUATION_VERSION`, `BACKTEST_VERSION`, `REPORT_VERSION`** are now 3, 4 and 4 — bumped here, closing the deferred finding.
+3. **(P2) The `min(1, target / sigma)` test** now recomputes the volatility through `computeFeatures` and asserts the weight to twelve places, with both branches of the `min` exercised. Closed.
+
+### Standing lesson: seven tests certified behaviour they could not detect
 
 The most useful thing this PR produced. Two had expected values reachable by more than one behaviour — the market fixture set `open == close` on every bar, and the look-ahead test used a rebalance session whose move was entirely overnight, so a wrongly split session landed on the same index level as a correct one. Two had fixture parameters that made the guarded branch unreachable: the default primary's volatility never exceeded the 10% target, so `k` pinned at 1 and every collapse was genuinely exempt. One never constrained the quantities it was named for at all.
 

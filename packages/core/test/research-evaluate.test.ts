@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Dec } from "@blackgold/shared";
 import { fileURLToPath } from "node:url";
 import { loadCharterFile, registrabilityReasons, type Charter } from "../src/strategy/charter.ts";
 import { runEvaluation } from "../src/research/evaluate.ts";
@@ -73,7 +74,7 @@ function evaluate(c: Charter, market: ReturnType<typeof buildMarket>) {
 describe("runEvaluation", () => {
   it("evaluates the design and recent splits and never the sealed holdout", () => {
     const r = evaluate(evalCharter(), cleanMarket());
-    expect(r.evaluationVersion).toBe(2);
+    expect(r.evaluationVersion).toBe(3);
     // Design and recent are in-window; the 1-year walk-forward window yields no rolling split here.
     const kinds = r.splits.map((s) => s.kind);
     expect(kinds).toContain("DESIGN");
@@ -143,26 +144,39 @@ describe("runEvaluation", () => {
   // ALPHA_CHARTER section 11 Secondary 2: "VTI scaled to a 10% ex-ante volatility target with the same
   // 63-day estimator, remainder in BIL". Built from the strategy's own covariance window so the estimator is
   // literally the registered one, and timed to the strategy's fills so the weight cannot be look-ahead.
-  it("builds the registered Secondary 2 as a reporting benchmark, under the withheld name", () => {
+  it("builds the registered Secondary 2 as a reporting benchmark", () => {
     const r = evaluate(evalCharter(), cleanMarket());
     const split = r.splits[0];
-    // Published as a reporting comparator with its section 13 metrics - but under `__INEXACT`, because the
-    // legSplit ex-date defect withholds it. The unqualified name is reserved for a comparator that may be used.
-    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT");
+    // Under the registered name again, now that the legSplit ex-date defect is fixed and the withhold that
+    // stood in for it is gone. `__INEXACT` is reserved for a comparator that could not be placed exactly.
+    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
     expect(s2).toBeDefined();
-    expect(split?.benchmarks.map((b) => b.arm)).not.toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
+    expect(split?.benchmarks.map((b) => b.arm)).not.toContain("SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT");
     expect(s2?.totalReturn).toMatch(/^-?\d+\.\d{8}$/);
     expect(s2?.maxDrawdown).toMatch(/^-?\d+\.\d{8}$/);
   });
 
-  it("withholds section 16.1's second prong end to end while the legSplit defect stands", () => {
-    // The whole point of making the withhold code rather than prose: no evaluation path can produce this
-    // number, so curating reconciled corporate actions cannot yield a citable split that carries it. The
-    // excess-return formula itself is pinned in research-report.test.ts against a backtest with the withhold
-    // lifted, which is the only place it can be lifted.
+  it("reports section 16.1's second prong end to end, as excess return", () => {
+    // The prong is measurable again: legSplit is fixed, so nothing withholds a comparator that placed
+    // exactly. Section 13's measure is excess return - candidate total return less Secondary 2's - not a
+    // Sharpe difference, and this asserts the value rather than only its presence.
     const r = evaluate(evalCharter(), cleanMarket());
-    for (const split of r.splits) expect(split.primaryVersusSecondary2).toBeUndefined();
     expect(r.splits.length).toBeGreaterThan(0);
+    for (const split of r.splits) {
+      expect(split.primaryVersusSecondary2).toMatch(/^-?\d+\.\d{8}$/);
+      const b1 = split.arms.find((a) => a.arm === "B1_DETERMINISTIC");
+      const s2 = split.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
+      expect(b1).toBeDefined();
+      expect(s2).toBeDefined();
+      if (b1 !== undefined && s2 !== undefined && split.primaryVersusSecondary2 !== undefined) {
+        // Tolerance of one ulp at the serialized precision, not looseness: the prong is computed from
+        // full-precision `Dec` values and rounded once, while these two operands are each rounded to 8dp
+        // before the test subtracts them. Demanding exact string equality would be asserting the rounding
+        // order, not the formula. The unrounded identity is pinned in research-report.test.ts.
+        const fromOperands = new Dec(b1.totalReturn).minus(new Dec(s2.totalReturn));
+        expect(new Dec(split.primaryVersusSecondary2).minus(fromOperands).abs().lte(new Dec("1e-8"))).toBe(true);
+      }
+    }
   });
 
   it("omits Secondary 2 rather than substituting when the primary is not a risk ETF", () => {
@@ -186,7 +200,7 @@ describe("runEvaluation", () => {
     // volatility-targeted per decision, the other is a single constant average exposure.
     const r = evaluate(evalCharter(), cleanMarket());
     const split = r.splits[0];
-    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT");
+    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
     const approx = split?.benchmarks.find((b) => b.arm === "APPROX_AVERAGE_EXPOSURE_PRIMARY");
     expect(s2).toBeDefined();
     expect(approx).toBeDefined();

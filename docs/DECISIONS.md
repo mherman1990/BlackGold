@@ -904,19 +904,33 @@ presumed incomplete.
 **Merged with three accepted findings open,** by the owner's decision to stop an eleven-round fix loop. They
 are listed in `STATE.md` → *Secondary 2* and in full on PR #91. One is a gate:
 
-> **No Secondary 2 number may be generated or cited until `legSplit`'s distribution handling is fixed.** It
-> puts the pre-open holder's distribution through the new allocation's intraday factor, so a rebalance out of
-> equity on an ex-date is mispriced. A two-factor multiplicative split cannot be made correct — reproducing
-> the leg's total-return step is exactly what scales the distribution — so the decomposition needs three
-> parts: price to the open at the old weight, the distribution credited as cash to the old weight, and
-> open-to-close applied only to the price portion at the new weight.
+> **LIFTED 2026-09-20.** `legSplit` is fixed and the gate is retired. Kept here because both of its failures
+> are instructive, and both were mine.
 >
-> **This gate's first wording blocked only the step-2 aggregate slice, and was wrong.** It reasoned that no
-> run is citable because the charter is DRAFT. The charter is **APPROVED** (0.2.0, owner-signed 2026-09-12);
-> that DRAFT reason belongs to the synthetic charter in the backtest tests. The real remaining citability
-> blocker is reconciled ≥2-source corporate actions — curable, and the next thing on the list — so clearing it
-> yields a **citable per-split** result carrying `primaryVersusSecondary2` through the defect without step 2
-> ever landing. Curating those actions is inside this gate.
+> The defect: it put the pre-open holder's distribution through the new allocation's intraday factor, so a
+> rebalance out of equity on an ex-date was mispriced. The fix is a **three-part** decomposition - each leg's
+> price move to the open, the interval's distributions credited to the pre-open holder as cash, and
+> open-to-close at the new weight - with income taken as a difference of cumulative distributions so an
+> ex-date on an unshared session still counts. Three earlier versions each tried to make the split two
+> factors multiplying back to the leg's own total-return step; that is impossible, because the leg's index
+> reinvests its distribution at the CLOSE while a portfolio rebalanced at the open allocates that cash at the
+> OPEN.
+>
+> **Failure one: the gate's stated reason was false.** Its first wording blocked only the step-2 aggregate
+> slice, reasoning that no run is citable because the charter is DRAFT. The charter is **APPROVED** (0.2.0,
+> owner-signed 2026-09-12); that DRAFT string belongs to the synthetic charter in the backtest tests. The real
+> citability blocker is reconciled ≥2-source corporate actions - curable, and next on the list - so clearing
+> it would have yielded a citable per-split result carrying the defective number without step 2 ever landing.
+>
+> **Failure two: it was prose.** A gate that depends on being read, and on its stated reason being right,
+> failed the second test within an hour of being written. It was moved into `report.ts` as an unconditional
+> withhold before being retired, and that is the form any future gate of this kind should take.
+
+**NEW OWNER READING, arising from the fix (2026-09-20).** §11 does not say when ex-date income is
+reallocated. The implementation allocates it **at the open, with the rebalance**, because that is when the
+portfolio's composition changes; the alternative is the index's close-reinvestment convention. The two differ
+only on a session that is both ex-dividend and a rebalance. Same shape as the re-scaling cadence above:
+implemented, flagged, and the owner confirms or overrules before the number is treated as decisive.
 
 **Known defect this surfaced — now fixed (2026-09-20).** `evaluateFalsifiers` computed `decisiveRejection`
 from the unregistered approximation; it now takes the registered Secondary 2. The interim position recorded

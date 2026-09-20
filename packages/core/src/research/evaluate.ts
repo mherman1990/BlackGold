@@ -33,7 +33,7 @@ import { enumerateGrid } from "./robustness.ts";
  *     are clean.
  */
 
-export const EVALUATION_VERSION = 2;
+export const EVALUATION_VERSION = 3;
 
 /**
  * Nominal research notional. Every reported metric is a ratio (Sharpe, total return, drawdown), so the level

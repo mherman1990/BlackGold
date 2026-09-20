@@ -31,30 +31,7 @@ import type { LeakageAuditor } from "./leakage.ts";
  * result carries `registrable` and the labels that bar promotion evidence.
  */
 
-export const BACKTEST_VERSION = 3;
-
-/**
- * An unconditional withhold on section 16.1's second prong while a known defect in `legSplit` stands.
- *
- * `legSplit` puts the pre-open holder's distribution through the new allocation's intraday factor, so a
- * rebalance out of equity on an ex-date is mispriced: with `prevClose 100, open 90, close 100, dist 10` and a
- * weight going 1 -> 0, the index falls 1% where the truth is flat. It is not a formula slip. A two-factor
- * multiplicative split cannot both reproduce a leg's total-return step - required so a distribution on a
- * session the legs do not share is not dropped - and keep that distribution out of the intraday factor. The
- * decomposition needs three parts: price to the open at the old weight, the distribution credited to the old
- * weight as cash, and open-to-close applied only to the price portion at the new weight.
- *
- * **Why this is code and not a note in STATE.md.** The defect was knowingly merged (PR #91) on the reasoning
- * that nothing could consume the prong yet - and that reasoning was wrong. It assumed the charter was DRAFT
- * when it is APPROVED; the DRAFT string came from the synthetic charter in this package's own tests. The real
- * remaining citability blocker is reconciled corporate actions, so curating them, which is the next task on
- * the list, would have produced a citable per-split result carrying this number. A prose gate depends on being
- * read AND on its stated reason being true, and that one failed the second test within the hour.
- *
- * Delete this constant and its use in the same commit that fixes `legSplit`, not before.
- */
-const SECONDARY_2_KNOWN_DEFECT =
-  "Secondary 2 is withheld: legSplit scales the pre-open holder's distribution by the intraday factor, so an ex-date rebalance is mispriced (known defect, PR #91)";
+export const BACKTEST_VERSION = 4;
 
 export const COST_MODEL_VERSION = 1;
 
@@ -172,9 +149,10 @@ export type BacktestResult = {
    */
   secondary2Exact: boolean;
   /**
-   * True when the prong must not be consumed. Broader than `!secondary2Exact`: a comparator can be placed
-   * perfectly and still be unusable while a known arithmetic defect stands, which is the case today
-   * (`SECONDARY_2_KNOWN_DEFECT`). `report.ts` withholds `primaryVersusSecondary2` on this.
+   * True when the prong must not be consumed. Distinct from `!secondary2Exact` by design rather than by
+   * value: placement is a property of the construction, this is the decision about whether the number may be
+   * used, and a known arithmetic defect has once made a perfectly placed comparator unusable. `report.ts`
+   * withholds `primaryVersusSecondary2` on this, treating an absent field as withheld.
    */
   secondary2Withheld: boolean;
   /** Why the comparator is inexact or withheld. Empty only when Secondary 2 was not built at all. */
@@ -728,13 +706,15 @@ export function runBacktest(input: BacktestInput): BacktestResult {
     built !== undefined && built.exact && (s2?.unplaced.length ?? 0) === 0 && windowMismatch.length === 0 && missingVol.length === 0;
   // The withhold is broader than placement: a comparator can be placed perfectly and still be unusable while
   // a known arithmetic defect stands. `report.ts` keys the prong off this, not off `secondary2Exact`.
-  // Unconditional while the known defect stands: `built !== undefined` alone. Deliberately not written as
-  // a condition on the constant, so deleting the constant is a compile error rather than a silent no-op.
-  const secondary2Withheld = built !== undefined;
+  // Withheld unless the comparator was both built and placed exactly. Kept as its own field rather than
+  // folded into `secondary2Exact`: placement is a property of the construction and has to stay independently
+  // testable, while this is the decision about whether the number may be consumed. It carried an
+  // unconditional term while `legSplit`'s ex-date defect stood; that term is gone with the defect.
+  const secondary2Withheld = built === undefined || !secondary2Exact;
   const secondary2InexactReasons =
     built === undefined
       ? []
-      : [...built.inexactReasons, ...(s2?.unplaced ?? []), ...windowMismatch, ...missingVol, SECONDARY_2_KNOWN_DEFECT];
+      : [...built.inexactReasons, ...(s2?.unplaced ?? []), ...windowMismatch, ...missingVol];
   const citability: string[] = [...(input.registrabilityReasons ?? [])];
   for (const l of ["SURVIVORSHIP_BIASED", "OPTIMISTIC_DELAY"]) if (labels.has(l)) citability.push(`run carries the ${l} label`);
   if (labels.has("SYNTHETIC_MISSING_DATA")) citability.push("run injected synthetic missing data for the sensitivity grid");
