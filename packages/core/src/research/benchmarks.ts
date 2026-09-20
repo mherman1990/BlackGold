@@ -184,10 +184,10 @@ export function volatilityTargetedSeries(spec: VolTargetSpec): VolTargetIndex {
     }
   }
 
-  const eqTr = new Map(spec.equity.tr.points.map((p) => [p.session, p]));
-  const cashTr = new Map(spec.cash.tr.points.map((p) => [p.session, p]));
-  const eqBar = new Map(spec.equity.bars.map((b) => [b.session, b]));
-  const cashBar = new Map(spec.cash.bars.map((b) => [b.session, b]));
+  const eq = legView(spec.equity);
+  const cash = legView(spec.cash);
+  const eqTr = eq.tr;
+  const cashTr = cash.tr;
 
   const acts = [...spec.activations].sort((a, b) => {
     const ka = instantKey(a.acquiredAt);
@@ -277,16 +277,19 @@ export function volatilityTargetedSeries(spec: VolTargetSpec): VolTargetIndex {
       index = index.times(ONE.plus(plainStep(weight, cur, prev, eqTr, cashTr)));
       if (atOpen !== undefined) weight = atOpen;
     } else {
-      const split = splitAtOpen(cur, prev, eqTr, cashTr, eqBar, cashBar);
+      const split = splitAtOpen(eq, cash, cur, prev);
       if (split === undefined) {
         const reason = `no usable open on ${cur}, so the rebalance could not be priced where the fill landed`;
         warnings.push(reason);
         inexactReasons.push(reason);
         index = index.times(ONE.plus(plainStep(weight, cur, prev, eqTr, cashTr)));
       } else {
-        const overnight = weight.times(split.eqOvernight).plus(ONE.minus(weight).times(split.cashOvernight));
-        const intraday = atOpen.times(split.eqIntraday).plus(ONE.minus(atOpen).times(split.cashIntraday));
-        index = index.times(ONE.plus(overnight)).times(ONE.plus(intraday));
+        // Portfolio value at the open, at the OLD weights, with each leg's income held as cash; then that
+        // whole value reallocated at the NEW weights and carried to the close on price alone. These are value
+        // factors, so they multiply directly.
+        const atOpenValue = weight.times(split.eqOvernight).plus(ONE.minus(weight).times(split.cashOvernight));
+        const toClose = atOpen.times(split.eqIntraday).plus(ONE.minus(atOpen).times(split.cashIntraday));
+        index = index.times(atOpenValue).times(toClose);
       }
       weight = atOpen;
     }
@@ -312,6 +315,7 @@ export function volatilityTargetedSeries(spec: VolTargetSpec): VolTargetIndex {
   };
 }
 
+/** Both legs' value factors over the two halves of a rebalance session. Factors, not returns. */
 type SessionSplit = { eqOvernight: Dec; eqIntraday: Dec; cashOvernight: Dec; cashIntraday: Dec };
 
 /** One session's blended close-to-close return at a single weight, straight from the legs' indices. */
@@ -334,63 +338,80 @@ function closeToClose(tr: ReadonlyMap<string, TRPoint>, session: IsoDate, prev: 
   return cur.trIndex.div(before.trIndex).minus(ONE);
 }
 
-/** Decompose both legs' session return at the open. `undefined` when either leg cannot be split. */
-function splitAtOpen(
-  session: IsoDate,
-  prev: IsoDate,
-  eqTr: ReadonlyMap<string, TRPoint>,
-  cashTr: ReadonlyMap<string, TRPoint>,
-  eqBar: ReadonlyMap<string, RawBar | LoadedBar>,
-  cashBar: ReadonlyMap<string, RawBar | LoadedBar>,
-): SessionSplit | undefined {
-  const eq = legSplit(eqTr, eqBar, session, prev);
-  const cash = legSplit(cashTr, cashBar, session, prev);
-  if (eq === undefined || cash === undefined) return undefined;
-  return { eqOvernight: eq.overnight, eqIntraday: eq.intraday, cashOvernight: cash.overnight, cashIntraday: cash.intraday };
+/** One leg's lookups, plus its own ordering, so an interval spanning several of its sessions can be valued. */
+type LegView = {
+  tr: ReadonlyMap<string, TRPoint>;
+  bars: ReadonlyMap<string, RawBar | LoadedBar>;
+  points: readonly TRPoint[];
+  /** Position of a session within this leg's own points, which the legs' shared calendar does not give. */
+  positionOf: ReadonlyMap<string, number>;
+};
+
+function legView(leg: VolTargetLeg): LegView {
+  return {
+    tr: new Map(leg.tr.points.map((p) => [p.session, p])),
+    bars: new Map(leg.bars.map((b) => [b.session, b])),
+    points: leg.tr.points,
+    positionOf: new Map(leg.tr.points.map((p, i) => [p.session, i])),
+  };
 }
 
 /**
- * Split one leg's return interval at the open of its closing session.
+ * Value one leg over the two halves of a rebalance session, as VALUE FACTORS rather than returns.
  *
- *   intraday  = adjClose / adjOpen            the open buyer: the price move, and nothing else
- *   overnight = trStep / intraday             everything else the leg earned, by residual
+ *   overnight = trIndex(last) / trIndex(prev)      everything the leg's own index already compounded, which
+ *                 x (adjOpen + d) / adjClose(last)   is every distribution before the closing session; then
+ *                                                    price to the open plus THIS session's distribution, cash
+ *   intraday  =  adjClose / adjOpen                  the open buyer: the price move, and nothing else
  *
- * The raw open is scaled by the same factor the index applied to this session's close (`adjClose / close`),
- * so both sides of the split are in the index's share units.
+ * `last` is the leg's OWN point before the closing session, which is the previous shared session only when
+ * the two are adjacent. The raw open is scaled by the factor the index applied to this session's close
+ * (`adjClose / close`), so both halves are in the index's share units.
  *
- * **Only the intraday leg is defined directly; the other is a residual.** That ordering is the whole design.
- * A leg's return over `(prev close, cur close]` is by definition the product of its return over the two
- * sub-periods, so deriving one from the authoritative `trIndex` step guarantees the decomposition neither
- * creates nor destroys return - for any interval, however long, and whatever it contains. Writing both legs
- * out explicitly does not: an earlier version used `(adjOpen + dist) / prevAdjClose` for the overnight leg,
- * which reinvests the distribution at the OPEN where the index reinvests it at the close, and silently drops
- * any distribution paid on a session between `prev` and `cur` that only one leg observes.
+ * **Only the closing session's distribution is cash.** An ex-date earlier in a stretched interval was
+ * reinvested at its own close by the leg's index, and has been compounding since; treating it as cash held
+ * to the open loses that growth. With a 10 distribution on a 100 close and the next open at 200, cash-to-the-
+ * open gives `(200 + 10) / 100 = 2.1` where the reinvested value is `1.1 x 200 / 100 = 2.2`. Taking the carry
+ * from `trIndex` gets this right by construction, and needs no special case for the adjacent sessions, where
+ * the carry is exactly 1.
  *
- * The distribution still lands entirely with the pre-open holder, which is what an ex-date requires: the
- * intraday factor is a pure price ratio, so every cent of income falls into the residual. The residual form
- * simply also gets the reinvestment convention and the stretched-interval case right.
+ * **A distribution is cash, not a scaled position.** That is the whole content of this function, and three
+ * earlier versions got it wrong in three different ways. Reinvesting it at the open - `(adjClose + d) /
+ * (adjOpen + d)` - hands the open buyer income it has no claim to. Deriving the pre-open leg as a residual
+ * against the leg's own total-return step puts that income through the new allocation's intraday factor, so a
+ * rebalance out of equity on an ex-date is mispriced: at `prevClose 100, open 90, close 100, dist 10` going
+ * from weight 1 to 0, the holder sells at 90 and keeps the 10, so the portfolio is flat, and the residual form
+ * says -1%. Writing the pre-open leg explicitly but reading only `cur.distribution` silently drops an ex-date
+ * on an unshared session.
  *
- * Note that the two legs multiplying back to the leg's own step is an invariant for a SINGLE leg and is not
- * the same claim as the blended index reproducing a static-weight blend of both legs' steps. That one is
- * false whenever the weight changes across the split, because the portfolio changed composition mid-session.
- * Conflating the two is what produced the explicit-overnight version.
+ * All three follow from trying to express the split as two factors that multiply back to the leg's own step.
+ * They cannot: the leg's index reinvests its distribution at the CLOSE, while a portfolio being rebalanced at
+ * the open necessarily allocates that cash at the open. The two conventions differ by construction, and only
+ * on a session that is both ex-dividend and a rebalance. `volatilityTargetedSeries` documents the consequence.
  */
-function legSplit(
-  tr: ReadonlyMap<string, TRPoint>,
-  bars: ReadonlyMap<string, RawBar | LoadedBar>,
-  session: IsoDate,
-  prev: IsoDate,
-): { overnight: Dec; intraday: Dec } | undefined {
-  const cur = tr.get(session);
-  const before = tr.get(prev);
-  const bar = bars.get(session);
-  if (cur === undefined || before === undefined || bar === undefined) return undefined;
-  if (!before.trIndex.gt(0) || !cur.trIndex.gt(0) || !cur.adjClose.gt(0) || !bar.close.gt(0) || !bar.open.gt(0)) return undefined;
+function legSplit(leg: LegView, session: IsoDate, prev: IsoDate): { overnight: Dec; intraday: Dec } | undefined {
+  const cur = leg.tr.get(session);
+  const atPrev = leg.tr.get(prev);
+  const bar = leg.bars.get(session);
+  const position = leg.positionOf.get(session);
+  if (cur === undefined || atPrev === undefined || bar === undefined || position === undefined || position < 1) return undefined;
+  const last = leg.points[position - 1];
+  if (last === undefined) return undefined;
+  if (!atPrev.trIndex.gt(0) || !last.trIndex.gt(0) || !last.adjClose.gt(0)) return undefined;
+  if (!cur.adjClose.gt(0) || !bar.close.gt(0) || !bar.open.gt(0)) return undefined;
   const adjOpen = bar.open.times(cur.adjClose).div(bar.close);
   if (!adjOpen.gt(0)) return undefined;
-  const intraday = cur.adjClose.div(adjOpen);
-  const step = cur.trIndex.div(before.trIndex);
-  return { overnight: step.div(intraday).minus(ONE), intraday: intraday.minus(ONE) };
+  const carry = last.trIndex.div(atPrev.trIndex);
+  const toOpen = adjOpen.plus(cur.distribution).div(last.adjClose);
+  return { overnight: carry.times(toOpen), intraday: cur.adjClose.div(adjOpen) };
+}
+
+/** Decompose both legs at the open. `undefined` when either leg cannot be split. */
+function splitAtOpen(eq: LegView, cash: LegView, session: IsoDate, prev: IsoDate): SessionSplit | undefined {
+  const e = legSplit(eq, session, prev);
+  const c = legSplit(cash, session, prev);
+  if (e === undefined || c === undefined) return undefined;
+  return { eqOvernight: e.overnight, eqIntraday: e.intraday, cashOvernight: c.overnight, cashIntraday: c.intraday };
 }
 
 // ---------------------------------------------------------------------------------------------

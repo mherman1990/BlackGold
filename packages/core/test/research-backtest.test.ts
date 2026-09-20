@@ -5,6 +5,7 @@ import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
 import { backtestParamsFromCharter, costModelFor, costsFromCharter, reportBenchmarkSeries, runBacktest, weeklyDecisionSessions, type BacktestInput } from "../src/research/backtest.ts";
 import { blendSeries } from "../src/research/benchmarks.ts";
 import { auditReads } from "../src/research/leakage.ts";
+import { computeFeatures } from "../src/strategy/features.ts";
 import { defaultProcessingDelayMs } from "../src/data/pit/repository.ts";
 import { UNVERIFIED_SINGLE_SOURCE } from "../src/data/adapters/corporate-actions.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
@@ -493,27 +494,23 @@ describe("runBacktest", () => {
     expect(clean.secondary2InexactReasons.join(" ")).not.toContain("no primary volatility");
   });
 
-  it("places Secondary 2 exactly on clean data, and withholds it anyway", () => {
+  it("places Secondary 2 exactly on clean data, and no longer withholds it", () => {
     const { input } = setup();
     const r = runBacktest(input);
-    // Placement is exact - no rebalance approximated, no warning from the index itself.
     expect(r.secondary2Exact).toBe(true);
     expect(r.secondary2Index?.warnings).toEqual([]);
-    // And it is still withheld, unconditionally, while the legSplit ex-date defect stands. The two are
-    // separate on purpose: placement is a property of the construction, the withhold is a decision about
-    // whether the number may be used at all.
-    expect(r.secondary2Withheld).toBe(true);
-    expect(r.secondary2InexactReasons.join(" ")).toContain("legSplit scales the pre-open holder's distribution");
+    expect(r.secondary2InexactReasons).toEqual([]);
+    // The unconditional withhold that stood in for the legSplit ex-date defect is gone with the defect.
+    expect(r.secondary2Withheld).toBe(false);
   });
 
-  it("keeps the withhold unconditional - exact and inexact alike", () => {
-    // The gate this replaces was prose, and its stated reason was wrong within the hour. This asserts the code
-    // version cannot be argued out of: every shape of run that builds Secondary 2 withholds it.
+  it("withholds exactly the runs it could not place, and no others", () => {
+    // The withhold now tracks placement exactly, so this asserts the correspondence in both directions - a
+    // run that placed exactly is usable, one that did not is withheld.
     //
-    // The inexact fixture is the load-bearing one. An earlier version of this test used three CLEAN runs,
-    // all of which place exactly - so `secondary2Withheld = secondary2Exact` would have passed it while
-    // inverting the gate, making precisely the approximated comparators usable. Both sides of `exact` have to
-    // be present for the loop to mean "unconditional".
+    // The inexact fixture is the load-bearing one, and stays so. An earlier version of this test used three
+    // CLEAN runs, all of which place exactly, which made it blind to any assignment that got the inexact
+    // case wrong - including one that inverted the gate outright. Both sides of `exact` have to be present.
     const holed = buildMarket({
       paths: PATHS,
       from: D("2026-01-02"),
@@ -530,7 +527,7 @@ describe("runBacktest", () => {
     expect(runs.some((r) => !r.secondary2Exact)).toBe(true);
     for (const r of runs) {
       expect(r.secondary2Index).toBeDefined();
-      expect(r.secondary2Withheld).toBe(true);
+      expect(r.secondary2Withheld).toBe(!r.secondary2Exact);
     }
     function input0(): BacktestInput {
       return setup().input;
@@ -549,18 +546,67 @@ describe("runBacktest", () => {
   });
 
   it("scales Secondary 2 by min(1, target / primary volatility), as section 9.5 does", () => {
-    const { input } = setup();
-    const r = runBacktest(input);
-    const target = input.params.sizing.annualVolatilityTarget;
-    // Every non-zero weight is either a full 1 (low-volatility primary, k capped) or strictly below it.
-    const nonZero = r.secondary2Weights.filter((w) => !w.weight.isZero());
-    expect(nonZero.length).toBeGreaterThan(0);
-    for (const w of nonZero) {
-      expect(w.weight.lte(ONE)).toBe(true);
-      expect(w.weight.gt(0)).toBe(true);
-    }
-    // A weight below 1 implies the primary's annualized volatility exceeded the target at that decision.
-    if (nonZero.some((w) => w.weight.lt(ONE))) expect(target.gt(0)).toBe(true);
+    // Asserts the FORMULA against the estimator's own output, recomputed here through `computeFeatures` at
+    // the same decision instant rather than read back out of the run - a test that consumed the run's own
+    // scale factor would only be restating it.
+    //
+    // TWO fixtures, because the `min` has two branches and one fixture cannot exercise both: the wobble is
+    // constant within a run, so the primary's volatility sits either side of the 10% target for the whole
+    // window. A calm primary pins k at 1 (the cap), a volatile one keeps k below it (the scale). The previous
+    // version used one fixture and asserted only `capped + scaled === checked`, which is true by
+    // construction and passes at `capped === 0`; before that it asserted only that weights lay in (0, 1],
+    // every part of which survived replacing the formula with an arbitrary positive fraction.
+    const branch = (wobble: Dec): { checked: number; capped: number; scaled: number } => {
+      const paths: PricePath[] = PATHS.map((x) => (x.entityId === "VTI" ? { ...x, wobble } : x));
+      const m = buildMarket({ paths, from: D("2026-01-02"), to: D("2026-06-30") });
+      const { charter, input } = setup({ pit: m.pit, calendar: m.calendar });
+      const r = runBacktest(input);
+      const params = backtestParamsFromCharter(charter);
+      const target = params.sizing.annualVolatilityTarget;
+      const volAt = (session: ReturnType<typeof D>): Dec | undefined =>
+        computeFeatures(
+          { pit: m.pit, calendar: m.calendar },
+          {
+            riskEntities: [...charter.universe.risk_etfs],
+            cashEntityId: charter.universe.cash_etf,
+            decisionAt: m.decisionAt(session),
+            params: params.features,
+          },
+        ).features.get(charter.benchmarks.primary)?.vol;
+
+      const decisionSessions = new Set(r.decisions.map((d) => d.decisionSession));
+      const indexOf = new Map(r.sessions.map((x, i) => [x, i]));
+      let checked = 0;
+      let capped = 0;
+      let scaled = 0;
+      for (let i = 1; i < r.secondary2Weights.length; i++) {
+        const cur = r.secondary2Weights[i];
+        const prev = r.secondary2Weights[i - 1];
+        if (cur === undefined || prev === undefined || cur.weight.eq(prev.weight)) continue;
+        const at = indexOf.get(cur.session);
+        const decisionSession = at === undefined ? undefined : r.sessions[at - Math.max(input.costs.delayBars, 1)];
+        if (decisionSession === undefined || !decisionSessions.has(decisionSession)) continue;
+        const vol = volAt(decisionSession);
+        if (vol === undefined) continue;
+        const k = vol.gt(0) ? target.div(vol) : ONE;
+        const expected = k.lt(ONE) ? k : ONE;
+        expect(cur.weight.toFixed(12)).toBe(expected.toFixed(12));
+        checked++;
+        if (expected.eq(ONE)) capped++;
+        else scaled++;
+      }
+      return { checked, capped, scaled };
+    };
+
+    // Calm primary: volatility under the 10% target, so `min` returns 1 and the cap branch is exercised.
+    const calm = branch(N("0.001"));
+    expect(calm.checked).toBeGreaterThan(0);
+    expect(calm.capped).toBeGreaterThan(0);
+
+    // Volatile primary: volatility above the target, so `min` returns target / sigma.
+    const volatile = branch(N("0.012"));
+    expect(volatile.checked).toBeGreaterThan(0);
+    expect(volatile.scaled).toBeGreaterThan(0);
   });
 
   it("refuses to be cited as evidence while the charter is a draft", () => {
