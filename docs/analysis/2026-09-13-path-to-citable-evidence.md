@@ -118,7 +118,10 @@ Three candidates, none of them free:
 2. **Change the taint rule** so a single-source row superseded by a reconciled
    row for the same date does not label the run. Defensible on the merits, but
    it loosens an evidential guarantee that was written deliberately, so it is an
-   evidence-standards decision rather than a refactor.
+   evidence-standards decision rather than a refactor — **and it is larger than
+   it sounds**: it needs a shared reconciled-winner rule across the feature,
+   execution and coverage reads, because `computeFeatures` does not dedupe at
+   all today. See the Recommendation below.
 3. **A quarantine or exclusion mechanism** for superseded observations. None
    exists today; observations are append-only by design.
 
@@ -154,10 +157,53 @@ blocker:
   a separate, reviewed change — worth doing for data-integrity confidence, but
   not the path to clearing the current label.
 
-## Recommendation
+## Recommendation (rewritten 2026-09-20)
 
-To make a citable run possible, the next concrete step is **owner-side
-corporate-action curation** for the universe over the evaluation window, ingested
-via `ingest corporate-actions --file`. No code change is required for that path.
+The original recommendation here said the next concrete step was owner-side
+corporate-action curation, and that **no code change is required**. Both halves
+are now known to be wrong on the existing store, for the reasons in the
+correction above. It is replaced.
+
+**Do not commission the curation yet.** In order:
+
+1. **Choose the store remedy** (owner). Option 1 — a separate store for the
+   evaluation universe — is the only one that is purely operational. Options 2
+   and 3 both need code, and option 2 needs more of it than first described
+   (next item).
+2. **If option 2 is chosen, scope it properly.** Relaxing the taint rule in
+   `loadExecutionSeries` alone is *not* sufficient and would be actively unsafe,
+   because the two read paths do not agree:
+   - `loadExecutionSeries` (`research/backtest.ts`) dedupes actions per
+     (entity, kind, effective date), preferring the reconciled row.
+   - `computeFeatures` (`strategy/features.ts`) does **not**. It pushes every
+     returned row into `TotalReturnSeries.build`, so the same dividend present
+     from both the reconciled file and the Tiingo feed is **counted twice** in
+     the feature path's total-return series — and therefore in momentum, trend
+     and volatility — while the execution path counts it once.
+   - `coverage.ts` accumulates blocking flags from every row, which is correct
+     and conservative, but means it too sees both rows.
+
+   So option 2 is really "a shared reconciled-winner rule across the feature,
+   execution and coverage reads", not a one-line relaxation.
+3. **Then** curate and ingest via `ingest corporate-actions --file`.
+
+### Known bug this uncovered (not yet fixed)
+
+The 0.1.11 read-layer dedupe was **incomplete**. Its changelog entry describes
+fixing a total-return double-count when the same action exists from two sources,
+and it fixed `loadExecutionSeries` — but `computeFeatures` builds its own
+`TotalReturnSeries` from an undeduped action list and was not touched. The
+`dedupes a corporate action present from both a reconciled and a single-source
+feed` test covers the backtest path only.
+
+The bug is **dormant today** purely because no reconciled vendored file has been
+ingested, so there are no duplicate pairs. It arms itself the moment anyone does
+the curation this note recommends — which would silently change the features
+that drive entry and exit decisions, in a direction nothing would flag.
+
+Fixing it is a bounded code PR with its own tests (positive, negative, and the
+both-sources-present boundary), not a docs change, and it should land **before**
+any reconciled actions are ingested.
+
 Everything downstream (charter signature, holdout, evidence citation) remains an
 owner act by design.

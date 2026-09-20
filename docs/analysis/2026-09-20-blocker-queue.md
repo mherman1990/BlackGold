@@ -99,6 +99,14 @@ evaluation universe (cheapest, no code change), a change to the taint rule (an
 evidence-standards decision, not a refactor), or a quarantine mechanism that
 does not exist. Costs are in `2026-09-13-path-to-citable-evidence.md`.
 
+**And a latent bug must be fixed before the curation, whichever remedy you
+pick.** `computeFeatures` (`strategy/features.ts`) does not dedupe corporate
+actions, while `loadExecutionSeries` does — so a dividend present from both the
+reconciled file and the Tiingo feed is counted twice in momentum, trend and
+volatility, and once in execution. The 0.1.11 dedupe fixed the execution path
+only. It is dormant solely because no reconciled file exists yet; the curation
+is what arms it. Bounded code PR, own tests, lands first.
+
 **The decision Matt owes, and it is not just "do the data work":** may Claude
 Code build a *second automated* public corporate-actions adapter (issuer
 distribution notices + an exchange feed) plus a reconciler that emits the
@@ -221,6 +229,9 @@ So a day is never lost waiting on an answer. Each is a bounded, reviewed PR.
 7. **Deferred Phase 4 limit engines** that need only price/ADV data already in
    the store: liquidity and order-level limits. Per-position risk budget and
    factor concentration wait on B-7.
+8. **Fix the `computeFeatures` corporate-action double-count** (see B-2). Small,
+   well-understood, financial-critical, and a prerequisite to B-2's curation
+   under every remedy. This is the one item here that should jump the queue.
 
 ## 5. Two things the refresh turned up
 
