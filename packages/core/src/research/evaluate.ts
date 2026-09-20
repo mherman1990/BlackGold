@@ -11,7 +11,7 @@ import {
   runBacktest,
   type BacktestInput,
 } from "./backtest.ts";
-import { buildResultReport, pairedExcessSeries, type ArmMetrics, type ResultReport } from "./report.ts";
+import { buildResultReport, sharpeInputSeries, type ArmMetrics, type ResultReport } from "./report.ts";
 import { splitPlan, type SplitKind } from "./walkforward.ts";
 import { enumerateGrid } from "./robustness.ts";
 import { aggregateWalkForward, type AggregateSplitInput, type AggregateWalkForward } from "./aggregate.ts";
@@ -344,7 +344,7 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
         splitId: split.id,
         kind: split.kind,
         sessions: bt.sessions,
-        pairedExcess: pairedExcessSeries(candidateArm.index.points, primary.points),
+        sharpeInputs: sharpeInputSeries(candidateArm.index.points, primary.points, cash.points),
         candidateTotalReturn: candidate.totalReturn,
         secondary2TotalReturn: secondary2?.totalReturn,
         secondary2UnusableReason: unusable,

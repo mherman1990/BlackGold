@@ -999,6 +999,52 @@ carried onto any verdict that rests on the second prong (`SECONDARY_2_OPEN_READI
 confirms or overrules them, a §16.1 rejection from this code is provisional.** Claude Code computes the
 verdict; it does not act on it, and may not treat its own research output as investment evidence.
 
+**TWO P1 DEFECTS FOUND BY CODEX ON PR #94, BOTH FIXED THERE. The first changes every primary-metric
+number this project has ever recorded.**
+
+**1. The primary metric was an information ratio, not the registered Sharpe difference.** §13 registers the
+"difference in after-cost annualized Sharpe ratio between the strategy and VTI total return", and
+`pass_fail.primary_metric` is literally named `net_sharpe_difference_vs_primary_benchmark`. What
+`buildResultReport` bootstrapped was `annualizedSharpe(candidate − benchmark)` — the Sharpe of the paired
+difference, which is the **information ratio**. The repository said so itself and nobody read it:
+`informationRatio(strategy, benchmark)` in `benchmarks.ts` is defined as `sharpe(strategy, benchmark)`, the
+same construction, and `armMetrics` already published that number under its correct name beside the gate. The
+report was publishing one statistic twice, once named honestly and once as the registered promotion gate.
+
+The two disagree in magnitude **and in sign** whenever the legs differ in volatility or are imperfectly
+correlated, so the gate could read either way. Now fixed: both legs are taken in excess of the cash leg,
+their Sharpe ratios are computed separately, and the difference is bootstrapped with
+`stationaryBootstrapPaired` — one draw of block indices applied to both legs, so session *t* of the strategy
+stays paired with session *t* of the benchmark. `REPORT_VERSION` 4 → 5, because a v4 point estimate and a v5
+one are **different statistics and must never be compared**.
+
+**Consequence for this register entry and for the analysis note: the −0.19 on DESIGN was an information
+ratio, not the primary metric.** Every primary-metric number quoted anywhere in this repository predates the
+fix and is superseded. The corrected statistic has **not** been run on real data, so which way it moves is
+unknown, and nobody — Claude Code least of all — knew the direction when the fix was made. That ordering
+matters: this is implementing the registered metric, as the Secondary 2 work was, not selecting one after
+seeing a result.
+
+**2. A pass on the unadjusted statistic was being published as a registered pass.** §13's metric also carries
+"a deflated-Sharpe adjustment for the registered trial count (§15)", and §15 fixes it concretely: "N = 72
+trials and the observed cross-trial variance". One evaluation run produces neither, so the adjustment is not
+applied. The first version of the aggregate recorded that in `evidenceCaveats` and still emitted
+`passes: true`, which let a consumer act on a concrete verdict the missing adjustment might reverse — the
+same shape as the Secondary 2 gate that was prose before it was code.
+
+The prong is now **tri-state**, and the asymmetry is the point:
+
+- `false` when the threshold test fails. **Sound without the adjustment**, because the adjustment can only
+  ever add a hurdle — neither reading of how it enters the pass rule can turn a failure into a pass — so a
+  failing prong stays failing once the grid statistics exist and §16.1 may act on it. REJECT stays reachable.
+- `undefined` when the threshold test clears. An undeflated pass is not a registered pass, so it is withheld.
+- `true` unreachable until F5's grid sweep wires the adjustment.
+
+§16.1 is now evaluated in **three-valued logic**: either prong passing gives owner review (determinate even
+when the other is unknown, since §16.1 asks only whether either passed); both prongs known to have failed
+gives rejection; anything else is undetermined. Collapsing unknown into either branch is the error this
+thread keeps rediscovering.
+
 **Correction history.** This entry's first version (2026-09-20) said the second prong was computed on every
 run and merely needed surfacing, and recommended running it. That was wrong on both counts and is corrected
 above; the errors were found by Codex review, not by the sessions that wrote them.

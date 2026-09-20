@@ -1,6 +1,7 @@
 import { Dec, ONE, hashJson, type IsoDate } from "@blackgold/shared";
 import type { Charter } from "../strategy/charter.ts";
-import { annualizedSharpe, stationaryBootstrap, type BootstrapResult } from "./stats.ts";
+import { annualizedSharpeDifference, stationaryBootstrapPaired, type BootstrapResult } from "./stats.ts";
+import type { SharpeInputPoint } from "./report.ts";
 import type { SplitKind } from "./walkforward.ts";
 
 /**
@@ -58,11 +59,11 @@ export type AggregateSplitInput = {
   /** Sessions the run scored, ascending. The overlap check and the session count both read this. */
   sessions: readonly IsoDate[];
   /**
-   * Daily excess of the candidate arm over the primary benchmark on their common sessions - the very series
-   * `buildResultReport` feeds the per-split bootstrap, so the aggregate and the per-split diagnostics are
+   * The candidate's and the primary benchmark's daily excess returns over cash - the very series
+   * `buildResultReport` feeds the per-split bootstrap, so the aggregate and the per-split diagnostic are
    * the same statistic at two scopes rather than two statistics.
    */
-  pairedExcess: readonly { session: IsoDate; value: number }[];
+  sharpeInputs: readonly SharpeInputPoint[];
   /** The candidate arm's total return over the split. */
   candidateTotalReturn: Dec;
   /**
@@ -79,22 +80,42 @@ export type AggregateSplitInput = {
 
 export type AggregatePrimaryMetric = {
   name: string;
-  /** Annualized Sharpe difference on the pooled paired-excess series. */
+  /**
+   * The pooled point estimate: annualized Sharpe of the strategy minus annualized Sharpe of the primary
+   * benchmark, both in excess of cash. NOT the Sharpe of their difference, which is the information ratio.
+   */
   pointEstimate: number;
   interval: BootstrapResult;
   threshold: number;
-  /** Section 13's pass rule: point estimate at or above the threshold AND the interval excludes zero. */
-  passes: boolean;
+  /**
+   * Section 13's threshold test as the code can compute it today: point estimate at or above the threshold
+   * AND the interval excludes zero. It is only PART of the registered pass rule - see `passes`.
+   */
+  clearsUndeflatedThreshold: boolean;
+  /**
+   * Section 16.1's first prong. **Tri-state, and `undefined` is not a failure.**
+   *
+   *  - `false` - the threshold test above failed. Sound without the deflated-Sharpe adjustment, because
+   *    that adjustment can only ever add a hurdle: section 15 computes the deflated Sharpe against the
+   *    expected maximum over N = 72 trials, and neither reading of how it enters the pass rule (an extra
+   *    test, or a deflated estimate substituted into the threshold) can turn a failure into a pass. So a
+   *    failing prong stays failing once the grid statistics exist, and section 16.1 may act on it.
+   *  - `undefined` - the threshold test passed, but section 13's registered metric also carries "a
+   *    deflated-Sharpe adjustment for the registered trial count (section 15)", which is NOT applied
+   *    (`deflatedSharpeApplied`). An undeflated pass is not a registered pass: the adjustment could flip it.
+   *    Recording that only in `evidenceCaveats` would leave a consumer acting on a concrete verdict that the
+   *    missing adjustment might reverse, so the prong is withheld instead, exactly as an inexact Secondary 2
+   *    is withheld rather than published with a warning.
+   *  - `true` - unreachable until the adjustment is wired. Kept in the type so that wiring it is a change
+   *    here and not a new shape.
+   */
+  passes: boolean | undefined;
   /** Observations in the pooled series. */
   observations: number;
   /**
-   * False, always, and stated rather than implied: section 13 registers "a deflated-Sharpe adjustment for
-   * the registered trial count (section 15)", and `deflatedSharpe` (stats.ts) needs the cross-trial Sharpe
-   * dispersion of the full 72-member sensitivity grid, which one evaluation run does not produce.
-   *
-   * The direction matters and is recorded in `evidenceCaveats`: deflation can only lower a Sharpe, so an
-   * undeflated prong is EASIER to pass. Omitting it biases section 16.1 toward owner review and away from
-   * rejection, which is the safe direction for a falsifier but is not the registered statistic.
+   * False, always, and stated rather than implied. `deflatedSharpe` (stats.ts) needs the cross-trial Sharpe
+   * dispersion of the full 72-member sensitivity grid (section 15: "N = 72 trials and the observed
+   * cross-trial variance"), which one evaluation run does not produce. Wiring it is F5's grid sweep.
    */
   deflatedSharpeApplied: false;
 };
@@ -237,8 +258,14 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
   }
 
   const pooledSessions = [...seen.keys()].sort();
-  const pooledExcess: number[] = [];
-  for (const split of ordered) for (const p of split.pairedExcess) pooledExcess.push(p.value);
+  const pooledStrategy: number[] = [];
+  const pooledBenchmark: number[] = [];
+  for (const split of ordered) {
+    for (const p of split.sharpeInputs) {
+      pooledStrategy.push(p.strategy);
+      pooledBenchmark.push(p.benchmark);
+    }
+  }
 
   const splitIds = ordered.map((split) => split.splitId);
   const plannedSplitIds = [...input.plannedSplitIds];
@@ -255,20 +282,23 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
   // ---- First prong: the primary metric on the pooled paired-excess series -------------------------
   const threshold = Number(c.pass_fail.primary_threshold);
   let primaryMetric: AggregatePrimaryMetric | undefined;
-  if (pooledExcess.length >= 2) {
-    const interval = stationaryBootstrap(pooledExcess, annualizedSharpe, {
+  if (pooledStrategy.length >= 2) {
+    const interval = stationaryBootstrapPaired(pooledStrategy, pooledBenchmark, annualizedSharpeDifference, {
       meanBlockSessions: c.pass_fail.bootstrap_block_sessions,
       confidence: Number(c.pass_fail.bootstrap_confidence),
       ...(input.bootstrapResamples === undefined ? {} : { resamples: input.bootstrapResamples }),
       ...(input.bootstrapSeed === undefined ? {} : { seed: input.bootstrapSeed }),
     });
+    const clearsUndeflatedThreshold = interval.pointEstimate >= threshold && interval.excludesZero;
     primaryMetric = {
       name: c.pass_fail.primary_metric,
       pointEstimate: interval.pointEstimate,
       interval,
       threshold,
-      passes: interval.pointEstimate >= threshold && interval.excludesZero,
-      observations: pooledExcess.length,
+      clearsUndeflatedThreshold,
+      // A failure is sound without the deflated-Sharpe adjustment; a pass is not. See `passes`.
+      passes: clearsUndeflatedThreshold ? undefined : false,
+      observations: pooledStrategy.length,
       deflatedSharpeApplied: false,
     };
   }
@@ -328,37 +358,58 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
         ? "the charter's walk-forward schedule declares no splits, so there is no aggregate out-of-sample set to evaluate"
         : `${splitIds.length} of the schedule's ${plannedSplitIds.length} walk-forward split(s) were pooled; ${missing.length} absent (${missing.join(", ")}). Section 16.1 is defined on the aggregate set, and a verdict from part of it would be decided by which windows were run.`,
     );
-  } else if (primaryMetric === undefined || secondary2 === undefined) {
-    verdict = "UNMEASURED";
-    if (primaryMetric === undefined) {
-      verdictReasons.push(
-        `the pooled paired-excess series holds ${pooledExcess.length} observation(s); a bootstrap interval needs at least two, and section 13 admits no point estimate without one`,
-      );
-    }
-    if (secondary2 === undefined) {
-      verdictReasons.push('the second prong is unmeasured, and section 16.1 rejects only "if both fail": absence is not failure');
-    }
-  } else if (primaryMetric.passes || secondary2.beats) {
-    verdict = "OWNER_REVIEW";
-    verdictReasons.push(
-      primaryMetric.passes && secondary2.beats
-        ? "both prongs passed"
-        : primaryMetric.passes
-          ? "the primary metric passed on the aggregate walk-forward out-of-sample set, and the strategy did not beat Secondary 2"
-          : "the strategy beat Secondary 2 while the primary metric failed",
-    );
-    verdictReasons.push('section 16.1: "If either passes, the charter goes to owner review."');
-    if (!primaryMetric.passes && secondary2.beats) {
-      charterConflict =
-        'Sections 16.1 and 17 disagree about this exact case. Section 16.1: "If either passes, the charter goes to owner review." Section 17: "If the metric fails, the charter goes to REJECTED, never to ACTIVE." The primary metric failed and Secondary 2 passed, so the two rules route the charter to different states. Which one governs is a charter question and therefore the owner\'s; it is not resolved here.';
-      verdictReasons.push("this is the case sections 16.1 and 17 disagree on; see `charterConflict`");
-    }
   } else {
-    verdict = "REJECT";
-    verdictReasons.push(
-      "the strategy failed to improve the primary metric over the primary benchmark on the aggregate walk-forward out-of-sample set AND failed to beat Secondary 2",
-    );
-    verdictReasons.push('section 16.1: "if both fail, the hypothesis is rejected and the charter is marked REJECTED with results preserved."');
+    // Section 16.1 is a disjunction over two prongs, and a prong can now be genuinely unknown, so it is
+    // evaluated in three-valued logic rather than by treating `undefined` as either outcome:
+    //
+    //   - EITHER prong passing gives owner review, whatever the other one did. Determinate even when the
+    //     other prong is unknown, because section 16.1 asks only whether either passed.
+    //   - BOTH prongs failing gives rejection. Both must be known to have failed.
+    //   - Anything else is genuinely undetermined, and section 16.1 has no outcome for it.
+    //
+    // Collapsing unknown into either branch is the error this whole thread keeps finding: treating an
+    // absent second prong as "does not beat" once made rejection the only reachable outcome.
+    const primaryPasses = primaryMetric?.passes;
+    const secondary2Beats = secondary2?.beats;
+    if (primaryPasses === true || secondary2Beats === true) {
+      verdict = "OWNER_REVIEW";
+      verdictReasons.push(
+        primaryPasses === true && secondary2Beats === true
+          ? "both prongs passed"
+          : primaryPasses === true
+            ? "the primary metric passed on the aggregate walk-forward out-of-sample set"
+            : "the strategy beat Secondary 2",
+      );
+      verdictReasons.push('section 16.1: "If either passes, the charter goes to owner review."');
+      if (primaryPasses === false && secondary2Beats === true) {
+        charterConflict =
+          'Sections 16.1 and 17 disagree about this exact case. Section 16.1: "If either passes, the charter goes to owner review." Section 17: "If the metric fails, the charter goes to REJECTED, never to ACTIVE." The primary metric failed and Secondary 2 passed, so the two rules route the charter to different states. Which one governs is a charter question and therefore the owner\'s; it is not resolved here.';
+        verdictReasons.push("this is the case sections 16.1 and 17 disagree on; see `charterConflict`");
+      }
+    } else if (primaryPasses === false && secondary2Beats === false) {
+      verdict = "REJECT";
+      verdictReasons.push(
+        "the strategy failed to improve the primary metric over the primary benchmark on the aggregate walk-forward out-of-sample set AND failed to beat Secondary 2",
+      );
+      verdictReasons.push('section 16.1: "if both fail, the hypothesis is rejected and the charter is marked REJECTED with results preserved."');
+    } else {
+      verdict = "UNMEASURED";
+      if (primaryMetric === undefined) {
+        verdictReasons.push(
+          `the pooled series holds ${pooledStrategy.length} observation(s); a bootstrap interval needs at least two, and section 13 admits no point estimate without one`,
+        );
+      } else if (primaryPasses === undefined) {
+        verdictReasons.push(
+          `the primary metric clears section 13's threshold on the pooled set (${primaryMetric.pointEstimate.toFixed(4)} against ${primaryMetric.threshold}, interval excluding zero), but section 13's registered "deflated-Sharpe adjustment for the registered trial count" is not applied, and that adjustment can only take a pass away. An undeflated pass is not a registered pass, so the prong is withheld rather than acted on.`,
+        );
+      }
+      if (secondary2 === undefined) {
+        verdictReasons.push('the second prong is unmeasured, and section 16.1 rejects only "if both fail": absence is not failure');
+      }
+      if (primaryPasses === false && secondary2Beats === undefined) {
+        verdictReasons.push("the primary metric failed, but with the second prong unmeasured it is not established that BOTH failed");
+      }
+    }
   }
 
   // ---- Citability and caveats ---------------------------------------------------------------------
@@ -382,7 +433,7 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
   const evidenceCaveats: string[] = [];
   if (primaryMetric !== undefined) {
     evidenceCaveats.push(
-      "The deflated-Sharpe adjustment section 13 registers for the trial count is NOT applied: it needs the cross-trial Sharpe dispersion of the full sensitivity grid, which one evaluation run does not produce. Deflation can only lower a Sharpe, so the prong here is easier to pass than the registered statistic - the omission biases section 16.1 toward owner review and away from rejection.",
+      "The deflated-Sharpe adjustment section 13 registers for the trial count is NOT applied: section 15 computes it with N = 72 trials and the observed cross-trial variance, and one evaluation run produces neither. It is an added hurdle rather than a re-scaling, so it can take a pass away and can never grant one - which is why a failing first prong is acted on here and a passing one is withheld rather than merely annotated.",
     );
   }
   if (ordered.length > 1) {
@@ -404,7 +455,17 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
     splitIds,
     complete,
     sessions: pooledSessions.length,
-    primary: primaryMetric === undefined ? "unmeasured" : [primaryMetric.pointEstimate, primaryMetric.interval.lower, primaryMetric.interval.upper, primaryMetric.passes],
+    // `passes` is a string because a JSON `undefined` simply vanishes, which would collapse a withheld
+    // prong into a failed one and let two different verdicts share a hash.
+    primary:
+      primaryMetric === undefined
+        ? "unmeasured"
+        : [
+            primaryMetric.pointEstimate,
+            primaryMetric.interval.lower,
+            primaryMetric.interval.upper,
+            primaryMetric.passes === undefined ? "withheld" : primaryMetric.passes ? "true" : "false",
+          ],
     secondary2: secondary2 === undefined ? "unmeasured" : [secondary2.excessReturn, secondary2.beats],
     verdict,
   };

@@ -1,7 +1,7 @@
 import { Dec, ONE, ZERO, hashJson, sumDec, type IsoDate } from "@blackgold/shared";
 import { annualizedVol, annualTurnover, blendSeries, cagr, maxDrawdown, sharpe, type BlendSpec } from "./benchmarks.ts";
 import { simpleReturns, type TRPoint, type TRSeries } from "../market/series.ts";
-import { annualizedSharpe, quantile, stationaryBootstrap, type BootstrapResult } from "./stats.ts";
+import { annualizedSharpeDifference, quantile, stationaryBootstrapPaired, type BootstrapResult } from "./stats.ts";
 import type { Charter } from "../strategy/charter.ts";
 import type { ArmResult, BacktestResult } from "./backtest.ts";
 
@@ -20,7 +20,10 @@ import type { ArmResult, BacktestResult } from "./backtest.ts";
  *    charters, optimistic delays, survivorship labels and synthetic missing data all land there.
  */
 
-export const REPORT_VERSION = 4;
+// 5: the primary metric is the registered DIFFERENCE OF SHARPE RATIOS against the primary benchmark. It
+// was the information ratio (the Sharpe of the paired difference) under that name until 2026-09-20, so a
+// v4 point estimate and a v5 one are different statistics and must never be compared.
+export const REPORT_VERSION = 5;
 
 export type ArmMetrics = {
   arm: string;
@@ -138,28 +141,46 @@ function dailyNumbers(points: readonly TRPoint[]): number[] {
   return simpleReturns(points).map((r) => r.value.toNumber());
 }
 
+/** One session's excess return over the cash leg, for the candidate and for the primary benchmark. */
+export type SharpeInputPoint = { session: IsoDate; strategy: number; benchmark: number };
+
 /**
- * Paired daily excess of `a` over `b` on their common sessions, each value tagged with its session.
+ * The two series ALPHA_CHARTER section 13's primary metric is a difference of: the candidate's and the
+ * primary benchmark's daily excess returns over the CASH leg, on the sessions all three share.
  *
- * Exported because the aggregate walk-forward reading of sections 13 and 16.1 pools these series across
- * splits and bootstraps the concatenation (`research/aggregate.ts`). Pooling the per-split INPUT rather than
- * averaging per-split RESULTS is what makes the aggregate the same statistic at a wider scope instead of a
- * second statistic that happens to resemble it; exporting the one function both scopes read is what keeps
- * them from drifting.
+ * Two things this fixes, both found by Codex review on PR #94:
+ *
+ *  - **It is a difference of Sharpe ratios, not the Sharpe of a difference.** Section 13 registers the
+ *    "difference in after-cost annualized Sharpe ratio between the strategy and VTI total return". Until
+ *    2026-09-20 the report bootstrapped `annualizedSharpe(candidate - benchmark)`, which is the INFORMATION
+ *    RATIO - `informationRatio` in benchmarks.ts is literally `sharpe(strategy, benchmark)`, the same
+ *    construction - so the report published one number twice, once correctly named
+ *    `informationRatioVsPrimary` and once as the registered gate. The two disagree in magnitude and in sign
+ *    whenever the legs differ in volatility or are imperfectly correlated, so the gate could read either way.
+ *  - **Both legs are excess over cash.** A Sharpe ratio is against the risk-free leg, which is what
+ *    `armMetrics.sharpeVsCash` already uses. The restriction is three-way rather than pairwise, because the
+ *    two Sharpes have to be computed over the same sessions for their difference to mean anything.
+ *
+ * Exported because the aggregate reading of sections 13 and 16.1 pools these series across splits and
+ * bootstraps the concatenation (`research/aggregate.ts`). Pooling the per-split INPUT rather than averaging
+ * per-split RESULTS is what makes the aggregate the same statistic at a wider scope instead of a second
+ * statistic that resembles it; exporting the one function both scopes read is what keeps them from drifting.
  */
-export function pairedExcessSeries(a: readonly TRPoint[], b: readonly TRPoint[]): { session: IsoDate; value: number }[] {
-  const bySession = new Map(simpleReturns(b).map((r) => [r.session, r.value.toNumber()]));
-  const out: { session: IsoDate; value: number }[] = [];
-  for (const r of simpleReturns(a)) {
-    const other = bySession.get(r.session);
-    if (other !== undefined) out.push({ session: r.session, value: r.value.toNumber() - other });
+export function sharpeInputSeries(
+  candidate: readonly TRPoint[],
+  primary: readonly TRPoint[],
+  cash: readonly TRPoint[],
+): SharpeInputPoint[] {
+  const cashBySession = new Map(simpleReturns(cash).map((r) => [r.session, r.value.toNumber()]));
+  const primaryBySession = new Map(simpleReturns(primary).map((r) => [r.session, r.value.toNumber()]));
+  const out: SharpeInputPoint[] = [];
+  for (const r of simpleReturns(candidate)) {
+    const rf = cashBySession.get(r.session);
+    const bench = primaryBySession.get(r.session);
+    if (rf === undefined || bench === undefined) continue;
+    out.push({ session: r.session, strategy: r.value.toNumber() - rf, benchmark: bench - rf });
   }
   return out;
-}
-
-/** The same paired excess as bare numbers, for the statistic. */
-function pairedExcess(a: readonly TRPoint[], b: readonly TRPoint[]): number[] {
-  return pairedExcessSeries(a, b).map((p) => p.value);
 }
 
 export type MetricsInput = {
@@ -323,16 +344,23 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
   if (passive) arms.push(metricsFor(passive));
   const benchmarks = benchmarkSeries.map((b) => armMetrics({ arm: b.name, index: b.series, cash: input.cash, primary: input.primary }));
 
-  // Primary metric: the after-cost annualized Sharpe difference against the primary benchmark, with a
-  // stationary block bootstrap at the charter's frozen block length. A paired daily excess series is the
-  // statistic's input, so the interval respects the pairing rather than treating the arms as independent.
-  const paired = pairedExcess(candidate.index.points, input.primary.points);
-  const interval = stationaryBootstrap(paired.length >= 2 ? paired : [0, 0], annualizedSharpe, {
-    meanBlockSessions: c.pass_fail.bootstrap_block_sessions,
-    confidence: Number(c.pass_fail.bootstrap_confidence),
-    ...(input.bootstrapResamples === undefined ? {} : { resamples: input.bootstrapResamples }),
-    ...(input.bootstrapSeed === undefined ? {} : { seed: input.bootstrapSeed }),
-  });
+  // Primary metric: the after-cost annualized Sharpe DIFFERENCE against the primary benchmark (section 13),
+  // with a stationary block bootstrap at the charter's frozen block length. Both legs are resampled under
+  // one draw of block indices, so session t of the strategy stays paired with session t of the benchmark
+  // and the interval reflects their shared market moves rather than two independent arms.
+  const sharpeInputs = sharpeInputSeries(candidate.index.points, input.primary.points, input.cash.points);
+  const enough = sharpeInputs.length >= 2;
+  const interval = stationaryBootstrapPaired(
+    enough ? sharpeInputs.map((p) => p.strategy) : [0, 0],
+    enough ? sharpeInputs.map((p) => p.benchmark) : [0, 0],
+    annualizedSharpeDifference,
+    {
+      meanBlockSessions: c.pass_fail.bootstrap_block_sessions,
+      confidence: Number(c.pass_fail.bootstrap_confidence),
+      ...(input.bootstrapResamples === undefined ? {} : { resamples: input.bootstrapResamples }),
+      ...(input.bootstrapSeed === undefined ? {} : { seed: input.bootstrapSeed }),
+    },
+  );
   const threshold = Number(c.pass_fail.primary_threshold);
   // Section 16.1's second prong, against the REGISTERED Secondary 2. The average-exposure approximation is
   // never substituted for it: when Secondary 2 is unavailable the prong stays undefined

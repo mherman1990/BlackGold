@@ -3,7 +3,8 @@ import { Dec, isoDate, type IsoDate } from "@blackgold/shared";
 import { fileURLToPath } from "node:url";
 import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
 import { aggregateWalkForward, AggregateScopeError, SECONDARY_2_OPEN_READINGS, type AggregateSplitInput } from "../src/research/aggregate.ts";
-import { annualizedSharpe, stationaryBootstrap } from "../src/research/stats.ts";
+import { annualizedSharpe, annualizedSharpeDifference, stationaryBootstrapPaired } from "../src/research/stats.ts";
+import type { SharpeInputPoint } from "../src/research/report.ts";
 
 /**
  * ALPHA_CHARTER section 16.1 on the aggregate walk-forward out-of-sample set (D-51 step 2).
@@ -11,8 +12,8 @@ import { annualizedSharpe, stationaryBootstrap } from "../src/research/stats.ts"
  * Every fixture here is built so the branch under test CHANGES THE ANSWER. That is not style: nine tests
  * across PRs #91-#93 passed against mutated code because their fixtures were uniform in the dimension the
  * code branches on. So the chain-link test uses returns whose sum and product disagree in SIGN, the
- * completeness test uses a pool that would otherwise reject, and the unmeasured-prong test uses one that
- * would too. Each assertion below fails if the guard it names is deleted.
+ * statistic test uses legs whose Sharpe difference and information ratio disagree in SIGN, the completeness
+ * test uses a pool that would otherwise reject, and the unmeasured-prong test uses one that would too.
  */
 
 function charter(mut: (c: Charter) => void = () => undefined): Charter {
@@ -25,7 +26,6 @@ function charter(mut: (c: Charter) => void = () => undefined): Charter {
 const RESAMPLES = 200;
 const SEED = 7;
 
-/** Sessions for a split, starting at `startDay` of January 2026 (the fixture calendar is irrelevant here). */
 function sessions(startDay: number, count: number): IsoDate[] {
   const out: IsoDate[] = [];
   for (let i = 0; i < count; i++) {
@@ -35,24 +35,31 @@ function sessions(startDay: number, count: number): IsoDate[] {
   return out;
 }
 
-function paired(ss: readonly IsoDate[], f: (i: number) => number): { session: IsoDate; value: number }[] {
-  return ss.map((session, i) => ({ session, value: f(i) }));
-}
+/** A pair of excess-over-cash legs: the strategy's and the primary benchmark's. */
+type Legs = { strategy: (i: number) => number; benchmark: (i: number) => number };
 
-/** Excess series with a clearly negative Sharpe: the primary prong fails on it. */
-const LOSING = (i: number): number => (i % 2 === 0 ? -0.002 : -0.004);
-/** Excess series with a clearly positive Sharpe well above the +0.10 threshold: the primary prong passes. */
-const WINNING = (i: number): number => (i % 2 === 0 ? 0.002 : 0.004);
+/** The strategy's Sharpe far BELOW the benchmark's: section 13's threshold test fails. */
+const LOSING: Legs = {
+  strategy: (i) => (i % 2 === 0 ? -0.004 : -0.002),
+  benchmark: (i) => (i % 2 === 0 ? 0.002 : 0.004),
+};
+
+/** The strategy's Sharpe far ABOVE the benchmark's: the threshold test clears (the prong is then withheld). */
+const CLEARING: Legs = { strategy: LOSING.benchmark, benchmark: LOSING.strategy };
+
+function inputs(ss: readonly IsoDate[], legs: Legs): SharpeInputPoint[] {
+  return ss.map((session, i) => ({ session, strategy: legs.strategy(i), benchmark: legs.benchmark(i) }));
+}
 
 type SplitOverrides = Partial<AggregateSplitInput>;
 
-function split(id: string, startDay: number, count: number, f: (i: number) => number, over: SplitOverrides = {}): AggregateSplitInput {
+function split(id: string, startDay: number, count: number, legs: Legs, over: SplitOverrides = {}): AggregateSplitInput {
   const ss = sessions(startDay, count);
   return {
     splitId: id,
     kind: "WALK_FORWARD",
     sessions: ss,
-    pairedExcess: paired(ss, f),
+    sharpeInputs: inputs(ss, legs),
     candidateTotalReturn: new Dec("0.10"),
     secondary2TotalReturn: new Dec("0.20"),
     secondary2UnusableReason: undefined,
@@ -62,6 +69,9 @@ function split(id: string, startDay: number, count: number, f: (i: number) => nu
     ...over,
   };
 }
+
+/** Secondary 2 beaten: the candidate out-returns it. */
+const BEATS_SECONDARY_2: SplitOverrides = { candidateTotalReturn: new Dec("0.30"), secondary2TotalReturn: new Dec("0.10") };
 
 function run(c: Charter, splits: readonly AggregateSplitInput[], planned?: readonly string[]) {
   return aggregateWalkForward({
@@ -95,36 +105,54 @@ describe("aggregateWalkForward: scope", () => {
   });
 
   it("refuses two splits that score the same session, rather than double-counting it", () => {
-    // splitPlan tiles the schedule without overlap, so an overlap here is a scheduler defect. Returning an
-    // "unmeasured" verdict for it would hide a bug behind a legitimate-looking outcome.
     const a = split("walk_forward/a", 2, 40, LOSING);
     const b = split("walk_forward/b", 30, 40, LOSING); // days 30..69 overlaps days 2..41
     expect(() => run(charter(SMALL_MINIMUM), [a, b], ["walk_forward/a", "walk_forward/b"])).toThrow(/both score/);
   });
 });
 
-describe("aggregateWalkForward: pooling", () => {
-  it("pools the splits in evaluation order and reports the window they span", () => {
-    const a = split("walk_forward/a", 2, 40, LOSING);
-    const b = split("walk_forward/b", 42, 40, LOSING);
-    // Deliberately out of order: the block bootstrap draws contiguous runs, so the sort is load-bearing.
-    const r = run(charter(SMALL_MINIMUM), [b, a]);
-    expect(r.splitIds).toEqual(["walk_forward/a", "walk_forward/b"]);
-    expect(r.sessions).toBe(80);
-    expect(r.window).toEqual({ start: sessions(2, 1)[0], end: sessions(42, 40)[39] });
-    expect(r.splitBoundaries).toBe(1);
-    expect(r.complete).toBe(true);
+describe("aggregateWalkForward: the registered statistic", () => {
+  // ALPHA_CHARTER section 13 registers "difference in after-cost annualized Sharpe ratio between the
+  // strategy and VTI total return". Until 2026-09-20 the code bootstrapped the Sharpe of the paired
+  // DIFFERENCE, which is the information ratio - `informationRatio` in benchmarks.ts is literally that same
+  // construction, so the report published one number twice under two names. Found by Codex on PR #94.
+  it("is a difference of Sharpe ratios, not the Sharpe of the difference", () => {
+    // Legs chosen so the two readings disagree in SIGN. The benchmark has a small mean and a tiny
+    // volatility, so its Sharpe is enormous; the strategy has a larger mean and a far larger volatility, so
+    // its Sharpe is small. The strategy still out-returns the benchmark session by session on average, so
+    // the information ratio is positive while the Sharpe difference is deeply negative.
+    const legs: Legs = {
+      strategy: (i) => (i % 2 === 0 ? -0.01 : 0.03),
+      benchmark: (i) => (i % 2 === 0 ? 0.0010 : 0.0012),
+    };
+    const s = split("walk_forward/a", 2, 60, legs);
+    const strategy = s.sharpeInputs.map((p) => p.strategy);
+    const benchmark = s.sharpeInputs.map((p) => p.benchmark);
+    const informationRatio = annualizedSharpe(strategy.map((v, i) => v - (benchmark[i] ?? 0)));
+    const sharpeDifference = annualizedSharpe(strategy) - annualizedSharpe(benchmark);
+
+    // The fixture is only worth anything if the two readings really do disagree in sign.
+    expect(informationRatio).toBeGreaterThan(0);
+    expect(sharpeDifference).toBeLessThan(0);
+
+    const r = run(charter(SMALL_MINIMUM), [s]);
+    expect(r.primaryMetric?.pointEstimate).toBe(sharpeDifference);
+    expect(r.primaryMetric?.pointEstimate).not.toBe(informationRatio);
+    // And the verdict follows the registered reading: the prong FAILED, so it is acted on rather than
+    // withheld, and with Secondary 2 also failing the aggregate rejects.
+    expect(r.primaryMetric?.clearsUndeflatedThreshold).toBe(false);
+    expect(r.primaryMetric?.passes).toBe(false);
+    expect(r.verdict).toBe("REJECT");
   });
 
-  it("bootstraps the concatenated series in session order, not per-split statistics", () => {
-    // The two splits have deliberately different distributions, so the pooled Sharpe is not the mean of the
-    // per-split Sharpes and the interval depends on which order they are concatenated in.
-    const a = split("walk_forward/a", 2, 60, () => 0.001);
-    const b = split("walk_forward/b", 64, 60, (i) => (i % 2 === 0 ? -0.002 : 0.004));
+  it("resamples both legs under one draw of block indices", () => {
+    const a = split("walk_forward/a", 2, 60, LOSING);
+    const b = split("walk_forward/b", 64, 60, CLEARING);
     const r = run(charter(SMALL_MINIMUM), [b, a]);
 
-    const concat = [...a.pairedExcess.map((p) => p.value), ...b.pairedExcess.map((p) => p.value)];
-    const reference = stationaryBootstrap(concat, annualizedSharpe, {
+    const strategy = [...a.sharpeInputs, ...b.sharpeInputs].map((p) => p.strategy);
+    const benchmark = [...a.sharpeInputs, ...b.sharpeInputs].map((p) => p.benchmark);
+    const reference = stationaryBootstrapPaired(strategy, benchmark, annualizedSharpeDifference, {
       meanBlockSessions: 21,
       confidence: 0.9,
       resamples: RESAMPLES,
@@ -135,15 +163,14 @@ describe("aggregateWalkForward: pooling", () => {
     expect(r.primaryMetric?.interval.upper).toBe(reference.upper);
     expect(r.primaryMetric?.observations).toBe(120);
 
-    // Not a per-split average: the pooled statistic differs from the mean of the two split Sharpes.
-    const perSplit = [a, b].map((s) => annualizedSharpe(s.pairedExcess.map((p) => p.value)));
-    const meanOfSplits = ((perSplit[0] ?? 0) + (perSplit[1] ?? 0)) / 2;
+    // Pooled, not averaged: the statistic over the concatenation is not the mean of the two split statistics.
+    const perSplit = [a, b].map((s) => annualizedSharpeDifference(s.sharpeInputs.map((p) => p.strategy), s.sharpeInputs.map((p) => p.benchmark)));
     expect(perSplit[0]).not.toBe(perSplit[1]);
-    expect(r.primaryMetric?.pointEstimate).not.toBe(meanOfSplits);
+    expect(r.primaryMetric?.pointEstimate).not.toBe(((perSplit[0] ?? 0) + (perSplit[1] ?? 0)) / 2);
 
-    // And the order the splits were pooled in is the one that produced the interval: reversing the
-    // concatenation changes it, so sorting by evaluation window is not cosmetic.
-    const reversed = stationaryBootstrap([...concat].reverse(), annualizedSharpe, {
+    // And in evaluation order: the block bootstrap draws contiguous runs, so reversing the concatenation
+    // changes the interval. Sorting the splits by window is doing work, not decoration.
+    const reversed = stationaryBootstrapPaired([...strategy].reverse(), [...benchmark].reverse(), annualizedSharpeDifference, {
       meanBlockSessions: 21,
       confidence: 0.9,
       resamples: RESAMPLES,
@@ -151,9 +178,22 @@ describe("aggregateWalkForward: pooling", () => {
     });
     expect(reversed.lower === reference.lower && reversed.upper === reference.upper).toBe(false);
   });
+});
+
+describe("aggregateWalkForward: pooling", () => {
+  it("pools the splits in evaluation order and reports the window they span", () => {
+    const a = split("walk_forward/a", 2, 40, LOSING);
+    const b = split("walk_forward/b", 42, 40, LOSING);
+    const r = run(charter(SMALL_MINIMUM), [b, a]); // deliberately out of order
+    expect(r.splitIds).toEqual(["walk_forward/a", "walk_forward/b"]);
+    expect(r.sessions).toBe(80);
+    expect(r.window).toEqual({ start: sessions(2, 1)[0], end: sessions(42, 40)[39] });
+    expect(r.splitBoundaries).toBe(1);
+    expect(r.complete).toBe(true);
+  });
 
   it("links the per-split returns instead of adding them", () => {
-    // Chosen so the two aggregation rules disagree in SIGN, which is the whole point of the fixture:
+    // Chosen so the two aggregation rules disagree in SIGN:
     //   linked:  candidate 1.50 x 1.50 - 1 = +1.25   Secondary 2  2.00 x 1.10 - 1 = +1.20   excess +0.05
     //   summed:  candidate 0.50 + 0.50   = +1.00     Secondary 2  1.00 + 0.10   = +1.10     excess -0.10
     // So a summing implementation rejects the hypothesis where a linking one routes it to owner review.
@@ -170,44 +210,55 @@ describe("aggregateWalkForward: pooling", () => {
 
 describe("aggregateWalkForward: section 16.1", () => {
   it("rejects only when both prongs are measured and both fail, over the whole schedule", () => {
-    const a = split("walk_forward/a", 2, 40, LOSING);
-    const b = split("walk_forward/b", 42, 40, LOSING);
-    const r = run(charter(SMALL_MINIMUM), [a, b]);
+    const r = run(charter(SMALL_MINIMUM), [split("walk_forward/a", 2, 40, LOSING), split("walk_forward/b", 42, 40, LOSING)]);
     expect(r.primaryMetric?.passes).toBe(false);
     expect(r.secondary2?.beats).toBe(false);
     expect(r.verdict).toBe("REJECT");
     expect(r.charterConflict).toBeUndefined();
   });
 
-  it("routes to owner review when the primary metric passes", () => {
-    // Secondary 2 still wins on return, so only the first prong passes. Under a conjunction this would
-    // reject; section 16.1 says "if either passes".
-    const a = split("walk_forward/a", 2, 40, WINNING);
-    const b = split("walk_forward/b", 42, 40, WINNING);
-    const r = run(charter(SMALL_MINIMUM), [a, b]);
-    expect(r.primaryMetric?.passes).toBe(true);
+  // Codex P1 on PR #94: a pass on the unadjusted statistic is not a registered pass, and recording the gap
+  // in `evidenceCaveats` does not stop a consumer acting on the concrete verdict.
+  it("withholds a passing first prong until the deflated-Sharpe adjustment is applied", () => {
+    const r = run(charter(SMALL_MINIMUM), [split("walk_forward/a", 2, 40, CLEARING), split("walk_forward/b", 42, 40, CLEARING)]);
+    // The threshold test itself clears - that is what makes this the case under test rather than a failure.
+    expect(r.primaryMetric?.clearsUndeflatedThreshold).toBe(true);
+    expect(r.primaryMetric?.pointEstimate).toBeGreaterThanOrEqual(r.primaryMetric?.threshold ?? 0);
+    expect(r.primaryMetric?.interval.excludesZero).toBe(true);
+    // ...and it is still not a pass, so no section 16.1 outcome follows from it.
+    expect(r.primaryMetric?.passes).toBeUndefined();
+    expect(r.primaryMetric?.deflatedSharpeApplied).toBe(false);
     expect(r.secondary2?.beats).toBe(false);
+    expect(r.verdict).toBe("UNMEASURED");
+    expect(r.verdictReasons.join(" ")).toContain("An undeflated pass is not a registered pass");
+  });
+
+  it("still reaches owner review when Secondary 2 is beaten, whatever the withheld first prong would say", () => {
+    // Section 16.1 asks whether EITHER prong passed, so a beaten Secondary 2 settles it on its own. The
+    // first prong being unknown does not make the disjunction unknown.
+    const r = run(charter(SMALL_MINIMUM), [
+      split("walk_forward/a", 2, 40, CLEARING, BEATS_SECONDARY_2),
+      split("walk_forward/b", 42, 40, CLEARING, BEATS_SECONDARY_2),
+    ]);
+    expect(r.primaryMetric?.passes).toBeUndefined();
+    expect(r.secondary2?.beats).toBe(true);
     expect(r.verdict).toBe("OWNER_REVIEW");
-    // Sections 16.1 and 17 agree here: the metric passed, so section 17 does not bar promotion.
+    // Not the sections 16.1/17 conflict: that needs the metric to have FAILED, and here it is unknown.
     expect(r.charterConflict).toBeUndefined();
   });
 
   it("surfaces the sections 16.1 / 17 conflict when the metric fails and Secondary 2 is beaten", () => {
-    const over = { candidateTotalReturn: new Dec("0.30"), secondary2TotalReturn: new Dec("0.10") };
-    const a = split("walk_forward/a", 2, 40, LOSING, over);
-    const b = split("walk_forward/b", 42, 40, LOSING, over);
-    const r = run(charter(SMALL_MINIMUM), [a, b]);
+    const r = run(charter(SMALL_MINIMUM), [
+      split("walk_forward/a", 2, 40, LOSING, BEATS_SECONDARY_2),
+      split("walk_forward/b", 42, 40, LOSING, BEATS_SECONDARY_2),
+    ]);
     expect(r.primaryMetric?.passes).toBe(false);
     expect(r.secondary2?.beats).toBe(true);
     expect(r.verdict).toBe("OWNER_REVIEW");
-    expect(r.charterConflict).toBeDefined();
     expect(r.charterConflict).toContain("never to ACTIVE");
-    expect(r.charterConflict).toContain("owner");
   });
 
   it("emits no verdict from part of the schedule, even when both prongs fail", () => {
-    // Same data as the rejection above, with one scheduled window absent. A verdict here would be decided by
-    // which `--split` the operator passed.
     const a = split("walk_forward/a", 2, 40, LOSING);
     const b = split("walk_forward/b", 42, 40, LOSING);
     const r = run(charter(SMALL_MINIMUM), [a, b], ["walk_forward/a", "walk_forward/b", "walk_forward/c"]);
@@ -221,8 +272,8 @@ describe("aggregateWalkForward: section 16.1", () => {
   });
 
   it("leaves the second prong unmeasured when one split has no usable Secondary 2, and does not reject", () => {
-    // The first prong fails, so an implementation that read an absent comparator as "does not beat" - or
-    // substituted zero for it - would emit a section 16.1 rejection here.
+    // The first prong FAILS here, so an implementation that read an absent comparator as "does not beat" -
+    // or substituted zero for it - would emit a section 16.1 rejection.
     const a = split("walk_forward/a", 2, 40, LOSING);
     const b = split("walk_forward/b", 42, 40, LOSING, {
       secondary2TotalReturn: undefined,
@@ -234,13 +285,13 @@ describe("aggregateWalkForward: section 16.1", () => {
     expect(r.primaryMetric?.passes).toBe(false);
     expect(r.verdict).toBe("UNMEASURED");
     expect(r.verdictReasons.join(" ")).toContain("absence is not failure");
+    expect(r.verdictReasons.join(" ")).toContain("it is not established that BOTH failed");
   });
 
   it("leaves the first prong unmeasured rather than bootstrapping a padded series", () => {
     // buildResultReport pads a short series with [0, 0] to keep the per-split diagnostic shaped correctly.
-    // A decisive verdict may not rest on a fabricated interval, so the aggregate reports nothing instead.
-    const one = split("walk_forward/a", 2, 1, LOSING);
-    const r = run(charter(SMALL_MINIMUM), [one]);
+    // A decisive verdict may not rest on a fabricated interval.
+    const r = run(charter(SMALL_MINIMUM), [split("walk_forward/a", 2, 1, LOSING)]);
     expect(r.primaryMetric).toBeUndefined();
     expect(r.secondary2?.beats).toBe(false);
     expect(r.verdict).toBe("UNMEASURED");
@@ -249,12 +300,12 @@ describe("aggregateWalkForward: section 16.1", () => {
 });
 
 describe("aggregateWalkForward: what the numbers may be read as", () => {
-  it("states that the registered deflated-Sharpe adjustment is not applied, and which way it biases", () => {
+  it("states that the registered deflated-Sharpe adjustment is not applied, and which way it cuts", () => {
     const r = run(charter(SMALL_MINIMUM), [split("walk_forward/a", 2, 40, LOSING), split("walk_forward/b", 42, 40, LOSING)]);
     expect(r.primaryMetric?.deflatedSharpeApplied).toBe(false);
     const caveats = r.evidenceCaveats.join(" ");
     expect(caveats).toContain("deflated-Sharpe");
-    expect(caveats).toContain("away from rejection");
+    expect(caveats).toContain("can take a pass away and can never grant one");
   });
 
   it("carries Secondary 2's open owner readings only when the second prong is measured", () => {
@@ -277,7 +328,6 @@ describe("aggregateWalkForward: what the numbers may be read as", () => {
   });
 
   it("compares the pooled independent-decision count against the charter's own minimum, both ways", () => {
-    // 80 sessions is 3 monthly-equivalent blocks.
     const splits = [split("walk_forward/a", 2, 40, LOSING), split("walk_forward/b", 42, 40, LOSING)];
     const met = run(charter((c) => (c.pass_fail.minimum_independent_decisions = 3)), splits);
     expect(met.independentDecisions).toBe(3);
@@ -302,7 +352,7 @@ describe("aggregateWalkForward: what the numbers may be read as", () => {
     expect(r.citableAsEvidence).toBe(false);
     expect(r.citabilityReasons).toEqual(["walk_forward/a: UNVERIFIED_SINGLE_SOURCE bars"]);
     expect(r.promotionBlockingCodes).toEqual(["SYNTHETIC_MISSING_DATA", "UNVERIFIED_SINGLE_SOURCE"]);
-    // Citability is about the data, not about the arithmetic: the verdict is still computed and reported.
+    // Citability is about the data, not the arithmetic: the verdict is still computed and reported.
     expect(r.verdict).toBe("REJECT");
   });
 });
@@ -315,8 +365,6 @@ describe("aggregateWalkForward: hash", () => {
   });
 
   it("separates an unmeasured verdict from a measured rejection", () => {
-    // The robustness verdict hash learned this the hard way: leave the tri-state out of the body and a
-    // withheld prong and a measured failure become indistinguishable in persisted evidence.
     const a = split("walk_forward/a", 2, 40, LOSING);
     const rejected = run(charter(SMALL_MINIMUM), [a, split("walk_forward/b", 42, 40, LOSING)]);
     const unmeasured = run(charter(SMALL_MINIMUM), [
@@ -326,5 +374,41 @@ describe("aggregateWalkForward: hash", () => {
     expect(rejected.verdict).toBe("REJECT");
     expect(unmeasured.verdict).toBe("UNMEASURED");
     expect(rejected.aggregateHash).not.toBe(unmeasured.aggregateHash);
+  });
+
+  it("separates a withheld first prong from a failed one", () => {
+    // These two runs agree on EVERYTHING else the body carries - same splits, same sessions, same point
+    // estimate and interval, same second prong, same OWNER_REVIEW verdict. Only the threshold differs, so
+    // only the prong's tri-state differs. An earlier version of this test used fixtures that also differed
+    // in the second prong, so it passed against a body with the tri-state removed: it was proving something
+    // other than what it claimed.
+    //
+    // The distinction is not bookkeeping. The failed-prong run is the case sections 16.1 and 17 disagree
+    // on; the withheld one is not. Two verdicts that route the charter differently must not share a hash.
+    const splits = [split("walk_forward/a", 2, 40, CLEARING, BEATS_SECONDARY_2), split("walk_forward/b", 42, 40, CLEARING, BEATS_SECONDARY_2)];
+    const withheld = run(charter(SMALL_MINIMUM), splits);
+    const failed = run(
+      charter((c) => {
+        SMALL_MINIMUM(c);
+        // Unreachably high, so the same interval fails the threshold test instead of clearing it.
+        c.pass_fail.primary_threshold = "1000000";
+      }),
+      splits,
+    );
+
+    expect(withheld.primaryMetric?.passes).toBeUndefined();
+    expect(failed.primaryMetric?.passes).toBe(false);
+    expect(withheld.verdict).toBe("OWNER_REVIEW");
+    expect(failed.verdict).toBe("OWNER_REVIEW");
+    // Everything else the hashed body reads is identical...
+    expect(failed.primaryMetric?.pointEstimate).toBe(withheld.primaryMetric?.pointEstimate);
+    expect(failed.primaryMetric?.interval.lower).toBe(withheld.primaryMetric?.interval.lower);
+    expect(failed.primaryMetric?.interval.upper).toBe(withheld.primaryMetric?.interval.upper);
+    expect(failed.secondary2).toEqual(withheld.secondary2);
+    expect(failed.splitIds).toEqual(withheld.splitIds);
+    // ...and only one of them is the sections 16.1 / 17 conflict.
+    expect(withheld.charterConflict).toBeUndefined();
+    expect(failed.charterConflict).toBeDefined();
+    expect(withheld.aggregateHash).not.toBe(failed.aggregateHash);
   });
 });

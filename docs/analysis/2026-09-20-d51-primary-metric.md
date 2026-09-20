@@ -8,6 +8,10 @@ D-51 asks whether `net_sharpe_difference_vs_primary_benchmark` is the right *pri
 strategy whose stated thesis is drawdown reduction. Reading the charter and the code against each other
 changes the question. The short version:
 
+0. **Every primary-metric number below is superseded (2026-09-20).** The code computed an INFORMATION RATIO
+   under the registered metric's name; §13 registers a **difference of Sharpe ratios**. The −0.19 quoted
+   throughout this note is therefore an information ratio, not the primary metric. Fixed in PR #94 (§2f);
+   the corrected statistic has not been run on real data, so the direction of the change is unknown.
 1. The charter **already** values drawdown, in two places D-51 does not mention.
 2. The charter's **decisive** falsifier is a conjunction, and only one half of it has ever been computed.
 3. `research evaluate` — the command that produced the evidence — **dropped every number except the primary
@@ -250,6 +254,101 @@ the hypothesis exactly where a linking one routes it to owner review.
 **What is still not done.** None of this has been run on real data — that needs the Pi's store, and the runs
 there remain `UNVERIFIED_SINGLE_SOURCE` until reconciled corporate actions are curated. Step 3, the metric
 question itself, is unchanged and is the owner's.
+
+## 2f. The primary metric was the wrong statistic, and an unadjusted pass was being published (2026-09-20)
+
+Both found by Codex on PR #94, both fixed there. The first invalidates every primary-metric number in this
+note.
+
+### The metric was an information ratio
+
+§13: *"difference in after-cost annualized **Sharpe ratio** between the strategy and VTI total return"*. The
+registered id is `net_sharpe_difference_vs_primary_benchmark`. What the code bootstrapped was:
+
+```ts
+annualizedSharpe(candidateReturns - benchmarkReturns)   // the Sharpe of the difference
+```
+
+which is the **information ratio**, not the difference of Sharpe ratios. The repository states this itself,
+in the module the report imports from:
+
+```ts
+// packages/core/src/research/benchmarks.ts
+export function informationRatio(strategy, benchmark) { return sharpe(strategy, benchmark); }
+```
+
+`sharpe(a, b)` is `mean(a − b) / sd(a − b)`, annualized — the same construction. So `armMetrics` was already
+publishing this very number as `informationRatioVsPrimary`, correctly named, right beside the promotion gate
+that was the same number. **One statistic, two names, one of them wrong, and nothing in the test suite
+noticed** — the report tests pinned the interval's shape and the threshold, never the statistic.
+
+| | Formula | What it measures |
+|---|---|---|
+| **Registered (§13)** | `Sharpe(strategy) − Sharpe(VTI)`, each in excess of cash | Does the strategy have a better risk-adjusted return than VTI? |
+| **What ran until 2026-09-20** | `Sharpe(strategy − VTI)` | Does the strategy beat VTI consistently, relative to tracking error? |
+
+They disagree in magnitude and in **sign** whenever the legs differ in volatility or are imperfectly
+correlated — which is the whole premise of a volatility-targeted strategy. A low-volatility strategy that
+tracks VTI closely can post a strong information ratio and a negative Sharpe difference, or the reverse.
+
+**The fix.** Both legs are now taken in excess of the cash leg (a Sharpe ratio is against the risk-free leg,
+which `armMetrics.sharpeVsCash` already used), their Sharpe ratios are computed separately, and the
+difference is bootstrapped with `stationaryBootstrapPaired`: **one** draw of block indices applied to both
+legs, so session *t* of the strategy stays paired with session *t* of the benchmark. Breaking the pairing
+would report the interval of two independent arms, which the protocol forbids. `REPORT_VERSION` 4 → 5,
+because a v4 point estimate and a v5 one are different statistics and must never be compared.
+
+**This note's −0.19 was an information ratio.** So were the numbers in the 2026-09-13 machinery check. The
+corrected statistic has not been run on anything but synthetic fixtures, so **which way it moves is
+unknown**, and was unknown when the fix was made. That ordering is what separates this from metric-shopping:
+it implements the metric the charter registered, exactly as the Secondary 2 work did, rather than selecting
+one after seeing a result.
+
+### An undeflated pass was being published as a pass
+
+§13's metric also carries "a deflated-Sharpe adjustment for the registered trial count (§15)", and §15 is
+concrete: *"Deflated Sharpe ratio is computed with N = 72 trials and the observed cross-trial variance."* One
+evaluation run produces neither, so the adjustment is not applied. The first version of the aggregate
+recorded that in `evidenceCaveats` and still emitted `passes: true` — leaving a consumer free to act on a
+concrete verdict the missing adjustment might reverse. That is the Secondary 2 gate's first failure again: a
+warning that depends on being read, guarding a number that does not depend on being read.
+
+The prong is now **tri-state**, and the asymmetry is the substance:
+
+- **`false`** when the threshold test fails. Sound without the adjustment: §15 computes the deflated Sharpe
+  against the expected maximum over 72 trials, and under either reading of how it enters the pass rule (an
+  extra test, or a deflated estimate substituted into the threshold) it can only ever *add* a hurdle. A
+  failure stays a failure once the grid statistics exist, so §16.1 may act on it and **REJECT stays
+  reachable** — which matters, since REJECT is the outcome that does not flatter the strategy.
+- **`undefined`** when the threshold test clears. An undeflated pass is not a registered pass.
+- **`true`** unreachable until F5's grid sweep wires the adjustment.
+
+§16.1 is correspondingly evaluated in **three-valued logic**: either prong passing gives owner review
+(determinate even when the other prong is unknown, because §16.1 asks only whether *either* passed); both
+prongs known to have failed gives rejection; anything else is undetermined. Collapsing unknown into either
+branch is the error this thread keeps rediscovering — it is the same mistake as treating an absent Secondary 2
+as "does not beat".
+
+### What the tests learned
+
+Nine mutations against the new guards, no survivors — but **two survived the first pass**, and both were
+tests proving something other than what they claimed:
+
+- The paired-bootstrap test compared the result against `stationaryBootstrapPaired` itself, so mutating the
+  function mutated the reference too. Replaced with an invariant that cannot be self-satisfied: resample a
+  series against **itself** under a statistic that is identically zero on equal inputs. A shared draw makes
+  every resample see `sampleA === sampleB`, so the interval collapses to exactly `[0, 0]`; independent draws
+  open it up. Nothing but the shared draw produces a degenerate interval.
+- The hash test's two fixtures differed in the *second* prong as well as the first, so it passed against a
+  hashed body with the tri-state stripped out. Replaced with two runs that differ **only** in the threshold —
+  identical point estimate, interval, second prong and verdict — one of which is the §16.1/§17 conflict case
+  and one of which is not.
+
+One more fixture defect surfaced on the way: `research-report.test.ts` built its benchmark and cash series
+with **constant** per-session growth, i.e. zero volatility, which makes every Sharpe taken against them
+degenerate and every assertion about a Sharpe difference vacuous. The benchmark now carries deterministic
+jitter. Same shape as the nine vacuous tests of PRs #91-#93: a fixture uniform in the dimension the code
+branches on.
 
 ## 2b. §16.1 is an aggregate verdict, not a per-split one
 
