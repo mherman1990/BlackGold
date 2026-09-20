@@ -49,10 +49,10 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-41 | Phase 3 authorized (Matt, 2026-09-07, ordering "2 → 1 → 3"). Built as the provider-agnostic analyst pipeline and its safety surface, tested with a deterministic stub; the real Anthropic adapter, the POST egress change, and live CR-11/12/13 re-verification are a separate follow-up PR needing an API key | Accepted 2026-09-07 by Matt | Provider wiring, call/budget persistence, and prospective C1/D1 backtest wiring remain (credentials / Phase 5) |
 | D-42 | The Anthropic model adapter (raw `fetch`, no SDK) as its own PR: a second egress module `packages/core/src/model/provider-http.ts` is the only outbound POST and the only reference to `api.anthropic.com`; `live-disabled.test.ts` is updated to allow exactly that while trading hosts stay forbidden and `data/http.ts` stays POST-free. The key is passed in from the environment, never in git, code, or the image | Accepted 2026-09-07 by Matt ("keep building… put the key in when things are connected") | Live CR-12/CR-13 verification against the real API is Matt's one run on the Pi; call/budget persistence and C1/D1 wiring still Phase 5 |
 | D-49 | Corporate actions may be ingested automatically from Tiingo's daily-prices feed (`divCash`/`splitFactor`), flagged `UNVERIFIED_SINGLE_SOURCE`: usable for research and decisions, never promotion evidence. Amends D-29's "vendored file until a feed is verified" to add a single-source automated path alongside it; the operator-curated, ≥2-source reconciled vendored file stays the only promotion-eligible corporate-action source | Accepted 2026-09-12 by Matt ("Item 3, use A") | - |
-| D-50 | Adopt Tiingo (`tiingo.eod.bars.1d`) as the strategy's market-data source, revising OD-4 and cutting `charter_version` 0.2.0 — a new strategy version that does not inherit 0.1.0's evidence. Prepared as a DRAFT charter (`strategies/etf-trend-vol/charter.yaml`); the owner signs the approval block to accept | **Proposed** 2026-09-12 by Claude Code (owner to sign) | etf-trend-vol registration on 0.2.0 |
+| D-50 | Adopt Tiingo (`tiingo.eod.bars.1d`) as the strategy's market-data source, revising OD-4 and cutting `charter_version` 0.2.0 — a new strategy version that does not inherit 0.1.0's evidence | **Accepted** 2026-09-12 by Matt, who signed the 0.2.0 approval block himself (`06515d7`, `6019e08`, `2a960e5`; `code_commit 115dae4`) | - |
 | D-51 | Reconsider the etf-trend-vol primary promotion metric: `net_sharpe_difference_vs_primary_benchmark` is nearly blind to the tail, but the strategy's thesis is drawdown reduction. Consider a Calmar/MAR- or Sortino-based gate, or an explicit max-drawdown constraint alongside the Sharpe test. Raised from the 2026-09-13 single-source machinery check (non-evidential). Any change is a new charter version | **Proposed** 2026-09-13 by Claude Code (owner to decide) | etf-trend-vol promotion criteria (charter version) |
 | D-52 | Optional file-based secrets fallback: `config/load.ts` reads a dotenv `${dataDir}/secrets.env` for a closed allowlist of credential keys (the data-source keys + `ANTHROPIC_API_KEY`) when the environment leaves them empty, because umbrelOS 1.x does not inject the app-data `.env` into the container while the data volume is reliably mounted. Environment always wins; the file can never set MODE, the sleeve role, or any behavioural config, so it cannot enable a live path | **Proposed** 2026-09-13 by Claude Code (owner to accept). Amended 0.1.12 (2026-09-13) to admit the two opt-in auto-ingest switches | unattended/autonomous ingest and the analyst key under the umbrelOS env gap |
-| D-53 | Build the paper/shadow track toward live as bounded per-rung PRs (docs/AUTOMATION_AND_LIVE_GATES.md): (1) the sealed prospective decision record + append-only ledger + SHADOW/PAPER mode guard; (2) the shadow decision loop — 2a the pure per-arm target book, 2b the pure gate-and-seal function, 2c the mode-gated `after_close` job; (3) counterfactual fills + reconciler; (4) the Alpaca **paper** broker adapter + order lifecycle. Building the machinery does not climb the ladder: Rung-2 shadow **evidence** still cannot precede the Rung-1 experiment, and a strategy still has to pass its own gate (D-51). No live mode, `LIVE_AUTHORIZATION`, or broker credential is added by any slice; slice 4 needs the owner's paper keys and the D-12 sleeve decision | **Proposed** 2026-09-14 by Claude Code (owner chose the paper/shadow track this session) | prospective decision loop; PAPER rung needs paper Alpaca keys + D-12 |
+| D-53 | (Slices 1, 2a, 2b, 3a-1 and both halves of 3a-2 merged as PRs #81, #82, #83, #85, #86, #87; 3a-3, 2c, 3b and 4 remain.) Build the paper/shadow track toward live as bounded per-rung PRs (docs/AUTOMATION_AND_LIVE_GATES.md): (1) the sealed prospective decision record + append-only ledger + SHADOW/PAPER mode guard; (2) the shadow decision loop — 2a the pure per-arm target book, 2b the pure gate-and-seal function, 2c the mode-gated `after_close` job; (3) counterfactual fills + reconciler; (4) the Alpaca **paper** broker adapter + order lifecycle. Building the machinery does not climb the ladder: Rung-2 shadow **evidence** still cannot precede the Rung-1 experiment, and a strategy still has to pass its own gate (D-51). No live mode, `LIVE_AUTHORIZATION`, or broker credential is added by any slice; slice 4 needs the owner's paper keys and the D-12 sleeve decision | **Proposed** 2026-09-14 by Claude Code (owner chose the paper/shadow track this session) | prospective decision loop; PAPER rung needs paper Alpaca keys + D-12 |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -764,9 +764,11 @@ token-in-header/scrubbing, TR consumption, CLI).
 
 ## D-50 Adopt Tiingo as the strategy's market-data source (charter 0.2.0)
 
-**Status:** **Proposed** 2026-09-12 by Claude Code. Accepted only when the owner signs the 0.2.0 charter's
-approval block — that signature is the decision, and the carve-out ("What standing authorization never covers"
-in CLAUDE.md) means Claude Code prepared this but must not sign it.
+**Status:** **Accepted** 2026-09-12 by Matt, who signed the 0.2.0 charter's approval block himself in three
+commits from his own GitHub account (`06515d7`, `6019e08`, `2a960e5`), against `code_commit 115dae4`. That
+signature *is* the decision: the carve-out ("What standing authorization never covers" in CLAUDE.md) means
+Claude Code prepared the version and must not sign it. `charter show --path strategies/etf-trend-vol/charter.yaml`
+now reports `charterVersion 0.2.0`, `approvalState: APPROVED`, `registrable: true`, `reasons: []`.
 
 **Context.** OD-4 at 0.1.0 approved Alpaca's free IEX feed (D-39). That feed only reaches ~2018, so the
 charter's registered design window (2007-06-01..2018-12-31) cannot be run on it — the strategic blocker to a
@@ -794,6 +796,14 @@ processing-delay entry (`packages/core/src/data/pit/repository.ts` — Tiingo ba
 runtime source therefore switches together with the signed charter. The only red before signing is the tripwire;
 on signing it goes fully green and ships in the next release (0.1.7). Until 0.2.0 is signed, the strategy still
 runs on 0.1.0 (Alpaca); `research coverage --source` already reads Tiingo without a charter change.
+
+**What happened.** The owner signed on 2026-09-12 and the tripwire went green, so the strategy now runs on 0.2.0
+with Tiingo as its default bar source. The charter file's own banner went on claiming `DRAFT — AWAITING OWNER
+SIGNATURE` directly above the signature it described. The correction was written on 2026-09-14 but no PR was
+opened for it, so it sat on an unmerged branch (`claude/busy-meitner-as415q`, `7e30599`) while the misleading
+banner stayed on `main` for a further six days; it is carried forward and merged 2026-09-20 in the same PR as
+this note. `charterHash` is computed over the canonical JSON of the *parsed* charter, so no comment edit can alter
+the signed hash (`sha256:5c7f94da…`, unchanged across that correction).
 
 ---
 
@@ -836,6 +846,14 @@ Code may raise this with reasoning and may not decide it.
 
 **Status:** Proposed 2026-09-13 by Claude Code. Matt accepts by merging the PR; he may reject or ask for the
 umbrelOS-native env approach instead.
+
+**Still formally open, though the code is live (noted 2026-09-14, restated 2026-09-20).** The acceptance mechanism above assumed the
+owner would merge. In practice the PRs were merged under D-37's standing authority, so the fallback shipped in
+0.1.11 and its allowlist amendment in 0.1.12 without the owner's act that this decision names as acceptance. The
+gap is recorded rather than closed: Claude Code merging its own PR is not the owner accepting a decision, and
+marking this Accepted on that basis would make the distinction meaningless. Matt confirms, amends, or reverses
+it; until then the register reads Proposed while the code runs. The same caution applies to D-40 and D-53, which
+have been Proposed since 2026-09-07 and 2026-09-14 respectively.
 
 **Why.** On umbrelOS 1.x the app runs under the legacy-compat shim and the app-data `.env`
 (`~/umbrel/app-data/blackgold-trading/.env`) is not injected into the container, so every `ingest` on the Pi

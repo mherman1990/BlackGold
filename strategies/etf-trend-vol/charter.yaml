@@ -1,18 +1,22 @@
 # Machine-readable companion to ALPHA_CHARTER.md. The prose charter is the specification a human reads;
 # this file is the only form the code executes.
 #
-# STATUS: DRAFT (charter_version 0.2.0) - AWAITING OWNER SIGNATURE. The 0.1.0 charter was owner-signed on
-# 2026-09-08 (D-48); this 0.2.0 draft revises OD-4 to adopt Tiingo EOD daily bars (tiingo.eod.bars.1d) as the
-# strategy's market-data source, replacing the Alpaca IEX feed. Adopting a new data source is a data-transform
+# STATUS: APPROVED (charter_version 0.2.0) - owner-signed 2026-09-12 against code_commit 115dae4 (D-50).
+# The approval block below is the signature; this banner only describes it. 0.2.0 revised OD-4 to adopt Tiingo
+# EOD daily bars (tiingo.eod.bars.1d) in place of the Alpaca IEX feed, because the charter's registered design
+# window opens in 2007 and the Alpaca IEX feed only reaches ~2018. Adopting a new data source is a data-transform
 # change and therefore a NEW STRATEGY VERSION (CLAUDE.md versioning rule): 0.2.0 does NOT inherit 0.1.0's
-# evidence. `assertRegistrable` (packages/core/src/strategy/charter.ts) refuses this charter until the approval
-# block below is signed - state APPROVED with approved_by/approval_date/code_commit filled - which is the
-# OWNER's act (the carve-out in CLAUDE.md: Claude Code prepared this draft but must not sign it). The
-# strategy-charter tripwire test intentionally fails until then; that red is the gate working, not a bug. This
-# PR is ATOMIC: it already carries the DEFAULT_BARS_SOURCE_ID flip to tiingo.eod.bars.1d, the tiingo processing-
-# delay entry, and the consequent test/prose updates, so the runtime source switches together with the signed
-# charter - never a window where a 0.2.0-labelled run reads the old Alpaca feed (a Codex P1 on PR #57;
-# docs/DECISIONS.md#D-50). A registered result still needs ingested market data.
+# evidence, so any registered result on this version is fresh. The runtime source flip shipped atomically with
+# the signature (DEFAULT_BARS_SOURCE_ID plus the tiingo. processing-delay entry, a Codex P1 on PR #57), so there
+# was never a window in which a 0.2.0-labelled run read the old Alpaca feed.
+#
+# `assertRegistrable` (packages/core/src/strategy/charter.ts) reads the approval block, not this comment, and
+# reports registrable: true for this file. Filling that block is the OWNER's act and always is: Claude Code
+# prepares a charter version and must never sign it (the carve-out in CLAUDE.md). A future version starts at
+# DRAFT again, and the strategy-charter tripwire test failing on an unsigned charter is the gate working.
+#
+# Comments here are not hash-covered: charterHash is sha256 over the canonical JSON of the PARSED charter
+# (charter.ts), so editing this banner cannot alter the signed hash sha256:5c7f94da....
 
 strategy_id: etf-trend-vol
 charter_version: 0.2.0
@@ -21,12 +25,12 @@ runtime_llm_in_signal: false
 arms: [B0_PASSIVE, B1_DETERMINISTIC]
 
 approval:
-  # OWNER SIGNATURE REQUIRED to make this 0.2.0 charter registrable. To sign: set `state` to APPROVED and fill
-  # `approved_by`, `approval_date`, and `code_commit`. Claude Code must not fill these (CLAUDE.md carve-out).
+  # SIGNED by the owner on 2026-09-12 (D-50). For any future charter version, to sign: set `state` to APPROVED
+  # and fill `approved_by`, `approval_date`, `code_commit`. Claude Code must not fill these (CLAUDE.md carve-out).
   state: APPROVED
-  approved_by: Matt Herman       # e.g. "Matt Herman"
-  approval_date: 2026-09-12     # e.g. "2026-09-12"
-  code_commit: 115dae4       # the commit you sign against
+  approved_by: Matt Herman
+  approval_date: 2026-09-12
+  code_commit: 115dae4
   approval_ref: "docs/DECISIONS.md#D-50"
   decision_refs: [D-08, D-09, D-10, D-15, D-19, D-24, D-50]
   conditions: []

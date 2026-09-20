@@ -152,10 +152,12 @@ charter/policy decision.
 
 - Set `main` as the **default branch**; add a ruleset requiring a PR, status
   checks (`checks`, `image`), no force pushes.
-- **Delete three stale branches** — `claude/phase-00-foundation`,
-  `claude/black-gold-trading-tool-n713ly`, `claude/phase-01-research-kernel`.
-  Verified to carry zero non-merge commits absent from `main`. This session's
-  credential is refused ref *deletion* (HTTP 403); there is no workaround.
+- **Prune the stale branches.** Not three, as `STATE.md` said — **79**. Verified
+  2026-09-20: **39 are strict ancestors of `origin/main`** and are unambiguously
+  safe to delete. The other 40 predate merges that rewrote SHAs, so ancestry,
+  `git cherry` and subject matching all over-report; each needs a content check
+  nobody has done. This session's credential is refused ref *deletion* (HTTP
+  403); there is no workaround.
 - **Resolve the `v*` tag contradiction.** D-37 grants Claude Code tag creation;
   the credential is refused tag refs. Today the refusal is doing the work of a
   policy nobody wrote. Either amend D-37 to drop tag creation (releases wait on
@@ -183,7 +185,7 @@ charter/policy decision.
 
 So a day is never lost waiting on an answer. Each is a bounded, reviewed PR.
 
-1. **Merge PR #87** (green, five days idle). Unblocks 3a-3.
+1. ~~**Merge PR #87**~~ — **done 2026-09-20** (`4f5d005`). Unblocks 3a-3.
 2. **D-53 slice 3a-3, the half that is ours**: theme-membership schema + fake
    example + wire `lookThroughResolver` into the shadow decision path. Real
    content arrives later via B-4 without a code change.
@@ -199,15 +201,31 @@ So a day is never lost waiting on an answer. Each is a bounded, reviewed PR.
    `promotionBlockingCodes`. Worth real data-integrity confidence. It does
    **not** clear the citability label — that is B-2 — and should not be sold as
    if it does.
-6. **Refresh `STATE.md` and `HANDOFF.md`** to `main`. They are eight days and
-   thirty commits stale, which is exactly how a session resumes on a wrong
-   premise.
+6. ~~**Refresh `STATE.md` and `HANDOFF.md`**~~ — **done 2026-09-20**, in the PR
+   that carries this note. It turned up two things worth keeping: the charter
+   banner below, and the stranded-branch pattern in §5.
 7. **Deferred Phase 4 limit engines** that need only price/ADV data already in
    the store: liquidity and order-level limits. Per-position risk budget and
    factor concentration wait on B-7.
 
-Item 6 should probably go first; it is cheap and it is the file every future
-session reads before anything else.
+## 5. Two things the refresh turned up
+
+**The charter was lying about itself.** `strategies/etf-trend-vol/charter.yaml`
+carried a banner reading `STATUS: DRAFT (charter_version 0.2.0) - AWAITING OWNER
+SIGNATURE` sitting directly above `state: APPROVED` / `approved_by: Matt Herman`
+/ `approval_date: 2026-09-12`. A session trusting the banner over the block would
+have concluded the strategy was unregistrable and gone looking for work already
+done. Corrected in this PR — comments only; `charterHash` is computed over the
+canonical JSON of the *parsed* charter, so no comment edit can touch the signed
+hash `sha256:5c7f94da…`.
+
+**Work gets stranded here, repeatedly.** That banner fix was not new: a session
+wrote it on 2026-09-14 (`7e30599` on `claude/busy-meitner-as415q`), committed it,
+pushed it, and never opened a PR. It sat for six days while the banner stayed
+live on `main`. The same thing had happened to D-53 slice 2a (`199e25e`), which
+was luckier and got merged as PR #82. Both were invisible to later sessions for
+the same reason: sessions read `STATE.md`, and a branch with no PR never updates
+it. **Before rebuilding anything, check whether a branch already has it.**
 
 ---
 
