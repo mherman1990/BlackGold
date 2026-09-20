@@ -126,6 +126,29 @@ Built to mirror §9.5 with the holding set reduced to the primary alone:
 comparator. That closes the latent defect recorded below: it previously decided rejection from the
 approximation.
 
+**A known one-session approximation, and a second owner call.** `simulateFill` fills at the **open** of the
+fill session, so the strategy's new position earns only that session's open-to-close move. `blendSeries` works
+on close-to-close total-return indices, so Secondary 2's new weight earns the whole previous-close-to-close
+move — including the overnight or weekend gap the strategy's position did not exist for. The error is one gap
+per rebalance, signed by whichever way gaps run, and with weekly rebalancing that is a few hundred gaps over a
+design window.
+
+This is **not specific to Secondary 2**. `EXPOSURE_MATCHED` (Secondary 1) has the identical property:
+`dailyNavSeries` measures `investedWeight` at each session's close *after* applying that session's fills, and
+`blendSeries` then applies it to the full close-to-close return. So the convention is pre-existing across the
+benchmark engine rather than something Secondary 2 introduced.
+
+Removing it means making the benchmark engine open-aware for both secondaries — a wider change than
+implementing Secondary 2, and one that alters an existing comparator. Two defensible positions:
+
+- **Accept it.** Both secondaries share the bias, so comparisons between them are consistent, and a
+  frictionless index blend is an approximation by construction anyway.
+- **Fix it.** §16.1's second prong is a *decisive* input, and a systematic few-hundred-gap bias in a decisive
+  comparator is a different thing from a cosmetic one in a reporting benchmark.
+
+Recorded rather than chosen, because it is a scope-and-standards judgement and the engine change would touch a
+benchmark already in use. Found by Codex review of this PR.
+
 **One charter ambiguity this forced into the open, and an owner call.** §11 does not state a re-scaling
 cadence. The implementation re-scales **weekly, at the strategy's decision instants**, chosen so that
 everything except selection matches the strategy and the comparison isolates what §11 says it isolates. The

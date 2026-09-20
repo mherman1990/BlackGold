@@ -292,7 +292,7 @@ describe("runBacktest", () => {
   it("applies the Secondary 2 weight only where the strategy's own fills land", () => {
     const { input } = setup();
     const r = runBacktest(input);
-    const delay = input.params.executionDelayBars;
+    const delay = input.costs.delayBars;
     expect(r.secondary2Weights.length).toBe(r.sessions.length);
 
     const indexOf = new Map(r.sessions.map((s, i) => [s, i]));

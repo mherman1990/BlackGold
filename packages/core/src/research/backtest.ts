@@ -301,6 +301,19 @@ export function reportBenchmarkSeries(input: BacktestInput): { primary: TRSeries
  * Applying the weight at `d` itself would be look-ahead: `blendSeries` multiplies the weight by session `d`'s
  * own return, and the volatility that set the weight was estimated through `d`'s close. Sessions before the
  * first effective decision carry zero, matching a strategy that holds no equity before its first fill.
+ *
+ * **Known approximation, one session wide.** `simulateFill` fills at the OPEN of the fill session, so the
+ * strategy's new position earns only that session's open-to-close move. `blendSeries` works on close-to-close
+ * total-return indices, so activating here gives the new weight the whole previous-close-to-close move,
+ * including the overnight or weekend gap the strategy's position did not exist for. The error is one gap per
+ * rebalance, signed by whichever way gaps run.
+ *
+ * This is NOT specific to Secondary 2: `EXPOSURE_MATCHED` (Secondary 1) has the identical property, because
+ * `dailyNavSeries` measures `investedWeight` at each session's close after applying that session's fills, and
+ * `blendSeries` then applies it to the full close-to-close return. Removing it means making the benchmark
+ * engine open-aware for both secondaries, which is a wider change than implementing Secondary 2 and is
+ * recorded for the owner rather than taken unilaterally
+ * (`docs/analysis/2026-09-20-d51-primary-metric.md`).
  */
 function secondary2WeightSeries(
   perDecision: readonly { decisionSession: IsoDate; weight: Dec }[],
@@ -551,7 +564,10 @@ export function runBacktest(input: BacktestInput): BacktestResult {
   const passive = runPassiveArm(input, series, allSessions, closesAt, benchmark);
 
   const equityWeights = deterministic.points.map((p) => ({ session: p.session, weight: p.investedWeight }));
-  const secondary2Weights = secondary2WeightSeries(secondary2ByDecision, allSessions, input.params.executionDelayBars);
+  // The RUN's resolved delay, not the charter default: the adverse and stress tiers and `delayBarsOverride`
+  // change when the strategy's fills land (`simulateFill` takes `input.costs.delayBars`), and a comparator
+  // that shifted by a different number of bars would quietly break the delay-sensitivity test it feeds.
+  const secondary2Weights = secondary2WeightSeries(secondary2ByDecision, allSessions, input.costs.delayBars);
   const citability: string[] = [...(input.registrabilityReasons ?? [])];
   for (const l of ["SURVIVORSHIP_BIASED", "OPTIMISTIC_DELAY"]) if (labels.has(l)) citability.push(`run carries the ${l} label`);
   if (labels.has("SYNTHETIC_MISSING_DATA")) citability.push("run injected synthetic missing data for the sensitivity grid");
