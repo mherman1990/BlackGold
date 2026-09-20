@@ -7,7 +7,7 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 829 tests (unit 762, policy 41, temporal 26), identity check, and secret scan must pass before you change anything.
+4. `npm ci && npm run check`. All of lint, typecheck, 868 tests (unit 801, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. If the count differs, trust the run and fix this line — it has been stale three times.
 
 ## 2. Repository guard
 
@@ -17,10 +17,14 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 **Read this first (2026-09-20).** The bullets below were written on 2026-09-08 and were not maintained since. They are kept because their detail about *how each piece works* is still accurate and useful, but several of their **status claims are superseded**. Where they disagree with this box, this box wins:
 
-- `main` is at `4f5d005`, not `03bf580`/`9238e94`. Releases through **0.1.12** are published; the app is installed and running on the Pi.
+- `main` is at `4135453`, not `03bf580`/`9238e94`/`4f5d005`. Releases through **0.1.12** are published; the app is installed and running on the Pi.
 - The charter is signed at **0.2.0** (owner, 2026-09-12, `code_commit 115dae4`, D-50), not awaiting signature. Its default bar source is Tiingo, not Alpaca. 0.2.0 inherits **none** of 0.1.0's evidence.
 - **Market data is ingested** and refreshed nightly. "No data has been ingested" appears below and in `STATE.md`'s older rows; it is no longer true.
 - Phase 4's four engines, Phase 5's decision gate, and **D-53 slices 1, 2a, 2b, 3a-1, 3a-2 decoder and 3a-2 fetch** (PRs #81, #82, #83, #85, #86, #87) are merged. Remaining D-53 slices: 3a-3, 2c, 3b, 4.
+- **§11's Secondary 2 exists** (PR #91, `4135453`), so §16.1's decisive second prong is computable for the first time and is published as excess return. **It merged with three accepted findings open**, by the owner's decision to stop an eleven-round fix loop. See `STATE.md` → *Secondary 2*.
+- **GATE, read before starting the next D-51 slice: the §16.1 aggregate slice must not land until PR #91's finding 1 is closed** (`legSplit` scales the pre-open holder's distribution by the intraday factor; a two-factor split cannot be made correct, the decomposition needs three parts). Merging with it open was sound only because nothing can consume the prong yet — no run is citable and the aggregate verdict is not emitted. Landing that slice removes the protection.
+- **D-51 is now at step 2.** Step 1 (build Secondary 2) is done. Step 2: evaluate §16.1 over the **aggregate walk-forward out-of-sample set, splits pooled — never per split**; §13 scopes both the primary metric's pass rule and F1 to the aggregate set, and emitting either per split was a defect fixed in PR #91. Step 3, the primary-metric question itself, is the owner's call and unblocked by step 1.
+- **Mutation-check any test guarding a financial invariant.** Five tests in PR #91 certified behaviour they could not detect — two with expected values reachable by more than one behaviour, two with fixture parameters that made the guarded branch unreachable, one that never constrained its named quantities. Delete the behaviour and confirm the test fails, every time.
 - Two `research evaluate` runs (2026-09-13) exercised the machinery end to end. Both are **non-evidential** (`citableAsEvidence: false`, `UNVERIFIED_SINGLE_SOURCE`). No experiment is registered; the holdout has never been opened. Neither may be cited.
 - **The blocker to a citable result is reconciled ≥2-source corporate actions**, not bars, not code. See `docs/analysis/2026-09-13-path-to-citable-evidence.md`.
 - **Stranded work is a recurring failure mode here, so check for it.** Two instances so far: `199e25e` (D-53 slice 2a), since merged as PR #82; and `7e30599` on `claude/busy-meitner-as415q`, a whole docs-reconciliation pass that sat six days with no PR while the charter banner it corrected stayed misleading on `main`. Both were committed and pushed but never given a PR, which makes them invisible to every later session. Before rebuilding anything, look for a branch that already has it.
