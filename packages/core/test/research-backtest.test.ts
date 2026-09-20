@@ -506,17 +506,34 @@ describe("runBacktest", () => {
     expect(r.secondary2InexactReasons.join(" ")).toContain("legSplit scales the pre-open holder's distribution");
   });
 
-  it("keeps the withhold unconditional - no clean fixture turns it off", () => {
-    // The gate this replaces was prose, and its stated reason was wrong within the hour. This asserts the
-    // code version cannot be argued out of: every shape of run that builds Secondary 2 withholds it.
-    const { input } = setup();
-    for (const r of [
-      runBacktest(input),
-      runBacktest({ ...input, costs: { ...input.costs, delayBars: 0 } }),
-      runBacktest({ ...input, costs: costsFromCharter(setup().charter, "adverse") }),
-    ]) {
+  it("keeps the withhold unconditional - exact and inexact alike", () => {
+    // The gate this replaces was prose, and its stated reason was wrong within the hour. This asserts the code
+    // version cannot be argued out of: every shape of run that builds Secondary 2 withholds it.
+    //
+    // The inexact fixture is the load-bearing one. An earlier version of this test used three CLEAN runs,
+    // all of which place exactly - so `secondary2Withheld = secondary2Exact` would have passed it while
+    // inverting the gate, making precisely the approximated comparators usable. Both sides of `exact` have to
+    // be present for the loop to mean "unconditional".
+    const holed = buildMarket({
+      paths: PATHS,
+      from: D("2026-01-02"),
+      to: D("2026-06-30"),
+      omitSessions: { BIL: [D("2026-03-09")] },
+    });
+    const runs = [
+      runBacktest(input0()),
+      runBacktest({ ...input0(), costs: { ...input0().costs, delayBars: 0 } }),
+      runBacktest({ ...input0(), costs: costsFromCharter(setup().charter, "adverse") }),
+      runBacktest(setup({ pit: holed.pit, calendar: holed.calendar }).input),
+    ];
+    expect(runs.some((r) => r.secondary2Exact)).toBe(true);
+    expect(runs.some((r) => !r.secondary2Exact)).toBe(true);
+    for (const r of runs) {
       expect(r.secondary2Index).toBeDefined();
       expect(r.secondary2Withheld).toBe(true);
+    }
+    function input0(): BacktestInput {
+      return setup().input;
     }
   });
 
