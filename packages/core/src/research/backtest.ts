@@ -111,6 +111,23 @@ export type BacktestResult = {
   sessions: IsoDate[];
   /** Realized equity weight of the deterministic arm per session, for the exposure-matched benchmark. */
   equityWeights: { session: IsoDate; weight: Dec }[];
+  /**
+   * ALPHA_CHARTER section 11 Secondary 2: the equity weight of "VTI scaled to a 10% ex-ante volatility
+   * target with the same 63-day estimator, remainder in BIL", per session.
+   *
+   * Built to mirror section 9.5 with the holding set reduced to the primary benchmark alone: at each weekly
+   * decision the scale factor is `k = min(1, annual_volatility_target / sigma_primary)`, where
+   * `sigma_primary` is the primary's annualized volatility from the very `computeFeatures` covariance window
+   * the strategy sizes with - the same estimator, not a second implementation of it. The weight takes effect
+   * `execution_delay_bars` sessions later, where the strategy's own fills land, and holds until the next
+   * decision takes effect. Sessions before the first effective decision carry zero, exactly as the strategy
+   * holds no equity before its first fill.
+   *
+   * Empty when the primary benchmark is not among the charter's risk ETFs, because then `computeFeatures`
+   * computes no volatility for it and Secondary 2 cannot be built from the registered estimator. It is left
+   * absent rather than approximated - approximating this comparator is what D-51 had to unwind.
+   */
+  secondary2Weights: { session: IsoDate; weight: Dec }[];
   labels: string[];
   /**
    * Fills that landed on or before the decision that caused them. Must be empty: a non-empty list is a
@@ -273,6 +290,45 @@ export function reportBenchmarkSeries(input: BacktestInput): { primary: TRSeries
   };
 }
 
+/**
+ * Turn per-decision Secondary 2 scale factors into the per-session equity weight the blend consumes.
+ *
+ * A decision taken after the close of session `d` cannot change a holding until its orders fill, which the
+ * simulator does `execution_delay_bars` sessions later. The weight therefore takes effect at
+ * `sessions[index(d) + delayBars]` and holds until the next decision's effective session - the same timing
+ * the strategy's own fills obey.
+ *
+ * Applying the weight at `d` itself would be look-ahead: `blendSeries` multiplies the weight by session `d`'s
+ * own return, and the volatility that set the weight was estimated through `d`'s close. Sessions before the
+ * first effective decision carry zero, matching a strategy that holds no equity before its first fill.
+ */
+function secondary2WeightSeries(
+  perDecision: readonly { decisionSession: IsoDate; weight: Dec }[],
+  allSessions: readonly IsoDate[],
+  delayBars: number,
+): { session: IsoDate; weight: Dec }[] {
+  if (perDecision.length === 0) return [];
+  const indexOf = new Map<IsoDate, number>(allSessions.map((s, i) => [s, i]));
+  const effective = new Map<number, Dec>();
+  for (const { decisionSession, weight } of perDecision) {
+    const at = indexOf.get(decisionSession);
+    if (at === undefined) continue;
+    const target = at + delayBars;
+    if (target >= allSessions.length) continue; // decided too late in the window to ever take effect
+    // Later decisions win when two map to the same session, matching the order they were taken.
+    effective.set(target, weight);
+  }
+  const out: { session: IsoDate; weight: Dec }[] = [];
+  let current = ZERO;
+  for (let i = 0; i < allSessions.length; i++) {
+    const next = effective.get(i);
+    if (next !== undefined) current = next;
+    const session = allSessions[i];
+    if (session !== undefined) out.push({ session, weight: current });
+  }
+  return out;
+}
+
 function navIndex(entityId: string, nav: readonly { session: IsoDate; nav: Dec }[]): TRSeries {
   const first = nav[0]?.nav;
   const points: TRPoint[] = [];
@@ -338,6 +394,11 @@ export function runBacktest(input: BacktestInput): BacktestResult {
   const missingRate = input.missingDataRate ?? ZERO;
   let missingCounter = 0;
 
+  // ALPHA_CHARTER section 11 Secondary 2, accumulated per decision and turned into a per-session step
+  // function after the loop. Recorded here rather than rebuilt later so the volatility it scales by is the
+  // one `computeFeatures` produced at this decision instant, under the same leakage audit as the strategy's.
+  const secondary2ByDecision: { decisionSession: IsoDate; weight: Dec }[] = [];
+
   for (const session of decisionSessions) {
     const decisionAt = decisionAtOf(session);
     const fs = computeFeatures(
@@ -345,6 +406,16 @@ export function runBacktest(input: BacktestInput): BacktestResult {
       { riskEntities: riskEtfs, cashEntityId: cashEtf, decisionAt, params: params.features },
     );
     for (const l of fs.labels) labels.add(l);
+
+    // Secondary 2's scale factor, mirroring section 9.5 with the holding set reduced to the primary alone:
+    // k = min(1, target / sigma_primary). sigma_primary is read from the same covariance window the strategy
+    // sizes with, so this is the charter's "same 63-day estimator" literally rather than a reimplementation.
+    // A missing or zero volatility leaves the weight unscaled at 1, exactly as `constructTargets` does.
+    const primaryVol = fs.features.get(benchmark)?.vol;
+    if (primaryVol !== undefined) {
+      const k = primaryVol.gt(0) ? params.sizing.annualVolatilityTarget.div(primaryVol) : ONE;
+      secondary2ByDecision.push({ decisionSession: session, weight: k.lt(ONE) ? k : ONE });
+    }
 
     // Missing-data sensitivity (protocol section 5.8): drop a deterministic share of feature rows and let
     // the charter's own missing-data handling deal with it. Deterministic so the trial reproduces.
@@ -480,6 +551,7 @@ export function runBacktest(input: BacktestInput): BacktestResult {
   const passive = runPassiveArm(input, series, allSessions, closesAt, benchmark);
 
   const equityWeights = deterministic.points.map((p) => ({ session: p.session, weight: p.investedWeight }));
+  const secondary2Weights = secondary2WeightSeries(secondary2ByDecision, allSessions, input.params.executionDelayBars);
   const citability: string[] = [...(input.registrabilityReasons ?? [])];
   for (const l of ["SURVIVORSHIP_BIASED", "OPTIMISTIC_DELAY"]) if (labels.has(l)) citability.push(`run carries the ${l} label`);
   if (labels.has("SYNTHETIC_MISSING_DATA")) citability.push("run injected synthetic missing data for the sensitivity grid");
@@ -522,6 +594,7 @@ export function runBacktest(input: BacktestInput): BacktestResult {
     arms,
     sessions: allSessions,
     equityWeights,
+    secondary2Weights,
     labels: [...labels].sort(),
     executionOrderViolations,
     citableAsEvidence: citability.length === 0,

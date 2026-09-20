@@ -140,6 +140,44 @@ describe("runEvaluation", () => {
     expect(split?.falsifiersNotEvaluated).toEqual(["F1", "F3", "F4", "F5", "F6"]);
   });
 
+  // ALPHA_CHARTER section 11 Secondary 2: "VTI scaled to a 10% ex-ante volatility target with the same
+  // 63-day estimator, remainder in BIL". Built from the strategy's own covariance window so the estimator is
+  // literally the registered one, and timed to the strategy's fills so the weight cannot be look-ahead.
+  it("builds the registered Secondary 2 and reports section 16.1's second prong", () => {
+    const r = evaluate(evalCharter(), cleanMarket());
+    const split = r.splits[0];
+    expect(split?.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
+    expect(split?.primaryVersusSecondary2).toBeTypeOf("number");
+  });
+
+  it("omits Secondary 2 rather than substituting when the primary is not a risk ETF", () => {
+    // Without the primary among the risk ETFs, computeFeatures produces no volatility for it, so the
+    // registered estimator cannot size Secondary 2. The prong must go undefined, never fall back to the
+    // average-exposure approximation - substituting a stand-in for this comparator is what D-51 unwound.
+    const noPrimaryInUniverse = evalCharter((c) => {
+      c.universe.risk_etfs = c.universe.risk_etfs.filter((e) => e !== c.benchmarks.primary);
+      c.sizing.clusters = [{ id: "A", members: ["QQQ", "VUG", "XLK"], max_members: 3 }];
+    });
+    const r = evaluate(noPrimaryInUniverse, cleanMarket());
+    const split = r.splits[0];
+    expect(split?.benchmarks.map((b) => b.arm)).not.toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
+    expect(split?.primaryVersusSecondary2).toBeUndefined();
+    // The approximation is still reported as its own diagnostic, and is NOT promoted into the prong.
+    expect(split?.approximateVersusAverageExposureBenchmark).toBeTypeOf("number");
+  });
+
+  it("keeps Secondary 2 distinct from the average-exposure approximation", () => {
+    // If these two ever coincide the rename in PR #90 bought nothing. They are different series: one is
+    // volatility-targeted per decision, the other is a single constant average exposure.
+    const r = evaluate(evalCharter(), cleanMarket());
+    const split = r.splits[0];
+    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
+    const approx = split?.benchmarks.find((b) => b.arm === "APPROX_AVERAGE_EXPOSURE_PRIMARY");
+    expect(s2).toBeDefined();
+    expect(approx).toBeDefined();
+    expect(s2?.totalReturn).not.toBe(approx?.totalReturn);
+  });
+
   it("labels the average-exposure benchmark as a diagnostic, not section 16.1's second prong", () => {
     // buildResultReport builds this arm by holding VTI at the strategy's CONSTANT
     // average realized equity weight, and its own comment says "Approximated here". The charter's section 11

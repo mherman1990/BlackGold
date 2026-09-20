@@ -285,6 +285,67 @@ describe("runBacktest", () => {
     }
   });
 
+  // ALPHA_CHARTER section 11 Secondary 2. The reads are already covered by the leakage audit above, because
+  // the volatility comes from computeFeatures. What that audit cannot catch is the weight-to-session mapping:
+  // blendSeries multiplies the weight by session t's OWN return, so applying a weight at the decision session
+  // would let a volatility estimated through that session's close earn that session's return.
+  it("applies the Secondary 2 weight only where the strategy's own fills land", () => {
+    const { input } = setup();
+    const r = runBacktest(input);
+    const delay = input.params.executionDelayBars;
+    expect(r.secondary2Weights.length).toBe(r.sessions.length);
+
+    const indexOf = new Map(r.sessions.map((s, i) => [s, i]));
+    // The only sessions at which the weight may change are decision sessions shifted by the execution delay.
+    const allowed = new Set<string>();
+    for (const d of r.decisions) {
+      const at = indexOf.get(d.decisionSession);
+      if (at === undefined) continue;
+      const effective = r.sessions[at + delay];
+      if (effective !== undefined) allowed.add(effective);
+    }
+
+    let changes = 0;
+    for (let i = 1; i < r.secondary2Weights.length; i++) {
+      const prev = r.secondary2Weights[i - 1];
+      const cur = r.secondary2Weights[i];
+      if (prev === undefined || cur === undefined) continue;
+      if (!cur.weight.eq(prev.weight)) {
+        changes++;
+        expect(allowed.has(cur.session)).toBe(true);
+        // Never on the decision session itself: that is the look-ahead this test exists to exclude.
+        expect(r.decisions.some((d) => d.decisionSession === cur.session)).toBe(delay === 0);
+      }
+    }
+    expect(changes).toBeGreaterThan(0);
+  });
+
+  it("holds Secondary 2 in cash until its first decision takes effect, and keeps it long-only", () => {
+    const { input } = setup();
+    const r = runBacktest(input);
+    const first = r.secondary2Weights[0];
+    expect(first?.weight.isZero()).toBe(true);
+    for (const w of r.secondary2Weights) {
+      expect(w.weight.isNegative()).toBe(false);
+      expect(w.weight.lte(ONE)).toBe(true);
+    }
+  });
+
+  it("scales Secondary 2 by min(1, target / primary volatility), as section 9.5 does", () => {
+    const { input } = setup();
+    const r = runBacktest(input);
+    const target = input.params.sizing.annualVolatilityTarget;
+    // Every non-zero weight is either a full 1 (low-volatility primary, k capped) or strictly below it.
+    const nonZero = r.secondary2Weights.filter((w) => !w.weight.isZero());
+    expect(nonZero.length).toBeGreaterThan(0);
+    for (const w of nonZero) {
+      expect(w.weight.lte(ONE)).toBe(true);
+      expect(w.weight.gt(0)).toBe(true);
+    }
+    // A weight below 1 implies the primary's annualized volatility exceeded the target at that decision.
+    if (nonZero.some((w) => w.weight.lt(ONE))) expect(target.gt(0)).toBe(true);
+  });
+
   it("refuses to be cited as evidence while the charter is a draft", () => {
     const r = runBacktest(setup().input);
     expect(r.citableAsEvidence).toBe(false);

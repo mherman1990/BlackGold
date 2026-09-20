@@ -86,6 +86,14 @@ export type ResultReport = {
   };
   /** Against the volatility-controlled benchmark: the charter's second decisive bar. */
   primaryVersusVolatilityControlled: number | undefined;
+  /**
+   * ALPHA_CHARTER section 16.1's second prong: the strategy's Sharpe less the REGISTERED Secondary 2's
+   * ("VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator, remainder in BIL").
+   * Positive means trend selection adds something beyond volatility control alone.
+   *
+   * `undefined` when Secondary 2 could not be built. Nothing substitutes for it in that case.
+   */
+  primaryVersusSecondary2: number | undefined;
   taxScenarios: TaxScenarioResult[];
   /** Non-overlapping monthly-equivalent blocks the result rests on. */
   independentDecisions: number;
@@ -243,6 +251,16 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
   const exposureMatched: BlendSpec = { equity: input.primary, cash: input.cash, equityWeight: (session) => weightBySession.get(session) ?? ZERO };
   const benchmarkSeries: { name: string; series: TRSeries }[] = [{ name: `${c.benchmarks.primary}_TR`, series: input.primary }];
   if (c.benchmarks.exposure_matched) benchmarkSeries.push({ name: "EXPOSURE_MATCHED", series: blendSeries(exposureMatched) });
+  // ALPHA_CHARTER section 11 Secondary 2, built by `runBacktest` from the strategy's own covariance window.
+  // Empty when the primary is not a risk ETF, in which case the registered comparator simply is not available
+  // and no stand-in is offered in its place.
+  if (c.benchmarks.volatility_controlled_primary && bt.secondary2Weights.length > 0) {
+    const byS2Session = new Map(bt.secondary2Weights.map((w) => [w.session, w.weight]));
+    benchmarkSeries.push({
+      name: "SECONDARY_2_VOL_TARGET_PRIMARY",
+      series: blendSeries({ equity: input.primary, cash: input.cash, equityWeight: (session) => byS2Session.get(session) ?? ZERO }),
+    });
+  }
   if (c.benchmarks.volatility_controlled_primary) {
     // NOT the charter's Secondary 2. Section 11 registers Secondary 2 as "VTI scaled to a 10% ex-ante
     // volatility target with the same 63-day estimator, remainder in BIL" - a dynamically re-scaled series.
@@ -282,6 +300,10 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
     ...(input.bootstrapSeed === undefined ? {} : { seed: input.bootstrapSeed }),
   });
   const threshold = Number(c.pass_fail.primary_threshold);
+  // Section 16.1's second prong compares against the REGISTERED Secondary 2. The average-exposure
+  // approximation is never substituted for it: when Secondary 2 is unavailable the prong stays undefined,
+  // which is what D-51 established (docs/analysis/2026-09-20-d51-primary-metric.md).
+  const secondary2 = benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
   const volControlled = benchmarks.find((b) => b.arm === "APPROX_AVERAGE_EXPOSURE_PRIMARY");
   const candidateMetrics = arms[0];
 
@@ -332,6 +354,9 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
     },
     primaryVersusVolatilityControlled:
       volControlled === undefined || candidateMetrics === undefined ? undefined : candidateMetrics.sharpeVsCash - volControlled.sharpeVsCash,
+    /** ALPHA_CHARTER section 16.1's second prong, against the registered Secondary 2. */
+    primaryVersusSecondary2:
+      secondary2 === undefined || candidateMetrics === undefined ? undefined : candidateMetrics.sharpeVsCash - secondary2.sharpeVsCash,
     taxScenarios: tax,
     independentDecisions: Math.floor(bt.sessions.length / SESSIONS_PER_MONTH),
     decisions: bt.decisions.length,

@@ -852,18 +852,25 @@ analysis in `docs/analysis/2026-09-20-d51-primary-metric.md`. Three findings:
 **Recommended ordering, which changes no charter value.** Three steps, and the first two are prerequisites
 that did not exist when this entry was first written:
 
-1. **Implement the registered Secondary 2.** Purely mechanical: §11 freezes the estimator (63-day), the
-   target (10% ex-ante) and the cash leg (BIL), so nothing is chosen after the fact and nothing is
-   contaminated.
+1. ~~**Implement the registered Secondary 2.**~~ **Done 2026-09-20.** Built from the same
+   `computeFeatures` covariance window the strategy sizes with, scaled by `k = min(1, target / sigma)` as
+   §9.5 does, and taking effect `execution_delay_bars` after each decision so the weight cannot earn the
+   return of the session that set it. `evaluateFalsifiers` now decides `decisiveRejection` from the
+   registered comparator instead of the approximation. **One owner call it forced open:** §11 states no
+   re-scaling cadence; the implementation re-scales weekly at the strategy's decision instants so that
+   everything but selection matches the strategy. Per-session re-scaling is the literal alternative and
+   gives a different number. Same shape as D-32 — confirm or overrule before the number is treated as
+   decisive.
 2. **Evaluate §16.1 over the aggregate walk-forward out-of-sample set**, with the splits pooled - not per
    split.
 3. **Then** decide the metric question. Selecting a new primary metric after seeing that the current one
    failed is metric-shopping; reporting a secondary the charter already committed to is not.
 
-**Known defect this surfaced:** `evaluateFalsifiers` (`robustness.ts`) computes `decisiveRejection` from that
-same unregistered approximation, and treats a missing prong as "does not beat". Nothing calls it from the CLI
-today, so it is latent - but it would reject a hypothesis against a comparator the charter never registered.
-Fixing it belongs with the Secondary 2 work.
+**Known defect this surfaced — half fixed 2026-09-20.** `evaluateFalsifiers` computed `decisiveRejection`
+from the unregistered approximation; it now takes the registered Secondary 2. What remains, deliberately, is
+that a **missing** second prong still counts as "does not beat", so a rejection can rest on a number nobody
+measured. That is conservative for promotion but it is not what §16.1 says ("if both fail"), and changing it
+is an owner reading of the charter rather than a bug fix. Pinned by a test so the behaviour is visible.
 
 **Correction history.** This entry's first version (2026-09-20) said the second prong was computed on every
 run and merely needed surfacing, and recommended running it. That was wrong on both counts and is corrected

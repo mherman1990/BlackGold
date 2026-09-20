@@ -22,7 +22,7 @@ function passingMetrics(): FalsifierMetrics {
     primaryUnderExtraDelay: 0.16,
     primaryWithoutBestYear: 0.19,
     gridPointEstimates: Array.from({ length: 72 }, (_, i) => (i < 60 ? 0.2 : -0.05)),
-    primaryVersusVolatilityControlled: 0.12,
+    primaryVersusSecondary2: 0.12,
     independentDecisions: 160,
   };
 }
@@ -199,15 +199,19 @@ describe("evaluateFalsifiers", () => {
     expect(v.passes).toBe(false);
   });
 
-  it("rejects decisively only when both the primary and the volatility-controlled bar are missed", () => {
-    const onlyPrimaryFails = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusVolatilityControlled: 0.05 });
+  it("rejects decisively only when both the primary metric and the registered Secondary 2 are missed", () => {
+    const onlyPrimaryFails = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusSecondary2: 0.05 });
     expect(onlyPrimaryFails.passes).toBe(false);
     expect(onlyPrimaryFails.decisiveRejection).toBe(false);
 
-    const both = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusVolatilityControlled: -0.03 });
+    const both = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusSecondary2: -0.03 });
     expect(both.decisiveRejection).toBe(true);
 
-    const noComparator = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusVolatilityControlled: undefined });
+    // An unmeasured second prong currently counts as "does not beat", so a rejection can rest on a number
+    // nobody computed. Conservative for promotion, but not what section 16.1 says ("if both fail"). Pinned
+    // here so the behaviour is deliberate and visible rather than incidental; changing it is an owner
+    // reading of the charter, not a bug fix (docs/analysis/2026-09-20-d51-primary-metric.md).
+    const noComparator = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusSecondary2: undefined });
     expect(noComparator.decisiveRejection).toBe(true);
   });
 

@@ -191,8 +191,19 @@ export type FalsifierMetrics = {
   primaryWithoutBestYear: number;
   /** Signs of the primary metric across every evaluated grid member. */
   gridPointEstimates: readonly number[];
-  /** Primary metric against the volatility-controlled benchmark: the charter's decisive second bar. */
-  primaryVersusVolatilityControlled: number | undefined;
+  /**
+   * ALPHA_CHARTER section 16.1's second prong: the strategy's Sharpe less the **registered** Secondary 2's
+   * ("VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator, remainder in BIL").
+   *
+   * This must be the registered comparator. It previously received an average-exposure approximation, which
+   * would have decided a rejection against a benchmark the charter never registered (D-51).
+   *
+   * `undefined` means the prong was not measured, which is NOT the same as failing it. It is currently
+   * treated as "does not beat", so a rejection can rest on an absent number. That is conservative for
+   * promotion but it is not what section 16.1 says, and changing it is an owner reading rather than a bug
+   * fix - see `docs/analysis/2026-09-20-d51-primary-metric.md`.
+   */
+  primaryVersusSecondary2: number | undefined;
   /** Independent (non-overlapping) out-of-sample decision blocks the result rests on. */
   independentDecisions: number;
 };
@@ -317,7 +328,7 @@ export function evaluateFalsifiers(c: Charter, m: FalsifierMetrics): RobustnessV
 
   const failedIds = outcomes.filter((o) => o.triggered).map((o) => o.id);
   const beatsPrimary = m.primaryPointEstimate >= threshold && !outcomes.some((o) => o.id === "F1" && o.triggered);
-  const beatsVolControlled = m.primaryVersusVolatilityControlled !== undefined && m.primaryVersusVolatilityControlled > 0;
+  const beatsSecondary2 = m.primaryVersusSecondary2 !== undefined && m.primaryVersusSecondary2 > 0;
   const body = {
     strategyId: c.strategy_id,
     charterVersion: c.charter_version,
@@ -331,7 +342,7 @@ export function evaluateFalsifiers(c: Charter, m: FalsifierMetrics): RobustnessV
     outcomes,
     gridSignAgreement: agreement,
     passes: failedIds.length === 0,
-    decisiveRejection: !beatsPrimary && !beatsVolControlled,
+    decisiveRejection: !beatsPrimary && !beatsSecondary2,
     failedIds,
     robustnessVersion: ROBUSTNESS_VERSION,
     verdictHash: `sha256:${hashJson(body)}`,
