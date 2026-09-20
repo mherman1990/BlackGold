@@ -22,7 +22,7 @@ function passingMetrics(): FalsifierMetrics {
     primaryUnderExtraDelay: 0.16,
     primaryWithoutBestYear: 0.19,
     gridPointEstimates: Array.from({ length: 72 }, (_, i) => (i < 60 ? 0.2 : -0.05)),
-    primaryVersusSecondary2: 0.12,
+    primaryVersusSecondary2: new Dec("0.12"),
     independentDecisions: 160,
   };
 }
@@ -200,11 +200,11 @@ describe("evaluateFalsifiers", () => {
   });
 
   it("rejects decisively only when both the primary metric and the registered Secondary 2 are missed", () => {
-    const onlyPrimaryFails = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusSecondary2: 0.05 });
+    const onlyPrimaryFails = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusSecondary2: new Dec("0.05") });
     expect(onlyPrimaryFails.passes).toBe(false);
     expect(onlyPrimaryFails.decisiveRejection).toBe(false);
 
-    const both = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusSecondary2: -0.03 });
+    const both = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusSecondary2: new Dec("-0.03") });
     expect(both.decisiveRejection).toBe(true);
 
     // An unmeasured second prong currently counts as "does not beat", so a rejection can rest on a number

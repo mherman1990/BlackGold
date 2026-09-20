@@ -192,7 +192,8 @@ export type FalsifierMetrics = {
   /** Signs of the primary metric across every evaluated grid member. */
   gridPointEstimates: readonly number[];
   /**
-   * ALPHA_CHARTER section 16.1's second prong: the strategy's Sharpe less the **registered** Secondary 2's
+   * ALPHA_CHARTER section 16.1's second prong: the strategy's **excess return** over the **registered**
+   * Secondary 2
    * ("VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator, remainder in BIL").
    *
    * This must be the registered comparator. It previously received an average-exposure approximation, which
@@ -203,7 +204,7 @@ export type FalsifierMetrics = {
    * promotion but it is not what section 16.1 says, and changing it is an owner reading rather than a bug
    * fix - see `docs/analysis/2026-09-20-d51-primary-metric.md`.
    */
-  primaryVersusSecondary2: number | undefined;
+  primaryVersusSecondary2: Dec | undefined;
   /** Independent (non-overlapping) out-of-sample decision blocks the result rests on. */
   independentDecisions: number;
 };
@@ -328,7 +329,7 @@ export function evaluateFalsifiers(c: Charter, m: FalsifierMetrics): RobustnessV
 
   const failedIds = outcomes.filter((o) => o.triggered).map((o) => o.id);
   const beatsPrimary = m.primaryPointEstimate >= threshold && !outcomes.some((o) => o.id === "F1" && o.triggered);
-  const beatsSecondary2 = m.primaryVersusSecondary2 !== undefined && m.primaryVersusSecondary2 > 0;
+  const beatsSecondary2 = m.primaryVersusSecondary2?.gt(0) === true;
   const body = {
     strategyId: c.strategy_id,
     charterVersion: c.charter_version,

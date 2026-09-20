@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Dec } from "@blackgold/shared";
 import { fileURLToPath } from "node:url";
 import { loadCharterFile, registrabilityReasons, type Charter } from "../src/strategy/charter.ts";
 import { runEvaluation } from "../src/research/evaluate.ts";
@@ -147,7 +148,16 @@ describe("runEvaluation", () => {
     const r = evaluate(evalCharter(), cleanMarket());
     const split = r.splits[0];
     expect(split?.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
-    expect(split?.primaryVersusSecondary2).toBeTypeOf("number");
+    // Excess return (section 13's registered metric), not a Sharpe difference: a decimal string, and it
+    // must equal the strategy's total return less Secondary 2's, exactly.
+    expect(split?.primaryVersusSecondary2).toMatch(/^-?\d+\.\d{8}$/);
+    const b1 = split?.arms.find((a) => a.arm === "B1_DETERMINISTIC");
+    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
+    expect(b1).toBeDefined();
+    expect(s2).toBeDefined();
+    if (b1 !== undefined && s2 !== undefined && split?.primaryVersusSecondary2 !== undefined) {
+      expect(new Dec(split.primaryVersusSecondary2).toFixed(8)).toBe(new Dec(b1.totalReturn).minus(new Dec(s2.totalReturn)).toFixed(8));
+    }
   });
 
   it("omits Secondary 2 rather than substituting when the primary is not a risk ETF", () => {

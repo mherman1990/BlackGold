@@ -87,13 +87,22 @@ export type ResultReport = {
   /** Against the volatility-controlled benchmark: the charter's second decisive bar. */
   primaryVersusVolatilityControlled: number | undefined;
   /**
-   * ALPHA_CHARTER section 16.1's second prong: the strategy's Sharpe less the REGISTERED Secondary 2's
-   * ("VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator, remainder in BIL").
-   * Positive means trend selection adds something beyond volatility control alone.
+   * ALPHA_CHARTER section 16.1's second prong: the strategy's **excess return** over the REGISTERED
+   * Secondary 2 ("VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator, remainder in
+   * BIL"). Positive means trend selection adds something beyond volatility control alone.
+   *
+   * **Excess return, not a Sharpe difference.** Section 16.1 says only "fails to beat Secondary 2" without
+   * naming a measure, and section 13 registers "excess return versus Secondary 1 and Secondary 2" among the
+   * outcome metrics. The owner resolved the ambiguity to section 13's reading (2026-09-20), so this is the
+   * total-return difference over the window. The two measures can disagree - a strategy can have a higher
+   * return and a lower Sharpe - and the disagreement can flip a decisive rejection, which is why it was an
+   * owner call. No charter edit was needed: section 13 already said excess return.
+   *
+   * Decimal, not a float: it is a return difference that feeds a rejection verdict.
    *
    * `undefined` when Secondary 2 could not be built. Nothing substitutes for it in that case.
    */
-  primaryVersusSecondary2: number | undefined;
+  primaryVersusSecondary2: Dec | undefined;
   taxScenarios: TaxScenarioResult[];
   /** Non-overlapping monthly-equivalent blocks the result rests on. */
   independentDecisions: number;
@@ -354,9 +363,9 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
     },
     primaryVersusVolatilityControlled:
       volControlled === undefined || candidateMetrics === undefined ? undefined : candidateMetrics.sharpeVsCash - volControlled.sharpeVsCash,
-    /** ALPHA_CHARTER section 16.1's second prong, against the registered Secondary 2. */
+    /** ALPHA_CHARTER section 16.1's second prong: excess return over the registered Secondary 2 (section 13). */
     primaryVersusSecondary2:
-      secondary2 === undefined || candidateMetrics === undefined ? undefined : candidateMetrics.sharpeVsCash - secondary2.sharpeVsCash,
+      secondary2 === undefined || candidateMetrics === undefined ? undefined : candidateMetrics.totalReturn.minus(secondary2.totalReturn),
     taxScenarios: tax,
     independentDecisions: Math.floor(bt.sessions.length / SESSIONS_PER_MONTH),
     decisions: bt.decisions.length,

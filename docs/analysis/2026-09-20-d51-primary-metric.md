@@ -155,12 +155,18 @@ Recorded rather than chosen, because it is a scope-and-standards judgement and a
 open-aware fill-session returns that a close-to-close total-return blend cannot express. Found by Codex review
 of this PR.
 
-**A related charter ambiguity, also unresolved.** §13 lists "**excess return** versus Secondary 1 and
-Secondary 2" among the registered metrics, while §16.1 says the strategy must not "fail to beat Secondary 2"
-without naming a measure. The implementation uses the **Sharpe difference**, by parallel with §16.1's first
-prong ("fails to improve *the primary metric* over VTI"). Codex reads §13 as governing and would use excess
-return. The two can disagree — a strategy can have a higher return and a lower Sharpe than Secondary 2 — and
-the disagreement can flip a decisive rejection. Another D-32-shaped reading for the owner, not a code choice.
+**A related charter ambiguity — resolved by the owner, 2026-09-20: excess return.** §13 lists "**excess
+return** versus Secondary 1 and Secondary 2" among the registered metrics, while §16.1 says only that the
+strategy must not "fail to beat Secondary 2". The first implementation used the **Sharpe difference**, by
+parallel with §16.1's first prong ("fails to improve *the primary metric* over VTI"); Codex read §13 as
+governing. The two can disagree — a strategy can have a higher return and a lower Sharpe than Secondary 2 —
+and the disagreement can flip a decisive rejection, which is why it was an owner call rather than a code
+choice.
+
+Matt resolved it to §13's reading. `primaryVersusSecondary2` is now the **total-return difference** over the
+window, carried as a decimal (it feeds a rejection verdict, so no binary float), and `evaluateFalsifiers`
+decides `beatsSecondary2` from it. **No charter edit was required**: §13 already said excess return, so this
+implements the registered metric rather than changing one. Nothing inherits or loses evidence.
 
 **A zero-delay look-ahead, found and fixed.** With `delayBarsOverride: 0` the simulator fills at the decision
 close, but the weight activated on the decision session itself, letting a volatility estimated *at* that close

@@ -863,6 +863,14 @@ that did not exist when this entry was first written:
    decisive.
 2. **Evaluate §16.1 over the aggregate walk-forward out-of-sample set**, with the splits pooled - not per
    split.
+
+   **Resolved along the way (Matt, 2026-09-20): the second prong is measured as EXCESS RETURN**, not as a
+   Sharpe difference. §13 registers "excess return versus Secondary 1 and Secondary 2"; §16.1 says only
+   "fails to beat Secondary 2" without naming a measure, and the first implementation used the Sharpe
+   difference by parallel with the first prong. The two can disagree - higher return with lower Sharpe - and
+   the disagreement can flip a decisive rejection, so it was an owner reading rather than a code choice. No
+   charter edit was needed: §13 already said excess return, so this implements the registered metric rather
+   than changing one, and no evidence is inherited or lost.
 3. **Then** decide the metric question. Selecting a new primary metric after seeing that the current one
    failed is metric-shopping; reporting a secondary the charter already committed to is not.
 

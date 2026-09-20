@@ -86,16 +86,19 @@ export type SplitEvaluation = {
    */
   approximateVersusAverageExposureBenchmark: number | undefined;
   /**
-   * ALPHA_CHARTER section 16.1's second prong, against the **registered** Secondary 2: the strategy's Sharpe
-   * less that of "VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator, remainder in
-   * BIL". Positive means trend selection adds something beyond volatility control alone.
+   * ALPHA_CHARTER section 16.1's second prong, against the **registered** Secondary 2: the strategy's
+   * **excess return** over "VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator,
+   * remainder in BIL". Positive means trend selection adds something beyond volatility control alone.
+   *
+   * Excess return rather than a Sharpe difference, per section 13's registered metric list; the owner
+   * resolved that ambiguity on 2026-09-20. A decimal string, because it feeds a rejection verdict.
    *
    * Still a **per-split** number. Section 16.1's verdict is defined on the aggregate walk-forward
    * out-of-sample set, so this is an input to that verdict, never the verdict itself, and no §16.1 outcome
    * is emitted here. `undefined` when Secondary 2 could not be built (the primary is not a risk ETF, so the
    * registered estimator produces no volatility for it); nothing is substituted in its place.
    */
-  primaryVersusSecondary2: number | undefined;
+  primaryVersusSecondary2: string | undefined;
   /**
    * Which of the charter's falsifiers this split actually evaluated - which is **F2 only**.
    *
@@ -287,7 +290,7 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
       benchmarks: report.benchmarks.map(armSummary),
       drawdown: drawdownCheck(c, report),
       approximateVersusAverageExposureBenchmark: report.primaryVersusVolatilityControlled,
-      primaryVersusSecondary2: report.primaryVersusSecondary2,
+      primaryVersusSecondary2: report.primaryVersusSecondary2?.toFixed(8),
       falsifiersEvaluated: ["F2"],
       falsifiersNotEvaluated: ["F1", "F3", "F4", "F5", "F6"],
     });
