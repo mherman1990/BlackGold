@@ -73,7 +73,7 @@ function evaluate(c: Charter, market: ReturnType<typeof buildMarket>) {
 describe("runEvaluation", () => {
   it("evaluates the design and recent splits and never the sealed holdout", () => {
     const r = evaluate(evalCharter(), cleanMarket());
-    expect(r.evaluationVersion).toBe(1);
+    expect(r.evaluationVersion).toBe(2);
     // Design and recent are in-window; the 1-year walk-forward window yields no rolling split here.
     const kinds = r.splits.map((s) => s.kind);
     expect(kinds).toContain("DESIGN");
@@ -88,6 +88,92 @@ describe("runEvaluation", () => {
     }
     expect(r.reportHash).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(r.barsSourceId).toBe("tiingo.eod.bars.1d");
+  });
+
+  // ALPHA_CHARTER section 13 and section 16.1. These numbers were computed by buildResultReport all along
+  // and dropped by this surface, which left `research evaluate` able to report only the primary Sharpe
+  // difference. The charter's own hypothesis (section 4) claims the strategy raises "Sharpe and Calmar",
+  // and section 16.1's decisive falsifier is a conjunction whose second prong was therefore unreadable.
+  it("surfaces the section 13 secondary risk metrics for every arm and benchmark", () => {
+    const r = evaluate(evalCharter(), cleanMarket());
+    const split = r.splits[0];
+    expect(split).toBeDefined();
+    if (split === undefined) return;
+
+    expect(split.arms.length).toBeGreaterThan(0);
+    expect(split.benchmarks.length).toBeGreaterThan(0);
+    for (const a of [...split.arms, ...split.benchmarks]) {
+      expect(a.totalReturn).toMatch(/^-?\d+\.\d{8}$/);
+      expect(a.cagr).toMatch(/^-?\d+\.\d{8}$/);
+      expect(a.maxDrawdown).toMatch(/^-?\d+\.\d{8}$/);
+      expect(Number.isFinite(a.annualizedSharpeVsCash)).toBe(true);
+      // Calmar is undefined only when the drawdown is exactly zero; it is never silently a number then.
+      if (a.calmar !== undefined) expect(a.calmar).toMatch(/^-?\d+\.\d{8}$/);
+    }
+  });
+
+  it("reports F2 as the charter computes it: |strategy| against max_drawdown_ratio x |benchmark|", () => {
+    const r = evaluate(evalCharter(), cleanMarket());
+    const split = r.splits[0];
+    expect(split?.drawdown).toBeDefined();
+    const dd = split?.drawdown;
+    if (dd === undefined) return;
+    expect(dd.limitRatio).toBe("0.75");
+    // Drawdowns are reported non-positive, and the ratio is of absolute values.
+    expect(Number(dd.strategy)).toBeLessThanOrEqual(0);
+    expect(Number(dd.primaryBenchmark)).toBeLessThanOrEqual(0);
+    if (dd.ratio !== "undefined") {
+      expect(Number(dd.ratio)).toBeGreaterThanOrEqual(0);
+      expect(dd.f2Triggered).toBe(Number(dd.ratio) > Number(dd.limitRatio));
+    }
+  });
+
+  it("names which falsifiers the run evaluated, rather than implying the rest passed", () => {
+    const r = evaluate(evalCharter(), cleanMarket());
+    const split = r.splits[0];
+    // F3/F4/F5 need the cost and delay tiers, the drop-best-year refit and the full grid; F6 is prospective.
+    // F1 is NOT per-split: section 13 defines the primary-metric pass rule on the aggregate walk-forward
+    // out-of-sample set, so primaryMetric.passes on DESIGN (in-sample) or one walk-forward window is a
+    // diagnostic, never an F1 verdict.
+    expect(split?.falsifiersEvaluated).toEqual(["F2"]);
+    expect(split?.falsifiersNotEvaluated).toContain("F1");
+    expect(split?.falsifiersNotEvaluated).toEqual(["F1", "F3", "F4", "F5", "F6"]);
+  });
+
+  it("labels the average-exposure benchmark as a diagnostic, not section 16.1's second prong", () => {
+    // buildResultReport builds this arm by holding VTI at the strategy's CONSTANT
+    // average realized equity weight, and its own comment says "Approximated here". The charter's section 11
+    // Secondary 2 is "VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator" - a
+    // dynamically re-scaled series. The approximation is a coarser Secondary 1, so this surface must not
+    // present it as the registered comparator.
+    const r = evaluate(evalCharter(), cleanMarket());
+    const split = r.splits[0];
+    expect(split?.approximateVersusAverageExposureBenchmark).toBeTypeOf("number");
+    // The registered second prong is not computed anywhere, so no section 16.1 verdict may appear here.
+    expect(split).not.toHaveProperty("decisiveRejection");
+  });
+
+  it("emits no per-split section 16.1 verdict: the charter defines it over the aggregate set", () => {
+    // Section 16.1 applies "on the aggregate walk-forward out-of-sample set". A per-split verdict would
+    // state a rejection over the in-sample DESIGN window, and several walk-forward splits would contradict
+    // each other where the charter registers exactly one verdict.
+    const r = evaluate(evalCharter(), cleanMarket());
+    for (const split of r.splits) {
+      expect(split).not.toHaveProperty("decisiveRejection");
+      expect(split).not.toHaveProperty("decisiveRejectionDetail");
+      expect(split.falsifiersEvaluated).not.toContain("F1");
+      expect(split.falsifiersEvaluated).not.toContain("F6");
+    }
+  });
+
+  it("omits the approximate benchmark entirely when the charter does not request it", () => {
+    const noSecondary = evalCharter((c) => {
+      c.benchmarks = { ...c.benchmarks, volatility_controlled_primary: false };
+    });
+    const r = evaluate(noSecondary, cleanMarket());
+    const split = r.splits[0];
+    expect(split?.benchmarks.map((b) => b.arm)).not.toContain("APPROX_AVERAGE_EXPOSURE_PRIMARY");
+    expect(split?.approximateVersusAverageExposureBenchmark).toBeUndefined();
   });
 
   it("is deterministic: the same charter and store hash to the same report", () => {

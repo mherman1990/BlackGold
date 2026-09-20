@@ -11,7 +11,7 @@ import {
   runBacktest,
   type BacktestInput,
 } from "./backtest.ts";
-import { buildResultReport } from "./report.ts";
+import { buildResultReport, type ArmMetrics, type ResultReport } from "./report.ts";
 import { splitPlan, type SplitKind } from "./walkforward.ts";
 import { enumerateGrid } from "./robustness.ts";
 
@@ -33,7 +33,7 @@ import { enumerateGrid } from "./robustness.ts";
  *     are clean.
  */
 
-export const EVALUATION_VERSION = 1;
+export const EVALUATION_VERSION = 2;
 
 /**
  * Nominal research notional. Every reported metric is a ratio (Sharpe, total return, drawdown), so the level
@@ -57,8 +57,107 @@ export type SplitEvaluation = {
   promotionBlockingCodes: string[];
   labels: string[];
   primaryMetric: { name: string; pointEstimate: number; lower: number; upper: number; threshold: number; passes: boolean };
-  arms: { arm: string; totalReturn: string; maxDrawdown: string }[];
+  /**
+   * ALPHA_CHARTER section 13's secondary risk metrics, per arm and per benchmark.
+   *
+   * `buildResultReport` has always computed CAGR, Calmar and the drawdowns; this surface dropped all but
+   * total return and max drawdown, so the only number an operator could read from `research evaluate` was
+   * the primary Sharpe difference. The charter's own hypothesis (section 4) claims the strategy raises
+   * "Sharpe and Calmar", and section 13 lists Calmar among the secondary risk metrics - neither was
+   * reachable from the command that produces the evidence.
+   */
+  arms: ArmSummary[];
+  benchmarks: ArmSummary[];
+  /** ALPHA_CHARTER F2: strategy max drawdown against `max_drawdown_ratio` x the primary benchmark's. */
+  drawdown: DrawdownCheck | undefined;
+  /**
+   * Sharpe difference against the benchmark the code builds as `APPROX_AVERAGE_EXPOSURE_PRIMARY`.
+   *
+   * **This is NOT the charter's registered Secondary 2, and must not be read as section 16.1's second
+   * prong.** Section 11 defines Secondary 2 as "VTI scaled to a 10% ex-ante volatility target with the
+   * same 63-day estimator, remainder in BIL" - a dynamically re-scaled series. `buildResultReport` instead
+   * holds VTI at the strategy's *constant average* realized equity weight, and says so ("Approximated
+   * here"). That is a coarser version of Secondary 1 (which uses the same weights per session), not a
+   * volatility-targeted series at all, and it can differ materially in both volatility and return.
+   *
+   * It is surfaced as a diagnostic because it is what the code computes, and naming it honestly is better
+   * than leaving an unlabelled number in the report. Evaluating section 16.1 needs Secondary 2 to be
+   * implemented first; see `docs/analysis/2026-09-20-d51-primary-metric.md`.
+   */
+  approximateVersusAverageExposureBenchmark: number | undefined;
+  /**
+   * Which of the charter's falsifiers this split actually evaluated - which is **F2 only**.
+   *
+   * **F1 is not evaluable per split.** Section 13 defines the primary-metric pass rule "on the aggregate
+   * walk-forward out-of-sample set". DESIGN is in-sample and a single walk-forward window is not the
+   * aggregate, so the adjacent `primaryMetric.passes` is a per-window **diagnostic**, not an F1 verdict.
+   * Saying a split "fails F1" is a category error.
+   *
+   * F3, F4 and F5 need the adverse-cost and extra-delay tiers, the drop-best-year refit, and the full
+   * sensitivity grid; F6 is prospective. None is produced by a single evaluation run.
+   *
+   * Section 16.1's decisive falsifier is absent for the same aggregate-scope reason, and additionally
+   * because the registered Secondary 2 it names is not implemented - see
+   * `docs/analysis/2026-09-20-d51-primary-metric.md`.
+   *
+   * F2 is listed as evaluated because section 16.2 states it without an aggregate qualifier, so a
+   * per-window drawdown ratio is a faithful reading. If that is wrong it belongs in the same bucket.
+   */
+  falsifiersEvaluated: string[];
+  falsifiersNotEvaluated: string[];
 };
+
+export type ArmSummary = {
+  arm: string;
+  totalReturn: string;
+  cagr: string;
+  maxDrawdown: string;
+  /** CAGR over absolute max drawdown. `undefined` when the drawdown is zero. */
+  calmar: string | undefined;
+  annualizedSharpeVsCash: number;
+};
+
+export type DrawdownCheck = {
+  strategy: string;
+  primaryBenchmark: string;
+  /** |strategy| / |benchmark|. Below `limitRatio` passes. */
+  ratio: string;
+  limitRatio: string;
+  /** True when F2 is triggered, i.e. the strategy's drawdown exceeds the allowed multiple. */
+  f2Triggered: boolean;
+};
+
+/** Shape one arm or benchmark's ALPHA_CHARTER section 13 metrics for the operator surface. */
+function armSummary(a: ArmMetrics): ArmSummary {
+  return {
+    arm: a.arm,
+    totalReturn: a.totalReturn.toFixed(8),
+    cagr: a.cagr.toFixed(8),
+    maxDrawdown: a.maxDrawdown.toFixed(8),
+    calmar: a.calmar === undefined ? undefined : a.calmar.toFixed(8),
+    annualizedSharpeVsCash: a.sharpeVsCash,
+  };
+}
+
+/**
+ * ALPHA_CHARTER F2, computed the same way `evaluateFalsifiers` computes it: drawdowns are non-positive,
+ * so the strategy passes when |strategy| <= max_drawdown_ratio x |primary benchmark|.
+ */
+function drawdownCheck(c: Charter, report: ResultReport): DrawdownCheck | undefined {
+  const strategy = report.arms.find((a) => a.arm === "B1_DETERMINISTIC");
+  const benchmark = report.benchmarks.find((b) => b.arm === `${c.benchmarks.primary}_TR`);
+  if (strategy === undefined || benchmark === undefined) return undefined;
+  const limitRatio = new Dec(c.pass_fail.max_drawdown_ratio);
+  const benchAbs = benchmark.maxDrawdown.abs();
+  const strategyAbs = strategy.maxDrawdown.abs();
+  return {
+    strategy: strategy.maxDrawdown.toFixed(8),
+    primaryBenchmark: benchmark.maxDrawdown.toFixed(8),
+    ratio: benchAbs.isZero() ? "undefined" : strategyAbs.div(benchAbs).toFixed(8),
+    limitRatio: limitRatio.toFixed(),
+    f2Triggered: strategyAbs.gt(benchAbs.times(limitRatio)),
+  };
+}
 
 export type EvaluationReport = {
   evaluationVersion: number;
@@ -173,7 +272,12 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
         threshold: report.primaryMetric.threshold,
         passes: report.primaryMetric.passes,
       },
-      arms: report.arms.map((a) => ({ arm: a.arm, totalReturn: a.totalReturn.toFixed(8), maxDrawdown: a.maxDrawdown.toFixed(8) })),
+      arms: report.arms.map(armSummary),
+      benchmarks: report.benchmarks.map(armSummary),
+      drawdown: drawdownCheck(c, report),
+      approximateVersusAverageExposureBenchmark: report.primaryVersusVolatilityControlled,
+      falsifiersEvaluated: ["F2"],
+      falsifiersNotEvaluated: ["F1", "F3", "F4", "F5", "F6"],
     });
 
     notify({ phase: "split-done", total: selected.length, index, splitId: split.id, kind: split.kind });

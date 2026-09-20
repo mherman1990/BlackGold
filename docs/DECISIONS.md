@@ -828,8 +828,53 @@ drawdown reduction**, which this primary metric does not value. A strategy faili
 the very window it was fit to is worth the owner's attention — but so is the possibility that the gate measures
 the wrong thing for this strategy.
 
-**The question.** Is `net_sharpe_difference_vs_primary_benchmark` the right *primary* promotion metric for a
-strategy whose reason to exist is crash protection? Options the owner might weigh: keep it as is (accept that
+**Material update (2026-09-20): the question is premature, and the premise is only half right.** Full
+analysis in `docs/analysis/2026-09-20-d51-primary-metric.md`. Three findings:
+
+1. **The charter already values drawdown.** §4's hypothesis claims the strategy raises "Sharpe **and
+   Calmar**"; §13 lists Calmar and the drawdown ratio among the secondary risk metrics; and **F2** already
+   caps max drawdown at 0.75x the benchmark's. What is missing is a falsifier on Calmar, not the intent.
+2. **The decisive falsifier (§16.1) is a conjunction, and its second prong cannot be computed at all
+   today.** The hypothesis is rejected only if the strategy fails the primary metric against VTI **and**
+   fails to beat Secondary 2. If either passes, §16.1 sends the charter to owner review. But §11 registers
+   Secondary 2 as "VTI scaled to a **10% ex-ante volatility target with the same 63-day estimator**,
+   remainder in BIL", and **nothing in the codebase implements that**. What `buildResultReport` builds is
+   VTI held at the strategy's single *constant average* equity weight - a coarser Secondary 1, not a
+   volatility-targeted series - and its own comment said "Approximated here". So §16.1's second prong has
+   never been computed because the benchmark it names does not exist in code.
+3. **§16.1 is also an aggregate verdict, not a per-split one** ("on the aggregate walk-forward out-of-sample
+   set"), and by §13 **so is the primary-metric pass rule**. DESIGN is in-sample and one walk-forward window
+   is not the aggregate, so a per-split `passes` is a diagnostic and "DESIGN fails F1" is a category error.
+4. **So "the strategy fails its own gate" is wrong twice over.** The DESIGN primary-metric number is a
+   diagnostic, not an F1 verdict, and whether §16.1 rejects is not merely unknown - it is currently
+   uncomputable.
+
+**Recommended ordering, which changes no charter value.** Three steps, and the first two are prerequisites
+that did not exist when this entry was first written:
+
+1. **Implement the registered Secondary 2.** Purely mechanical: §11 freezes the estimator (63-day), the
+   target (10% ex-ante) and the cash leg (BIL), so nothing is chosen after the fact and nothing is
+   contaminated.
+2. **Evaluate §16.1 over the aggregate walk-forward out-of-sample set**, with the splits pooled - not per
+   split.
+3. **Then** decide the metric question. Selecting a new primary metric after seeing that the current one
+   failed is metric-shopping; reporting a secondary the charter already committed to is not.
+
+**Known defect this surfaced:** `evaluateFalsifiers` (`robustness.ts`) computes `decisiveRejection` from that
+same unregistered approximation, and treats a missing prong as "does not beat". Nothing calls it from the CLI
+today, so it is latent - but it would reject a hypothesis against a comparator the charter never registered.
+Fixing it belongs with the Secondary 2 work.
+
+**Correction history.** This entry's first version (2026-09-20) said the second prong was computed on every
+run and merely needed surfacing, and recommended running it. That was wrong on both counts and is corrected
+above; the errors were found by Codex review, not by the sessions that wrote them.
+
+**Also surfaced: §16.1 and §17 contradict each other** when the primary fails but Secondary 2 passes (§16.1
+says owner review; §17 says "REJECTED, never to ACTIVE"). Dormant only while the second prong is unmeasured.
+Worth settling before the number is known.
+
+**The question as originally posed.** Is `net_sharpe_difference_vs_primary_benchmark` the right *primary*
+promotion metric for a strategy whose reason to exist is crash protection? Options the owner might weigh: keep it as is (accept that
 the strategy must earn its keep on Sharpe, not just drawdown); add an explicit maximum-drawdown constraint or
 a Calmar/MAR gate alongside the Sharpe test; or move to a Sortino-based primary. Any of these is defensible;
 the choice is a judgement about what the sleeve is *for*.

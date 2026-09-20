@@ -244,11 +244,14 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
   const benchmarkSeries: { name: string; series: TRSeries }[] = [{ name: `${c.benchmarks.primary}_TR`, series: input.primary }];
   if (c.benchmarks.exposure_matched) benchmarkSeries.push({ name: "EXPOSURE_MATCHED", series: blendSeries(exposureMatched) });
   if (c.benchmarks.volatility_controlled_primary) {
-    // The charter's secondary 2: the primary benchmark scaled to the same volatility target. Approximated
-    // here by holding the primary at the strategy's own average equity weight, which is the comparison the
-    // charter cares about (does trend selection add anything beyond volatility control?).
+    // NOT the charter's Secondary 2. Section 11 registers Secondary 2 as "VTI scaled to a 10% ex-ante
+    // volatility target with the same 63-day estimator, remainder in BIL" - a dynamically re-scaled series.
+    // What is built here holds the primary at the strategy's single CONSTANT average equity weight, which is
+    // a coarser Secondary 1 (that uses the same weights per session) and is not volatility-targeted at all.
+    // The arm is named for what it is so no reader mistakes it for the registered comparator; implementing
+    // Secondary 2 is outstanding work (docs/analysis/2026-09-20-d51-primary-metric.md).
     const average = bt.equityWeights.length === 0 ? ZERO : sumDec(bt.equityWeights.map((w) => w.weight)).div(bt.equityWeights.length);
-    benchmarkSeries.push({ name: "VOLATILITY_CONTROLLED_PRIMARY", series: blendSeries({ equity: input.primary, cash: input.cash, equityWeight: average }) });
+    benchmarkSeries.push({ name: "APPROX_AVERAGE_EXPOSURE_PRIMARY", series: blendSeries({ equity: input.primary, cash: input.cash, equityWeight: average }) });
   }
 
   const metricsFor = (arm: ArmResult): ArmMetrics =>
@@ -279,7 +282,7 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
     ...(input.bootstrapSeed === undefined ? {} : { seed: input.bootstrapSeed }),
   });
   const threshold = Number(c.pass_fail.primary_threshold);
-  const volControlled = benchmarks.find((b) => b.arm === "VOLATILITY_CONTROLLED_PRIMARY");
+  const volControlled = benchmarks.find((b) => b.arm === "APPROX_AVERAGE_EXPOSURE_PRIMARY");
   const candidateMetrics = arms[0];
 
   const rates = input.taxRates ?? { shortTerm: new Dec("0.32"), longTerm: new Dec("0.15") };

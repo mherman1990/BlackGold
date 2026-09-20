@@ -200,7 +200,7 @@ describe("buildResultReport", () => {
     const names = r.benchmarks.map((b) => b.arm);
     expect(names).toContain("VTI_TR");
     expect(names).toContain("EXPOSURE_MATCHED");
-    expect(names).toContain("VOLATILITY_CONTROLLED_PRIMARY");
+    expect(names).toContain("APPROX_AVERAGE_EXPOSURE_PRIMARY");
     // The point estimate never travels without its interval.
     expect(r.primaryMetric.interval.lower).toBeLessThanOrEqual(r.primaryMetric.interval.upper);
     expect(r.primaryMetric.interval.meanBlockSessions).toBe(21);
