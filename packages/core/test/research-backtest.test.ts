@@ -455,6 +455,29 @@ describe("runBacktest", () => {
     expect(r.secondary2InexactReasons.join(" ")).toContain("cover different intervals");
   });
 
+  it("counts a session BOTH legs lack, using the run's own calendar", () => {
+    // Two bars missing on the same date leave it in neither leg's total-return series, so the union of what
+    // the legs observed cannot see it - only the run's calendar can. The resulting step collapses two daily
+    // rebalances into one, which at a fractional weight is not the quantity section 11 describes.
+    //
+    // A volatile VTI is needed for the weight to BE fractional: the default fixture's primary runs well under
+    // the 10% target, so k pins at 1 and the collapse is genuinely exempt. Without this the test would pass
+    // whether or not the calendar were consulted.
+    const volatile: PricePath[] = PATHS.map((x) => (x.entityId === "VTI" ? { ...x, wobble: N("0.012") } : x));
+    const both = buildMarket({
+      paths: volatile,
+      from: D("2026-01-02"),
+      to: D("2026-06-30"),
+      omitSessions: { VTI: [D("2026-05-12")], BIL: [D("2026-05-12")] },
+    });
+    const r = runBacktest(setup({ pit: both.pit, calendar: both.calendar }).input);
+    expect(r.secondary2Index).toBeDefined();
+    // The weight really is fractional somewhere, or the exemption would make this vacuous.
+    expect(r.secondary2Weights.some((w) => w.weight.gt(0) && w.weight.lt(ONE))).toBe(true);
+    expect(r.secondary2Exact).toBe(false);
+    expect(r.secondary2InexactReasons.join(" ")).toContain("skips 1 session(s)");
+  });
+
   it("does not call the estimator's warm-up an approximation", () => {
     // Before the first computable primary volatility there is no previous target to wrongly persist, and the
     // comparator sitting in cash is what section 11 describes and what the strategy does before its first

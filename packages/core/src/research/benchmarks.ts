@@ -98,6 +98,15 @@ export type VolTargetSpec = {
   cash: VolTargetLeg;
   /** Weight changes with the instant each was acquired. Order is irrelevant; the index sorts them. */
   activations: readonly VolTargetActivation[];
+  /**
+   * The exchange sessions the comparator is supposed to rebalance on - the run's own calendar.
+   *
+   * Without it, a session BOTH legs lack is invisible: it appears in neither leg's points, so a step that
+   * skips it looks like an ordinary consecutive step while actually collapsing two daily rebalances into
+   * one. Two stale bars on the same date do exactly that. Sessions either leg observed are always counted,
+   * so omitting this still catches the one-leg case.
+   */
+  expectedSessions?: readonly IsoDate[];
 };
 
 export type VolTargetIndex = {
@@ -186,9 +195,16 @@ export function volatilityTargetedSeries(spec: VolTargetSpec): VolTargetIndex {
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
 
-  // Sessions either leg observes, so a step that skips one can be recognised. `commonSessions` silently
-  // collapses those, and a collapsed step is not the daily-rebalanced quantity section 11 describes.
-  const unionSessions = [...new Set([...spec.equity.tr.points, ...spec.cash.tr.points].map((q) => q.session))].sort();
+  // Every session the comparator was supposed to rebalance on: the run's calendar where one was supplied,
+  // plus anything either leg observed. `commonSessions` silently collapses the rest, and a collapsed step is
+  // not the daily-rebalanced quantity section 11 describes. The calendar is what makes a date BOTH legs lack
+  // visible - two stale bars on the same session would otherwise leave no trace to detect.
+  const unionSessions = [
+    ...new Set([
+      ...[...spec.equity.tr.points, ...spec.cash.tr.points].map((q) => q.session),
+      ...(spec.expectedSessions ?? []),
+    ]),
+  ].sort();
 
   const points: TRPoint[] = [{ session: first, trIndex: ONE, adjClose: ONE, distribution: ZERO, terminal: false }];
   let index = ONE;
@@ -236,18 +252,22 @@ export function volatilityTargetedSeries(spec: VolTargetSpec): VolTargetIndex {
       cursor++;
     }
 
-    // A step that skips a session one leg observed collapses several daily rebalances into one. Blending the
-    // legs' COMPOUNDED endpoint returns is not the same number as compounding their daily blends: at a 50%
-    // weight, +10% then -9.09% against flat cash gives +0.23% daily and 0% collapsed. The missing leg is
-    // exactly what would be needed to reconstruct the intervening steps, so this cannot be repaired here -
-    // only reported. Weights of 0 and 1 are exempt: a single-leg blend compounds identically either way.
+    // A step that skips an expected session collapses several daily rebalances into one. Blending the legs'
+    // COMPOUNDED endpoint returns is not the same number as compounding their daily blends: at a 50% weight,
+    // +10% then -9.09% against flat cash gives +0.23% daily and 0% collapsed. The data needed to reconstruct
+    // the intervening steps is exactly what is missing, so this cannot be repaired here - only reported.
+    //
+    // Weights of 0 and 1 are exempt: a single-leg blend compounds identically either way. The exemption is
+    // tested against the PRE-OPEN weight, never the newly acquired one. The collapsed stretch is everything
+    // before this session's open and is priced at the old weight in both branches below, so a rebalance to
+    // exactly 1 at the end of a stretched interval would otherwise exempt a collapse that happened entirely
+    // at the old fractional weight.
     for (; unionCursor < unionSessions.length; unionCursor++) {
       const u = unionSessions[unionCursor];
       if (u === undefined || u >= cur) break;
     }
     const skipped = unionSessions.slice(0, unionCursor).filter((u) => u > prev);
-    const effectiveWeight = atOpen ?? weight;
-    if (skipped.length > 0 && !effectiveWeight.isZero() && !effectiveWeight.eq(ONE)) {
+    if (skipped.length > 0 && !weight.isZero() && !weight.eq(ONE)) {
       inexactReasons.push(
         `the ${prev} -> ${cur} step skips ${String(skipped.length)} session(s) one leg observed, collapsing that many daily rebalances into one`,
       );

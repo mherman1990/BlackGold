@@ -259,6 +259,43 @@ describe("volatilityTargetedSeries (ALPHA_CHARTER section 11 Secondary 2)", () =
     expect(half.series.points[1]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
   });
 
+  it("judges the collapse by the PRE-OPEN weight, not the one acquired at the end of it", () => {
+    // A stretched interval that ends with a rebalance to exactly 1 was exempted on the strength of the NEW
+    // weight. The collapsed stretch is everything before this session's open, and it is priced at the OLD
+    // weight - so a collapse that happened entirely at a fractional weight was waved through by the value it
+    // rebalanced TO. Secondary 2 targets exactly 1 whenever the primary is below target, so this is the
+    // common shape rather than an exotic one.
+    const swings = leg([[1, 100, 100], [2, 110, 110], [3, 100, 100]]);
+    const sparseCash = leg([[1, 10, 10], [3, 10, 10]]);
+    const s = volatilityTargetedSeries({
+      equity: swings,
+      cash: sparseCash,
+      activations: [atClose("0.6", 1), atOpen("1", 3)],
+    });
+    expect(s.exact).toBe(false);
+    expect(s.inexactReasons.join(" ")).toContain("collapsing");
+  });
+
+  it("counts a session BOTH legs lack when the expected calendar is supplied", () => {
+    // Two stale bars on the same date leave it in neither leg's points, so the union of what the legs
+    // observed cannot see it and the step looks ordinary while collapsing two rebalances. Only the run's own
+    // calendar reveals it.
+    const gapped = leg([[1, 100, 100], [3, 100, 100]]);
+    const cashGapped = leg([[1, 10, 10], [3, 10, 10]]);
+    const acts = [atClose("0.5", 1)];
+    const blind = volatilityTargetedSeries({ equity: gapped, cash: cashGapped, activations: acts });
+    expect(blind.exact).toBe(true); // nothing observed day 2, so nothing to notice
+
+    const seeing = volatilityTargetedSeries({
+      equity: gapped,
+      cash: cashGapped,
+      activations: acts,
+      expectedSessions: [S(1), S(2), S(3)],
+    });
+    expect(seeing.exact).toBe(false);
+    expect(seeing.inexactReasons.join(" ")).toContain("skips 1 session(s)");
+  });
+
   it("does not flag a collapsed step at a weight of 0 or 1, where compounding is identical", () => {
     // A single-leg blend compounds the same way whether the daily steps are blended or the endpoints are, so
     // the collapse changes nothing and the prong should not be withheld for it. Secondary 2 sits at 1
@@ -316,10 +353,9 @@ describe("volatilityTargetedSeries (ALPHA_CHARTER section 11 Secondary 2)", () =
     const withDist = volatilityTargetedSeries({ equity: payer, cash: sparseCash, activations: acts });
     const without = volatilityTargetedSeries({ equity: noPayer, cash: sparseCash, activations: acts });
     expect(withDist.series.points.map((q) => q.session)).toEqual([S(1), S(3)]);
-    // The same stretched interval also collapses a daily rebalance, which is reported separately - the two
-    // are different defects on one interval, and the distribution surviving does not make the step exact.
-    expect(withDist.exact).toBe(false);
-    expect(withDist.inexactReasons.join(" ")).toContain("collapsing");
+    // The stretch is priced at a pre-open weight of 1 - a single leg - so the collapse changes nothing and
+    // is exempt. The distribution assertion below is therefore not riding on some other flag being set.
+    expect(withDist.exact).toBe(true);
 
     // The 5% payment must show up. Under the dropped-distribution formula these two are byte-identical.
     const a = withDist.series.points[1]?.trIndex;

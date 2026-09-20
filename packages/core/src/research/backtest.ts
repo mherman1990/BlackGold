@@ -661,6 +661,8 @@ export function runBacktest(input: BacktestInput): BacktestResult {
           equity: { bars: s2Equity.bars, tr: s2Equity.tr },
           cash: { bars: s2Cash.bars, tr: s2Cash.tr },
           activations: s2.activations,
+          // The run's own calendar, so a session BOTH legs lack is still counted as a skipped rebalance.
+          expectedSessions: allSessions,
         });
   const secondary2Index = built?.series;
   // A comparator that could not be placed exactly is reported as such, never quietly consumed: section 16.1's
