@@ -11,7 +11,7 @@ import {
   runBacktest,
   type BacktestInput,
 } from "./backtest.ts";
-import { buildResultReport } from "./report.ts";
+import { buildResultReport, type ArmMetrics, type ResultReport } from "./report.ts";
 import { splitPlan, type SplitKind } from "./walkforward.ts";
 import { enumerateGrid } from "./robustness.ts";
 
@@ -33,7 +33,7 @@ import { enumerateGrid } from "./robustness.ts";
  *     are clean.
  */
 
-export const EVALUATION_VERSION = 1;
+export const EVALUATION_VERSION = 2;
 
 /**
  * Nominal research notional. Every reported metric is a ratio (Sharpe, total return, drawdown), so the level
@@ -57,8 +57,126 @@ export type SplitEvaluation = {
   promotionBlockingCodes: string[];
   labels: string[];
   primaryMetric: { name: string; pointEstimate: number; lower: number; upper: number; threshold: number; passes: boolean };
-  arms: { arm: string; totalReturn: string; maxDrawdown: string }[];
+  /**
+   * ALPHA_CHARTER section 13's secondary risk metrics, per arm and per benchmark.
+   *
+   * `buildResultReport` has always computed CAGR, Calmar and the drawdowns; this surface dropped all but
+   * total return and max drawdown, so the only number an operator could read from `research evaluate` was
+   * the primary Sharpe difference. The charter's own hypothesis (section 4) claims the strategy raises
+   * "Sharpe and Calmar", and section 13 lists Calmar among the secondary risk metrics - neither was
+   * reachable from the command that produces the evidence.
+   */
+  arms: ArmSummary[];
+  benchmarks: ArmSummary[];
+  /** ALPHA_CHARTER F2: strategy max drawdown against `max_drawdown_ratio` x the primary benchmark's. */
+  drawdown: DrawdownCheck | undefined;
+  /**
+   * ALPHA_CHARTER section 16.1's second prong: the strategy's Sharpe against the volatility-controlled
+   * primary benchmark (Secondary 2). Positive means trend selection adds something beyond volatility
+   * control alone. `undefined` when the charter does not request that benchmark.
+   */
+  primaryVersusVolatilityControlled: number | undefined;
+  /**
+   * ALPHA_CHARTER section 16.1's decisive falsifier, which is a conjunction: the hypothesis is rejected
+   * only when the strategy fails the primary metric against VTI **and** fails to beat Secondary 2. If
+   * either passes, section 16.1 sends the charter to owner review rather than rejection.
+   *
+   * `undefined` when the second prong is unavailable, which is not the same as a rejection. Note that
+   * `evaluateFalsifiers` treats a missing second prong as "does not beat", so a rejection verdict from
+   * there rests on an absent number; this surface reports the gap instead of resolving it silently.
+   */
+  decisiveRejection: boolean | undefined;
+  decisiveRejectionDetail: string;
+  /**
+   * Which of the charter's falsifiers this run actually evaluated. F3, F4 and F5 need the adverse-cost
+   * and extra-delay tiers, the drop-best-year refit, and the full sensitivity grid - none of which a
+   * single evaluation run produces - so they are named here as not evaluated rather than assumed to pass.
+   */
+  falsifiersEvaluated: string[];
+  falsifiersNotEvaluated: string[];
 };
+
+export type ArmSummary = {
+  arm: string;
+  totalReturn: string;
+  cagr: string;
+  maxDrawdown: string;
+  /** CAGR over absolute max drawdown. `undefined` when the drawdown is zero. */
+  calmar: string | undefined;
+  annualizedSharpeVsCash: number;
+};
+
+export type DrawdownCheck = {
+  strategy: string;
+  primaryBenchmark: string;
+  /** |strategy| / |benchmark|. Below `limitRatio` passes. */
+  ratio: string;
+  limitRatio: string;
+  /** True when F2 is triggered, i.e. the strategy's drawdown exceeds the allowed multiple. */
+  f2Triggered: boolean;
+};
+
+/** Shape one arm or benchmark's ALPHA_CHARTER section 13 metrics for the operator surface. */
+function armSummary(a: ArmMetrics): ArmSummary {
+  return {
+    arm: a.arm,
+    totalReturn: a.totalReturn.toFixed(8),
+    cagr: a.cagr.toFixed(8),
+    maxDrawdown: a.maxDrawdown.toFixed(8),
+    calmar: a.calmar === undefined ? undefined : a.calmar.toFixed(8),
+    annualizedSharpeVsCash: a.sharpeVsCash,
+  };
+}
+
+/**
+ * ALPHA_CHARTER F2, computed the same way `evaluateFalsifiers` computes it: drawdowns are non-positive,
+ * so the strategy passes when |strategy| <= max_drawdown_ratio x |primary benchmark|.
+ */
+function drawdownCheck(c: Charter, report: ResultReport): DrawdownCheck | undefined {
+  const strategy = report.arms.find((a) => a.arm === "B1_DETERMINISTIC");
+  const benchmark = report.benchmarks.find((b) => b.arm === `${c.benchmarks.primary}_TR`);
+  if (strategy === undefined || benchmark === undefined) return undefined;
+  const limitRatio = new Dec(c.pass_fail.max_drawdown_ratio);
+  const benchAbs = benchmark.maxDrawdown.abs();
+  const strategyAbs = strategy.maxDrawdown.abs();
+  return {
+    strategy: strategy.maxDrawdown.toFixed(8),
+    primaryBenchmark: benchmark.maxDrawdown.toFixed(8),
+    ratio: benchAbs.isZero() ? "undefined" : strategyAbs.div(benchAbs).toFixed(8),
+    limitRatio: limitRatio.toFixed(),
+    f2Triggered: strategyAbs.gt(benchAbs.times(limitRatio)),
+  };
+}
+
+/**
+ * ALPHA_CHARTER section 16.1. The decisive falsifier is a conjunction, not the primary metric alone:
+ * the hypothesis is rejected only when the strategy fails the primary metric against the primary
+ * benchmark AND fails to beat Secondary 2 (the volatility-controlled primary). If either passes, the
+ * charter goes to owner review.
+ *
+ * Reported as `undefined` when the second prong was not computed, because "we did not measure it" is
+ * not the same finding as "it failed", and section 16.1 turns on that difference.
+ */
+function decisiveRejectionOf(report: ResultReport): { verdict: boolean | undefined; detail: string } {
+  const beatsPrimary = report.primaryMetric.passes;
+  const versus = report.primaryVersusVolatilityControlled;
+  if (beatsPrimary) {
+    return { verdict: false, detail: "primary metric passes against the primary benchmark, so section 16.1 does not reject" };
+  }
+  if (versus === undefined) {
+    return {
+      verdict: undefined,
+      detail: "primary metric fails, and the volatility-controlled benchmark was not computed, so section 16.1's second prong is unknown",
+    };
+  }
+  const beatsVolControlled = versus > 0;
+  return {
+    verdict: !beatsVolControlled,
+    detail: beatsVolControlled
+      ? `primary metric fails but the strategy beats the volatility-controlled benchmark by ${versus.toFixed(4)} Sharpe, so section 16.1 sends this to owner review rather than rejection`
+      : `primary metric fails and the strategy trails the volatility-controlled benchmark by ${versus.toFixed(4)} Sharpe, so section 16.1 rejects`,
+  };
+}
 
 export type EvaluationReport = {
   evaluationVersion: number;
@@ -148,6 +266,7 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
     const { primary, cash } = reportBenchmarkSeries(btInput);
     const report = buildResultReport({ charter: c, backtest: bt, primary, cash, trialLedgerCount });
 
+    const decisive = decisiveRejectionOf(report);
     const splitBlocking = blocksPromotionEvidence(bt.labels);
     for (const code of splitBlocking) promotionBlocking.add(code);
     const splitCitable = report.citableAsEvidence && splitBlocking.length === 0;
@@ -173,7 +292,14 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
         threshold: report.primaryMetric.threshold,
         passes: report.primaryMetric.passes,
       },
-      arms: report.arms.map((a) => ({ arm: a.arm, totalReturn: a.totalReturn.toFixed(8), maxDrawdown: a.maxDrawdown.toFixed(8) })),
+      arms: report.arms.map(armSummary),
+      benchmarks: report.benchmarks.map(armSummary),
+      drawdown: drawdownCheck(c, report),
+      primaryVersusVolatilityControlled: report.primaryVersusVolatilityControlled,
+      decisiveRejection: decisive.verdict,
+      decisiveRejectionDetail: decisive.detail,
+      falsifiersEvaluated: ["F1", "F2"],
+      falsifiersNotEvaluated: ["F3", "F4", "F5", "F6"],
     });
 
     notify({ phase: "split-done", total: selected.length, index, splitId: split.id, kind: split.kind });

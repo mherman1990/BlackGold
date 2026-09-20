@@ -73,7 +73,7 @@ function evaluate(c: Charter, market: ReturnType<typeof buildMarket>) {
 describe("runEvaluation", () => {
   it("evaluates the design and recent splits and never the sealed holdout", () => {
     const r = evaluate(evalCharter(), cleanMarket());
-    expect(r.evaluationVersion).toBe(1);
+    expect(r.evaluationVersion).toBe(2);
     // Design and recent are in-window; the 1-year walk-forward window yields no rolling split here.
     const kinds = r.splits.map((s) => s.kind);
     expect(kinds).toContain("DESIGN");
@@ -88,6 +88,101 @@ describe("runEvaluation", () => {
     }
     expect(r.reportHash).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(r.barsSourceId).toBe("tiingo.eod.bars.1d");
+  });
+
+  // ALPHA_CHARTER section 13 and section 16.1. These numbers were computed by buildResultReport all along
+  // and dropped by this surface, which left `research evaluate` able to report only the primary Sharpe
+  // difference. The charter's own hypothesis (section 4) claims the strategy raises "Sharpe and Calmar",
+  // and section 16.1's decisive falsifier is a conjunction whose second prong was therefore unreadable.
+  it("surfaces the section 13 secondary risk metrics for every arm and benchmark", () => {
+    const r = evaluate(evalCharter(), cleanMarket());
+    const split = r.splits[0];
+    expect(split).toBeDefined();
+    if (split === undefined) return;
+
+    expect(split.arms.length).toBeGreaterThan(0);
+    expect(split.benchmarks.length).toBeGreaterThan(0);
+    for (const a of [...split.arms, ...split.benchmarks]) {
+      expect(a.totalReturn).toMatch(/^-?\d+\.\d{8}$/);
+      expect(a.cagr).toMatch(/^-?\d+\.\d{8}$/);
+      expect(a.maxDrawdown).toMatch(/^-?\d+\.\d{8}$/);
+      expect(Number.isFinite(a.annualizedSharpeVsCash)).toBe(true);
+      // Calmar is undefined only when the drawdown is exactly zero; it is never silently a number then.
+      if (a.calmar !== undefined) expect(a.calmar).toMatch(/^-?\d+\.\d{8}$/);
+    }
+  });
+
+  it("reports F2 as the charter computes it: |strategy| against max_drawdown_ratio x |benchmark|", () => {
+    const r = evaluate(evalCharter(), cleanMarket());
+    const split = r.splits[0];
+    expect(split?.drawdown).toBeDefined();
+    const dd = split?.drawdown;
+    if (dd === undefined) return;
+    expect(dd.limitRatio).toBe("0.75");
+    // Drawdowns are reported non-positive, and the ratio is of absolute values.
+    expect(Number(dd.strategy)).toBeLessThanOrEqual(0);
+    expect(Number(dd.primaryBenchmark)).toBeLessThanOrEqual(0);
+    if (dd.ratio !== "undefined") {
+      expect(Number(dd.ratio)).toBeGreaterThanOrEqual(0);
+      expect(dd.f2Triggered).toBe(Number(dd.ratio) > Number(dd.limitRatio));
+    }
+  });
+
+  it("names which falsifiers the run evaluated, rather than implying the rest passed", () => {
+    const r = evaluate(evalCharter(), cleanMarket());
+    const split = r.splits[0];
+    // F3/F4/F5 need the cost and delay tiers, the drop-best-year refit and the full grid; F6 is prospective.
+    expect(split?.falsifiersEvaluated).toEqual(["F1", "F2"]);
+    expect(split?.falsifiersNotEvaluated).toEqual(["F3", "F4", "F5", "F6"]);
+  });
+
+  it("computes section 16.1's second prong when the charter asks for the volatility-controlled benchmark", () => {
+    const r = evaluate(evalCharter(), cleanMarket());
+    const split = r.splits[0];
+    expect(split?.benchmarks.map((b) => b.arm)).toContain("VOLATILITY_CONTROLLED_PRIMARY");
+    expect(split?.primaryVersusVolatilityControlled).toBeTypeOf("number");
+  });
+
+  it("does not call a missing second prong a rejection (section 16.1 is a conjunction)", () => {
+    // Negative/boundary case: with no volatility-controlled benchmark there is no second prong, so the
+    // decisive falsifier is unknown. Reporting `true` here would reject a hypothesis on a number nobody
+    // measured, which is the specific failure section 16.1 exists to prevent.
+    const noSecondary = evalCharter((c) => {
+      c.benchmarks = { ...c.benchmarks, volatility_controlled_primary: false };
+    });
+    const r = evaluate(noSecondary, cleanMarket());
+    const split = r.splits[0];
+    expect(split?.benchmarks.map((b) => b.arm)).not.toContain("VOLATILITY_CONTROLLED_PRIMARY");
+    expect(split?.primaryVersusVolatilityControlled).toBeUndefined();
+
+    if (split?.primaryMetric.passes === true) {
+      // The first prong passing is enough to decide: section 16.1 does not reject.
+      expect(split.decisiveRejection).toBe(false);
+    } else {
+      expect(split?.decisiveRejection).toBeUndefined();
+      expect(split?.decisiveRejectionDetail).toContain("second prong is unknown");
+    }
+  });
+
+  it("decides section 16.1 from both prongs when both are available", () => {
+    const r = evaluate(evalCharter(), cleanMarket());
+    const split = r.splits[0];
+    if (split === undefined) return;
+    const versus = split.primaryVersusVolatilityControlled;
+    expect(versus).toBeTypeOf("number");
+    if (versus === undefined) return;
+
+    if (split.primaryMetric.passes) {
+      expect(split.decisiveRejection).toBe(false);
+      expect(split.decisiveRejectionDetail).toContain("does not reject");
+    } else if (versus > 0) {
+      // Fails the primary metric but beats Secondary 2: owner review, explicitly not rejection.
+      expect(split.decisiveRejection).toBe(false);
+      expect(split.decisiveRejectionDetail).toContain("owner review");
+    } else {
+      expect(split.decisiveRejection).toBe(true);
+      expect(split.decisiveRejectionDetail).toContain("rejects");
+    }
   });
 
   it("is deterministic: the same charter and store hash to the same report", () => {
