@@ -301,7 +301,7 @@ describe("runBacktest", () => {
     for (const d of r.decisions) {
       const at = indexOf.get(d.decisionSession);
       if (at === undefined) continue;
-      const effective = r.sessions[at + delay];
+      const effective = r.sessions[at + Math.max(delay, 1)];
       if (effective !== undefined) allowed.add(effective);
     }
 
@@ -313,10 +313,33 @@ describe("runBacktest", () => {
       if (!cur.weight.eq(prev.weight)) {
         changes++;
         expect(allowed.has(cur.session)).toBe(true);
-        // Never on the decision session itself: that is the look-ahead this test exists to exclude.
-        expect(r.decisions.some((d) => d.decisionSession === cur.session)).toBe(delay === 0);
+        // Never on the decision session itself, INCLUDING at zero delay. The previous version of this test
+        // permitted the change when delay === 0, which blessed exactly the look-ahead it was meant to catch:
+        // a zero-delay fill lands at the decision close, so the weight cannot earn the return ending there.
+        expect(r.decisions.some((d) => d.decisionSession === cur.session)).toBe(false);
       }
     }
+    expect(changes).toBeGreaterThan(0);
+  });
+
+  it("never activates a Secondary 2 weight on the decision session, even at zero delay", () => {
+    // delayBarsOverride: 0 fills at the decision close, so the position exists only from that close. If the
+    // weight activated on the decision session, blendSeries would apply it to the previous-close-to-decision-
+    // close return - a volatility estimated AT that close earning the return ending at it.
+    const { input } = setup();
+    const r = runBacktest({ ...input, costs: { ...input.costs, delayBars: 0 } });
+    const decisionSessions = new Set(r.decisions.map((d) => d.decisionSession));
+    let changes = 0;
+    for (let i = 1; i < r.secondary2Weights.length; i++) {
+      const prev = r.secondary2Weights[i - 1];
+      const cur = r.secondary2Weights[i];
+      if (prev === undefined || cur === undefined) continue;
+      if (!cur.weight.eq(prev.weight)) {
+        changes++;
+        expect(decisionSessions.has(cur.session)).toBe(false);
+      }
+    }
+    // Without this the assertion above is vacuous: a run that never changes weight would pass trivially.
     expect(changes).toBeGreaterThan(0);
   });
 

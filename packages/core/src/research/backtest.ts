@@ -299,7 +299,8 @@ export function reportBenchmarkSeries(input: BacktestInput): { primary: TRSeries
  * the strategy's own fills obey.
  *
  * Applying the weight at `d` itself would be look-ahead: `blendSeries` multiplies the weight by session `d`'s
- * own return, and the volatility that set the weight was estimated through `d`'s close. Sessions before the
+ * own return, and the volatility that set the weight was estimated through `d`'s close. The shift is therefore
+ * `max(delayBars, 1)`, never `delayBars`, so a zero-delay run cannot activate on the decision session. Sessions before the
  * first effective decision carry zero, matching a strategy that holds no equity before its first fill.
  *
  * **Known approximation, one session wide.** `simulateFill` fills at the OPEN of the fill session, so the
@@ -308,12 +309,14 @@ export function reportBenchmarkSeries(input: BacktestInput): { primary: TRSeries
  * including the overnight or weekend gap the strategy's position did not exist for. The error is one gap per
  * rebalance, signed by whichever way gaps run.
  *
- * This is NOT specific to Secondary 2: `EXPOSURE_MATCHED` (Secondary 1) has the identical property, because
- * `dailyNavSeries` measures `investedWeight` at each session's close after applying that session's fills, and
- * `blendSeries` then applies it to the full close-to-close return. Removing it means making the benchmark
- * engine open-aware for both secondaries, which is a wider change than implementing Secondary 2 and is
- * recorded for the owner rather than taken unilaterally
- * (`docs/analysis/2026-09-20-d51-primary-metric.md`).
+ * `EXPOSURE_MATCHED` shares the mechanics, but that does NOT make this an established convention: §11 defines
+ * Secondary 1 as the realized average equity weight in each CALENDAR MONTH applied EX POST, while the code
+ * uses a per-session post-fill weight. So Secondary 1 as implemented is itself not the registered benchmark,
+ * and cannot be cited as precedent for Secondary 2's timing.
+ *
+ * This remains unresolved and is the owner's call, recorded in
+ * `docs/analysis/2026-09-20-d51-primary-metric.md`: §16.1's second prong is a decisive input, and an exact
+ * treatment needs open-aware fill-session returns, which the close-to-close total-return blend cannot express.
  */
 function secondary2WeightSeries(
   perDecision: readonly { decisionSession: IsoDate; weight: Dec }[],
@@ -326,7 +329,12 @@ function secondary2WeightSeries(
   for (const { decisionSession, weight } of perDecision) {
     const at = indexOf.get(decisionSession);
     if (at === undefined) continue;
-    const target = at + delayBars;
+    // `max(delayBars, 1)`: with `delayBarsOverride: 0` the simulator fills at the DECISION CLOSE, so the
+    // position exists only from that close onward. Activating on the decision session itself would let
+    // `blendSeries` apply the weight to the previous-close-to-decision-close return - a volatility estimated
+    // AT that close earning the return ending at it. That is look-ahead, and the delay-sensitivity tier (F3)
+    // is exactly where a zero delay shows up.
+    const target = at + Math.max(delayBars, 1);
     if (target >= allSessions.length) continue; // decided too late in the window to ever take effect
     // Later decisions win when two map to the same session, matching the order they were taken.
     effective.set(target, weight);

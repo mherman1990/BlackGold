@@ -133,21 +133,40 @@ move — including the overnight or weekend gap the strategy's position did not 
 per rebalance, signed by whichever way gaps run, and with weekly rebalancing that is a few hundred gaps over a
 design window.
 
-This is **not specific to Secondary 2**. `EXPOSURE_MATCHED` (Secondary 1) has the identical property:
-`dailyNavSeries` measures `investedWeight` at each session's close *after* applying that session's fills, and
-`blendSeries` then applies it to the full close-to-close return. So the convention is pre-existing across the
-benchmark engine rather than something Secondary 2 introduced.
+**A correction: my first reason for deferring this was wrong.** I argued `EXPOSURE_MATCHED` (Secondary 1) has
+the identical property, so the timing was an established convention Secondary 2 merely inherited. It shares the
+*mechanics*, but §11 defines Secondary 1 as the realized average equity weight in **each calendar month,
+applied ex post** — while the code uses a per-session post-fill weight. So **Secondary 1 as implemented is
+itself not the registered benchmark**, and cannot serve as precedent for anything. Found by Codex; the appeal
+to precedent collapses.
 
-Removing it means making the benchmark engine open-aware for both secondaries — a wider change than
-implementing Secondary 2, and one that alters an existing comparator. Two defensible positions:
+That leaves a second, larger finding: **two of the charter's registered comparators are unimplemented.**
+Secondary 2 did not exist until this PR, and Secondary 1 is a per-session approximation of a monthly ex-post
+definition. Both feed §13's registered metrics.
+
+On the gap timing itself, two defensible positions remain:
 
 - **Accept it.** Both secondaries share the bias, so comparisons between them are consistent, and a
   frictionless index blend is an approximation by construction anyway.
 - **Fix it.** §16.1's second prong is a *decisive* input, and a systematic few-hundred-gap bias in a decisive
   comparator is a different thing from a cosmetic one in a reporting benchmark.
 
-Recorded rather than chosen, because it is a scope-and-standards judgement and the engine change would touch a
-benchmark already in use. Found by Codex review of this PR.
+Recorded rather than chosen, because it is a scope-and-standards judgement and an exact treatment needs
+open-aware fill-session returns that a close-to-close total-return blend cannot express. Found by Codex review
+of this PR.
+
+**A related charter ambiguity, also unresolved.** §13 lists "**excess return** versus Secondary 1 and
+Secondary 2" among the registered metrics, while §16.1 says the strategy must not "fail to beat Secondary 2"
+without naming a measure. The implementation uses the **Sharpe difference**, by parallel with §16.1's first
+prong ("fails to improve *the primary metric* over VTI"). Codex reads §13 as governing and would use excess
+return. The two can disagree — a strategy can have a higher return and a lower Sharpe than Secondary 2 — and
+the disagreement can flip a decisive rejection. Another D-32-shaped reading for the owner, not a code choice.
+
+**A zero-delay look-ahead, found and fixed.** With `delayBarsOverride: 0` the simulator fills at the decision
+close, but the weight activated on the decision session itself, letting a volatility estimated *at* that close
+earn the return ending at it. The shift is now `max(delayBars, 1)`. Worth recording that the original
+weight-timing test **explicitly permitted** this case — it asserted the change may land on a decision session
+when `delay === 0`, blessing the exact leak it was written to catch.
 
 **One charter ambiguity this forced into the open, and an owner call.** §11 does not state a re-scaling
 cadence. The implementation re-scales **weekly, at the strategy's decision instants**, chosen so that
