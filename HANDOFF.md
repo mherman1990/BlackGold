@@ -72,7 +72,9 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 ## 5. When the charter is approved and data is ingested
 
-**Both preconditions in this heading are now met** (charter signed at 0.2.0 on 2026-09-12; Tiingo bars ingested and refreshed nightly), so this procedure is live rather than hypothetical. One addition it predates: a run reading Tiingo's automated corporate actions is stamped `UNVERIFIED_SINGLE_SOURCE` and can never be promotion evidence, so curate reconciled ≥2-source actions **before** step 5 if the result is meant to be citable. Registering on single-source actions is not wrong — it is simply not citable, and registration is one-way.
+**Both preconditions in this heading are now met** (charter signed at 0.2.0 on 2026-09-12; Tiingo bars ingested and refreshed nightly), so this procedure is live rather than hypothetical.
+
+**One addition it predates, and the ordering matters more than it looks.** A run reading Tiingo's automated corporate actions is stamped `UNVERIFIED_SINGLE_SOURCE` and can never be promotion evidence. If the result is meant to be citable, ingest the reconciled ≥2-source actions **before step 2**, not merely before registration. `createSnapshot` freezes `max(observations.id)` (`data/pit/repository.ts`), `asOf` scoped to a snapshot filters `id <= maxObservationId`, and a trial may only cite a snapshot the experiment registered (`research/registry.ts`, `FrozenInputMismatchError`). So a snapshot taken at step 2 and *then* topped up with reconciled actions still excludes them: the registered experiment goes on reading the single-source rows and stays uncitable, and the only remedy is a replacement experiment. Reconcile, then snapshot. Registering on single-source actions is not wrong — it is simply not citable, and registration is one-way.
 
 Do these in order. Steps 1 to 4 are reversible; step 5 is not.
 

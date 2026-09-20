@@ -13,14 +13,14 @@ merged roughly thirty commits since, through PR #86. Where the two disagree,
 
 ## 1. Where the build is (verified)
 
-**Merged to `main` at `d6acc2c`.** 829 tests, `npm run check` green.
+**Merged to `main`**, at `4f5d005` when this note was written and `765fde8` after the note itself merged (PR #88). 829 tests, `npm run check` green.
 
 | Layer | State |
 |---|---|
 | Phases 0–3 | Merged. Foundation, point-in-time research kernel, first deterministic charter, bounded runtime-LLM analyst overlay + Anthropic adapter |
 | Phase 4 engines | Factor classifier, halt-state machine, risk-limit/caps engine, compliance engine — all merged, all pure, all fail-closed |
 | Phase 5 gate | `decision/gate.ts` merged (PR #35): halt ∧ limits ∧ new-risk-compliance composed into one go/no-go |
-| Phase 5 shadow track (D-53) | Slice 1 (sealed prospective decision record + migration `0008`), 2a (per-arm target book), 2b (gate-and-seal), 3a-1 (look-through engine), 3a-2 decoder (SSGA `.xlsx`) — **all merged** |
+| Phase 5 shadow track (D-53) | Slice 1 (sealed prospective decision record + migration `0008`), 2a (per-arm target book), 2b (gate-and-seal), 3a-1 (look-through engine), 3a-2 decoder (SSGA `.xlsx`) and 3a-2 fetch (PIT ingest, PR #87) — **all merged**. Remaining: 3a-3, 2c, 3b, 4 |
 | Release | **0.1.12 published and running on the Pi.** GHCR public, image digest-pinned in the compose. Releases now cut by `release.yml` dispatch (D-38) |
 | Data | Tiingo EOD bars ingested on the Pi (96,288 bars, 2000–2026) + Tiingo corporate actions (D-49, `UNVERIFIED_SINGLE_SOURCE`). FRED / SEC / CFTC / Alpaca adapters live-verified. Opt-in nightly auto-ingest shipped (0.1.11/0.1.12) |
 | Evaluation engine | `research evaluate` shipped (0.1.9/0.1.10) and **run end to end on real data** on 2026-09-13 — see `2026-09-13-etf-trend-vol-machinery-check.md` |
@@ -28,10 +28,10 @@ merged roughly thirty commits since, through PR #86. Where the two disagree,
 | Live trading | Absent by construction. No broker credential exists anywhere |
 | Registered experiments | **Still none.** No result is citable, no holdout opened |
 
-**Open PR: #87** — SSGA holdings fetch adapter (D-53 slice 3a-2 fetch). CI green
-since 2026-09-15, one Codex P1 already fixed (point-in-time correction ordering),
-no conflicts. It has been sitting five days. Merging it is the first action of
-the next session unless Matt wants to read it first.
+**PR #87 is merged** — SSGA holdings fetch adapter (D-53 slice 3a-2 fetch), in
+`main` as of 2026-09-20 at `4f5d005`. It had sat green and idle for five days
+with one Codex P1 already fixed (point-in-time correction ordering). Merging it
+unblocked slice 3a-3.
 
 ### The thing to understand about the 2026-09-13 run
 
