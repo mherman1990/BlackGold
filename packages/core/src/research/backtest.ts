@@ -761,11 +761,20 @@ export function runBacktest(input: BacktestInput): BacktestResult {
     to: input.to,
     costsTier: input.costs.tier,
     delayBars: input.costs.delayBars,
+    // The schema version belongs in the identity, not only beside it. Without it, a result written under an
+    // older shape and one written under this one hash identically from the same inputs, which is exactly the
+    // gap that let an absent `secondary2Withheld` be read as "usable" a commit ago.
+    backtestVersion: BACKTEST_VERSION,
     // Whether the decisive comparator was placed exactly is part of what this result IS, not a note about it:
     // two runs agreeing on every other field here mean different things if one's Secondary 2 was approximated
-    // and the other's was not. Leaving it out would let them share a `resultHash`, which is the same defect
-    // the tri-state verdict hash fixed one layer up.
+    // and the other's was not.
     secondary2Exact,
+    // And whether it may be CONSUMED is a further distinction: a placed-exactly result that is withheld and
+    // one that is usable differ in the only way that matters to section 16.1. This is the third time in this
+    // work that a field deciding what a result MEANS was left out of the hash that gives it an identity -
+    // after the tri-state verdict and `secondary2Exact` itself. The rule is now explicit: anything that
+    // changes whether or how a number may be used goes in the body.
+    secondary2Withheld,
     decisionSeals: decisions.map((d) => d.sealHash),
     finalNav: Object.fromEntries(Object.entries(arms).map(([k, v]) => [k, (v.nav.at(-1)?.nav ?? ZERO).toFixed()])),
     labels: [...labels].sort(),
