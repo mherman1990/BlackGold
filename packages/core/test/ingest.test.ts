@@ -23,6 +23,7 @@ const fixtures = {
   cot: read("cftc/legacy-futures-three-weeks.json"),
   alpaca1: read("alpaca/bars-1d-page1.json"),
   alpaca2: read("alpaca/bars-1d-page2.json"),
+  ssga: read("ssga/holdings-xli.xlsx"),
 };
 const FRED_KEY = "fakefredkey0123456789abcdef";
 const ALPACA_ID = "fake-alpaca-key-id-0001";
@@ -49,6 +50,7 @@ function harness(overrides: Record<string, unknown> = {}): { db: Db; config: App
     else if (u.hostname === "api.stlouisfed.org") body = u.pathname.endsWith("/vintagedates") ? fixtures.fredVintages : fixtures.fred;
     else if (u.hostname === "publicreporting.cftc.gov") body = fixtures.cot;
     else if (u.hostname === "data.alpaca.markets") body = u.searchParams.has("page_token") ? fixtures.alpaca2 : fixtures.alpaca1;
+    else if (u.hostname === "www.ssga.com") body = fixtures.ssga;
     else return Promise.resolve({ status: 404, headers: { get: () => null }, arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)) });
     return Promise.resolve({ status: 200, headers: { get: () => null }, arrayBuffer: () => Promise.resolve(toBuf(body)) });
   };
@@ -141,6 +143,17 @@ describe("ingest run", () => {
     h.db.close();
   });
 
+  it("ingests SSGA holdings as one point-in-time observation (unauthenticated, no credential)", async () => {
+    const h = harness();
+    const report = await runIngest({ db: h.db, config: h.config, calendar, clock, fetchImpl: h.fetchImpl }, { source: "ssga-holdings", etfs: ["XLI"] });
+    expect([report.source, report.artifacts, report.observations, report.deduplicated, report.conflicts, report.requestCount]).toEqual(["ssga-holdings", 1, 1, 0, 0, 1]);
+    expect(report.sourceIds).toEqual(["etf_holdings.ssga.XLI"]);
+    expect(h.requests.some((r) => r.url.includes("holdings-daily-us-en-xli.xlsx"))).toBe(true);
+    // One stored observation whose value carries the decoded constituents; no credential header was needed.
+    expect((h.db.prepare("SELECT count(*) AS n FROM observations WHERE source_id = 'etf_holdings.ssga.XLI'").get() as { n: number }).n).toBe(1);
+    h.db.close();
+  });
+
   it("refuses to ingest without the SEC contact before any request", async () => {
     const h = harness({ secUserAgentContact: undefined });
     await expect(runIngest({ db: h.db, config: h.config, calendar, clock, fetchImpl: h.fetchImpl }, FRED_REQUEST)).rejects.toThrow(MissingSourceCredentialError);
@@ -209,6 +222,7 @@ describe("ingest CLI arguments", () => {
     expect(parseIngestArgs(["fred", "--series", "CPIAUCSL", "--realtime-start", "2020-01-01"])).toEqual({ source: "fred", seriesId: "CPIAUCSL", realtimeStart: "2020-01-01", realtimeEnd: undefined });
     expect(parseIngestArgs(["cot", "--dataset", "legacy_futures", "--from", "2026-06-01"])).toEqual({ source: "cot", dataset: "legacy_futures", marketCode: undefined, from: "2026-06-01", to: undefined });
     expect(parseIngestArgs(["alpaca-bars", "--symbols", "VTI,SPY", "--start", "2026-01-02", "--end", "2026-01-31"])).toEqual({ source: "alpaca-bars", symbols: ["VTI", "SPY"], start: "2026-01-02", end: "2026-01-31" });
+    expect(parseIngestArgs(["ssga-holdings", "--etfs", "XLI,XLP"])).toEqual({ source: "ssga-holdings", etfs: ["XLI", "XLP"] });
   });
 
   it("rejects unknown sources, missing required options, bad dates, and unknown flags", () => {
@@ -218,5 +232,6 @@ describe("ingest CLI arguments", () => {
     expect(() => parseIngestArgs(["cot", "--dataset", "options"])).toThrow(UsageError);
     expect(() => parseIngestArgs(["alpaca-bars", "--symbols", "SPY", "--start", "2026-01-02"])).toThrow(UsageError);
     expect(() => parseIngestArgs(["alpaca-bars", "--symbols", "SPY", "--start", "2026-01-02", "--end", "2026-01-31", "--live"])).toThrow(UsageError);
+    expect(() => parseIngestArgs(["ssga-holdings"])).toThrow(UsageError);
   });
 });

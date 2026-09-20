@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { utc } from "@blackgold/shared";
+import { NyseCalendar } from "../src/calendar/nyse.ts";
 import {
   decodeSsgaHoldings,
+  ssgaHoldingsObservations,
   ssgaHoldingsSourceId,
   ssgaHoldingsUrl,
 } from "../src/data/adapters/ssga-holdings.ts";
-import { SchemaDriftError } from "../src/data/adapters/common.ts";
+import { SchemaDriftError, type ParseContext } from "../src/data/adapters/common.ts";
 
 const FIX = new URL("../../../test/fixtures/ssga/", import.meta.url);
 const fixture = (name: string): Uint8Array => readFileSync(new URL(name, FIX));
@@ -61,5 +64,37 @@ describe("decodeSsgaHoldings: fails closed on every surprise", () => {
   it("rejects a real constituent with a blank/unreadable weight rather than silently dropping it", async () => {
     // Silently dropping a valid-ticker row with no weight could hide a restricted issuer and fail open.
     await expect(decodeSsgaHoldings(fixture("holdings-blankweight.xlsx"), { etf: "XLI" })).rejects.toBeInstanceOf(SchemaDriftError);
+  });
+});
+
+describe("ssgaHoldingsObservations: point-in-time wrapping", () => {
+  const ctx: ParseContext & { etf: string } = {
+    calendar: new NyseCalendar(),
+    ingestedAt: utc("2026-09-02T00:00:00Z"),
+    rawContentHash: "sha256:" + "0".repeat(64),
+    etf: "XLI",
+  };
+
+  it("wraps a decoded file into one observation stamped with the fetch instant as availability and vintage", async () => {
+    const obs = await ssgaHoldingsObservations(fixture("holdings-xli.xlsx"), ctx);
+    expect(obs).toHaveLength(1);
+    const o = obs[0];
+    expect(o?.sourceId).toBe("etf_holdings.ssga.XLI");
+    expect(o?.entityId).toBe("XLI");
+    expect(o?.sourceLocator).toBe("ssga/holdings/XLI/2026-08-29");
+    // The as-of date is the effective date; availableAt and vintageAt are the fetch instant (ingestedAt), so a
+    // corrected file re-published under the same as-of date can never read back retroactively.
+    expect(o?.effectiveAt).toBe(utc("2026-08-29T00:00:00Z"));
+    expect(o?.availableAt).toBe(utc("2026-09-02T00:00:00Z"));
+    expect(o?.availableAt).toBe(ctx.ingestedAt);
+    expect(o?.vintageAt).toBe(o?.availableAt);
+    expect(o?.qualityFlags).toContain("AVAILABLE_AT_ESTIMATED");
+    expect(o?.value.etf).toBe("XLI");
+    expect(o?.value.lines.map((l) => l.symbol)).toEqual(["GE", "CAT", "RTX", "UNP", "HON", "DE"]);
+    expect(o?.value.lines.find((l) => l.symbol === "GE")?.weight).toBe("0.2");
+  });
+
+  it("propagates a decode failure as SchemaDriftError (nothing emitted)", async () => {
+    await expect(ssgaHoldingsObservations(fixture("holdings-wrongfund.xlsx"), ctx)).rejects.toBeInstanceOf(SchemaDriftError);
   });
 });
