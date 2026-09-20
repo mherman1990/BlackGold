@@ -422,6 +422,8 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
       if (split.citabilityReasons.length === 0) citabilityReasons.push(`${split.splitId}: not citable as promotion evidence`);
     }
   }
+  const promotionBlockingCodes = [...promotionBlocking].sort();
+
   if (!complete) {
     citabilityReasons.push(
       plannedSplitIds.length === 0
@@ -448,6 +450,8 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
   }
   if (secondary2 !== undefined) for (const reading of SECONDARY_2_OPEN_READINGS) evidenceCaveats.push(reading);
 
+  const citableAsEvidence = citabilityReasons.length === 0 && ordered.length > 0;
+
   const body = {
     aggregateVersion: AGGREGATE_VERSION,
     strategyId: c.strategy_id,
@@ -455,6 +459,16 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
     splitIds,
     complete,
     sessions: pooledSessions.length,
+    // Evidence eligibility is hashed, not just reported. The same windows and the same arithmetic can be
+    // citable on one run and barred on the next - a charter that stops being registrable, a
+    // promotion-blocking data code appearing on a source - without a single number moving. Leave these out
+    // and an aggregate that may be cited shares an `aggregateHash` with one that may not, which is the one
+    // thing this hash exists to prevent: it is what a PR body quotes to identify a result. The reasons and
+    // codes ride along with the flag, so a result barred for one reason cannot be mistaken for the same
+    // result barred for another. Found by Codex on PR #94.
+    citableAsEvidence,
+    citabilityReasons,
+    promotionBlockingCodes,
     // `passes` is a string because a JSON `undefined` simply vanishes, which would collapse a withheld
     // prong into a failed one and let two different verdicts share a hash.
     primary:
@@ -489,9 +503,9 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
     verdict,
     verdictReasons,
     charterConflict,
-    citableAsEvidence: citabilityReasons.length === 0 && ordered.length > 0,
+    citableAsEvidence,
     citabilityReasons,
-    promotionBlockingCodes: [...promotionBlocking].sort(),
+    promotionBlockingCodes,
     evidenceCaveats,
     aggregateHash: `sha256:${hashJson(body)}`,
   };

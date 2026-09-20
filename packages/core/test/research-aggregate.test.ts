@@ -376,6 +376,41 @@ describe("aggregateWalkForward: hash", () => {
     expect(rejected.aggregateHash).not.toBe(unmeasured.aggregateHash);
   });
 
+  // Codex P2 on PR #94. Citability turns on things that move no number - a charter that stops being
+  // registrable, a promotion-blocking data code appearing on a source - so an aggregate that may be cited
+  // could otherwise share a hash with one explicitly barred from use. The hash is what a PR body quotes to
+  // identify a result, which is precisely where that confusion would do damage.
+  it("separates a citable aggregate from one barred from evidence", () => {
+    const citable = run(charter(SMALL_MINIMUM), [split("walk_forward/a", 2, 40, LOSING), split("walk_forward/b", 42, 40, LOSING)]);
+    const barred = run(charter(SMALL_MINIMUM), [
+      split("walk_forward/a", 2, 40, LOSING, { citableAsEvidence: false, citabilityReasons: ["approval.state is DRAFT"] }),
+      split("walk_forward/b", 42, 40, LOSING),
+    ]);
+
+    // Same windows, same arithmetic, same verdict - only the evidence eligibility differs.
+    expect(barred.primaryMetric?.pointEstimate).toBe(citable.primaryMetric?.pointEstimate);
+    expect(barred.secondary2).toEqual(citable.secondary2);
+    expect(barred.verdict).toBe(citable.verdict);
+    expect(citable.citableAsEvidence).toBe(true);
+    expect(barred.citableAsEvidence).toBe(false);
+    expect(citable.aggregateHash).not.toBe(barred.aggregateHash);
+  });
+
+  it("separates two barred aggregates that are barred for different reasons", () => {
+    const base = (reason: string, code: string) =>
+      run(charter(SMALL_MINIMUM), [
+        split("walk_forward/a", 2, 40, LOSING, { citableAsEvidence: false, citabilityReasons: [reason], promotionBlockingCodes: [code] }),
+        split("walk_forward/b", 42, 40, LOSING),
+      ]);
+    const draft = base("approval.state is DRAFT", "UNVERIFIED_SINGLE_SOURCE");
+    const synthetic = base("synthetic missing data", "SYNTHETIC_MISSING_DATA");
+    expect(draft.citableAsEvidence).toBe(false);
+    expect(synthetic.citableAsEvidence).toBe(false);
+    expect(draft.verdict).toBe(synthetic.verdict);
+    // The flag alone would make these identical; the reasons and codes ride along with it.
+    expect(draft.aggregateHash).not.toBe(synthetic.aggregateHash);
+  });
+
   it("separates a withheld first prong from a failed one", () => {
     // These two runs agree on EVERYTHING else the body carries - same splits, same sessions, same point
     // estimate and interval, same second prong, same OWNER_REVIEW verdict. Only the threshold differs, so
