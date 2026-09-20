@@ -904,14 +904,19 @@ presumed incomplete.
 **Merged with three accepted findings open,** by the owner's decision to stop an eleven-round fix loop. They
 are listed in `STATE.md` → *Secondary 2* and in full on PR #91. One is a gate:
 
-> **The step-2 aggregate slice must not land until `legSplit`'s distribution handling is fixed.** It puts the
-> pre-open holder's distribution through the new allocation's intraday factor, so a rebalance out of equity on
-> an ex-date is mispriced. A two-factor multiplicative split cannot be made correct — reproducing the leg's
-> total-return step is exactly what scales the distribution — so the decomposition needs three parts: price to
-> the open at the old weight, the distribution credited as cash to the old weight, and open-to-close applied
-> only to the price portion at the new weight. Merging with it open was sound solely because nothing can
-> consume the prong yet: no run is citable and the aggregate verdict is not emitted. Step 2 removes both
-> protections at once.
+> **No Secondary 2 number may be generated or cited until `legSplit`'s distribution handling is fixed.** It
+> puts the pre-open holder's distribution through the new allocation's intraday factor, so a rebalance out of
+> equity on an ex-date is mispriced. A two-factor multiplicative split cannot be made correct — reproducing
+> the leg's total-return step is exactly what scales the distribution — so the decomposition needs three
+> parts: price to the open at the old weight, the distribution credited as cash to the old weight, and
+> open-to-close applied only to the price portion at the new weight.
+>
+> **This gate's first wording blocked only the step-2 aggregate slice, and was wrong.** It reasoned that no
+> run is citable because the charter is DRAFT. The charter is **APPROVED** (0.2.0, owner-signed 2026-09-12);
+> that DRAFT reason belongs to the synthetic charter in the backtest tests. The real remaining citability
+> blocker is reconciled ≥2-source corporate actions — curable, and the next thing on the list — so clearing it
+> yields a **citable per-split** result carrying `primaryVersusSecondary2` through the defect without step 2
+> ever landing. Curating those actions is inside this gate.
 
 **Known defect this surfaced — now fixed (2026-09-20).** `evaluateFalsifiers` computed `decisiveRejection`
 from the unregistered approximation; it now takes the registered Secondary 2. The interim position recorded

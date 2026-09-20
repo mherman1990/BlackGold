@@ -56,7 +56,25 @@ Owner decision 2026-09-20: stop the fix loop and merge on round eleven. All thre
 2. **(P2) `EVALUATION_VERSION` is not bumped** for the added `primaryVersusSecondary2` field, so v2 records before and after PR #91 are indistinguishable to a consumer decoding by version.
 3. **(P2) The `min(1, target / sigma)` test does not test that formula** — its assertions survive replacing it with any positive fraction.
 
-> **GATE: the §16.1 aggregate slice must not land until finding 1 is closed.** Nothing can consume the prong today — no run is citable (the charter is DRAFT, `citableAsEvidence` false on every run) and the aggregate verdict is not emitted at all. That is what made merging sound, and it stops being true the moment the aggregate slice lands.
+> **GATE: no Secondary 2 number may be generated or cited until finding 1 is fixed.** Not merely "the
+> aggregate slice must not land" — that was this gate's first wording and it rested on a false premise. It
+> claimed no run is citable because the charter is `DRAFT`. **The charter is `APPROVED`** (0.2.0, owner-signed
+> 2026-09-12); the DRAFT reason comes from the synthetic charter in the backtest tests, and reading a test
+> fixture's citability reason as production state is how the error got in. The real remaining citability
+> blocker is **reconciled ≥2-source corporate actions**, which is curable and is the very next thing on the
+> list — so once it is cleared, `research evaluate` emits a **citable per-split** result carrying
+> `primaryVersusSecondary2` computed through the defect, with the aggregate slice nowhere in sight. Curating
+> those actions is therefore inside this gate, not outside it.
+
+> Merging PR #91 with finding 1 open is still defensible, because today's runs are blocked by
+> `UNVERIFIED_SINGLE_SOURCE` and no experiment is registered. But the protection is **narrower and more
+> perishable** than the merge rationale on PR #91 claimed, and that rationale is corrected here rather than
+> left standing.
+
+**A gate written from a wrong premise is the failure mode this file exists to prevent.** It was caught by
+review, not by the session that wrote it — the same session that had just recorded "mutation-check any test
+guarding a financial invariant" as a standing lesson. The analogous rule for prose: a gate that names a
+*reason* should be checked against the code, because a wrong reason silently narrows the gate.
 
 ### Standing lesson: five tests certified behaviour they could not detect
 
