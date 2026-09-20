@@ -80,11 +80,50 @@ This is the real cost, and it is data work, not engineering:
   few hundred dividend entries plus a handful of structural actions (e.g. the
   2015 XLF→XLRE spin-off already used as a fixture).
 
-Once ingested, a run that reads reconciled actions instead of the Tiingo
-automated actions drops `UNVERIFIED_SINGLE_SOURCE`. The Tiingo actions can
-remain in the store — the read path collapses to the reconciled rows per the
-usual vintage/latest rules — but the clean citable path is to rely on the
-reconciled file for the entities and dates under evaluation.
+**Correction (2026-09-20).** This section originally said the Tiingo actions
+could remain in the store because "the read path collapses to the reconciled
+rows per the usual vintage/latest rules". **That is wrong**, and was already
+wrong when the 0.1.11 read-layer dedupe landed on 2026-09-13, after this note
+was written.
+
+Dedupe picks a winning action per (entity, kind, effective date), preferring the
+reconciled row. But the promotion-blocking label is accumulated over **every**
+returned row *before* that choice is made
+(`packages/core/src/research/backtest.ts`, in `loadExecutionSeries`):
+
+```
+// Labeling stays conservative: any single-source action present taints the run even when a reconciled
+// action supersedes it below, so the dedupe can never make a run look more citable than its store does.
+for (const code of blocksPromotionEvidence(row.qualityFlags)) qualityLabels.add(code);
+```
+
+That is deliberate, and it is the right default: the dedupe must never make a
+run look more citable than the store it read. The consequence is that **merely
+ingesting reconciled actions alongside the Tiingo rows does not clear the
+label.** Both paths write under the same `corporate_action.<KIND>` source id, so
+a run cannot select one and ignore the other, and a snapshot taken after
+reconciling still includes the older single-source rows (snapshots bound by
+`max(observations.id)`, so they are inclusive of everything earlier).
+
+The Pi store is already in this state: the 2026-09-13 runs came back
+`UNVERIFIED_SINGLE_SOURCE`, which requires those rows to be present.
+
+**So the remedy is an open question for the owner, not a documented procedure.**
+Three candidates, none of them free:
+
+1. **A store without those rows for the evaluated entities** — a separate data
+   directory for the citable run, honouring D-49's "use one path or the other
+   per universe, never both". Cheapest, and needs no code change; the cost is a
+   second ingest of bars for the evaluation universe.
+2. **Change the taint rule** so a single-source row superseded by a reconciled
+   row for the same date does not label the run. Defensible on the merits, but
+   it loosens an evidential guarantee that was written deliberately, so it is an
+   evidence-standards decision rather than a refactor.
+3. **A quarantine or exclusion mechanism** for superseded observations. None
+   exists today; observations are append-only by design.
+
+Until one is chosen, treat "curate reconciled actions" as **necessary but not
+sufficient** on the existing store.
 
 ## What still gates a citable, promotable result after that
 

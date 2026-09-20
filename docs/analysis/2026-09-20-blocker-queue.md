@@ -85,6 +85,20 @@ VTI, DESIGN window 2007-06-01 → 2018-12-31, on the order of a few hundred
 quarterly dividend entries plus a handful of structural actions. Details in
 `2026-09-13-path-to-citable-evidence.md`.
 
+**A second decision, found 2026-09-20 and larger than it looks: curating the
+file clears nothing on its own.** The Tiingo action rows are already in the Pi
+store. A snapshot is bound by `max(observations.id)` so it includes them; both
+paths write under the same `corporate_action.<KIND>` source id so a run cannot
+select one and ignore the other; and `loadExecutionSeries`
+(`research/backtest.ts`) accumulates promotion-blocking codes over **every**
+returned row *before* the dedupe picks the reconciled winner — deliberately, so
+the dedupe can never flatter the store. Curating into the current store
+therefore leaves the label in place. **Decide the remedy before commissioning
+the curation**, or the data work buys nothing: a separate store for the
+evaluation universe (cheapest, no code change), a change to the taint rule (an
+evidence-standards decision, not a refactor), or a quarantine mechanism that
+does not exist. Costs are in `2026-09-13-path-to-citable-evidence.md`.
+
 **The decision Matt owes, and it is not just "do the data work":** may Claude
 Code build a *second automated* public corporate-actions adapter (issuer
 distribution notices + an exchange feed) plus a reconciler that emits the
