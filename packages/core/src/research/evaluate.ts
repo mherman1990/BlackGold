@@ -71,26 +71,30 @@ export type SplitEvaluation = {
   /** ALPHA_CHARTER F2: strategy max drawdown against `max_drawdown_ratio` x the primary benchmark's. */
   drawdown: DrawdownCheck | undefined;
   /**
-   * ALPHA_CHARTER section 16.1's second prong: the strategy's Sharpe against the volatility-controlled
-   * primary benchmark (Secondary 2). Positive means trend selection adds something beyond volatility
-   * control alone. `undefined` when the charter does not request that benchmark.
-   */
-  primaryVersusVolatilityControlled: number | undefined;
-  /**
-   * ALPHA_CHARTER section 16.1's decisive falsifier, which is a conjunction: the hypothesis is rejected
-   * only when the strategy fails the primary metric against VTI **and** fails to beat Secondary 2. If
-   * either passes, section 16.1 sends the charter to owner review rather than rejection.
+   * Sharpe difference against the benchmark the code labels `VOLATILITY_CONTROLLED_PRIMARY`.
    *
-   * `undefined` when the second prong is unavailable, which is not the same as a rejection. Note that
-   * `evaluateFalsifiers` treats a missing second prong as "does not beat", so a rejection verdict from
-   * there rests on an absent number; this surface reports the gap instead of resolving it silently.
+   * **This is NOT the charter's registered Secondary 2, and must not be read as section 16.1's second
+   * prong.** Section 11 defines Secondary 2 as "VTI scaled to a 10% ex-ante volatility target with the
+   * same 63-day estimator, remainder in BIL" - a dynamically re-scaled series. `buildResultReport` instead
+   * holds VTI at the strategy's *constant average* realized equity weight, and says so ("Approximated
+   * here"). That is a coarser version of Secondary 1 (which uses the same weights per session), not a
+   * volatility-targeted series at all, and it can differ materially in both volatility and return.
+   *
+   * It is surfaced as a diagnostic because it is what the code computes, and naming it honestly is better
+   * than leaving an unlabelled number in the report. Evaluating section 16.1 needs Secondary 2 to be
+   * implemented first; see `docs/analysis/2026-09-20-d51-primary-metric.md`.
    */
-  decisiveRejection: boolean | undefined;
-  decisiveRejectionDetail: string;
+  approximateVersusAverageExposureBenchmark: number | undefined;
   /**
-   * Which of the charter's falsifiers this run actually evaluated. F3, F4 and F5 need the adverse-cost
+   * Which of the charter's falsifiers this split actually evaluated. F3, F4 and F5 need the adverse-cost
    * and extra-delay tiers, the drop-best-year refit, and the full sensitivity grid - none of which a
    * single evaluation run produces - so they are named here as not evaluated rather than assumed to pass.
+   *
+   * Section 16.1's decisive falsifier is deliberately absent from this surface. It is defined "on the
+   * aggregate walk-forward out-of-sample set", so it is not a per-split verdict: emitting one for the
+   * DESIGN split would state a rejection verdict over in-sample data, and several walk-forward splits
+   * would produce contradictory verdicts where the charter registers exactly one. Evaluating it needs
+   * the walk-forward splits pooled AND the registered Secondary 2 implemented.
    */
   falsifiersEvaluated: string[];
   falsifiersNotEvaluated: string[];
@@ -145,36 +149,6 @@ function drawdownCheck(c: Charter, report: ResultReport): DrawdownCheck | undefi
     ratio: benchAbs.isZero() ? "undefined" : strategyAbs.div(benchAbs).toFixed(8),
     limitRatio: limitRatio.toFixed(),
     f2Triggered: strategyAbs.gt(benchAbs.times(limitRatio)),
-  };
-}
-
-/**
- * ALPHA_CHARTER section 16.1. The decisive falsifier is a conjunction, not the primary metric alone:
- * the hypothesis is rejected only when the strategy fails the primary metric against the primary
- * benchmark AND fails to beat Secondary 2 (the volatility-controlled primary). If either passes, the
- * charter goes to owner review.
- *
- * Reported as `undefined` when the second prong was not computed, because "we did not measure it" is
- * not the same finding as "it failed", and section 16.1 turns on that difference.
- */
-function decisiveRejectionOf(report: ResultReport): { verdict: boolean | undefined; detail: string } {
-  const beatsPrimary = report.primaryMetric.passes;
-  const versus = report.primaryVersusVolatilityControlled;
-  if (beatsPrimary) {
-    return { verdict: false, detail: "primary metric passes against the primary benchmark, so section 16.1 does not reject" };
-  }
-  if (versus === undefined) {
-    return {
-      verdict: undefined,
-      detail: "primary metric fails, and the volatility-controlled benchmark was not computed, so section 16.1's second prong is unknown",
-    };
-  }
-  const beatsVolControlled = versus > 0;
-  return {
-    verdict: !beatsVolControlled,
-    detail: beatsVolControlled
-      ? `primary metric fails but the strategy beats the volatility-controlled benchmark by ${versus.toFixed(4)} Sharpe, so section 16.1 sends this to owner review rather than rejection`
-      : `primary metric fails and the strategy trails the volatility-controlled benchmark by ${versus.toFixed(4)} Sharpe, so section 16.1 rejects`,
   };
 }
 
@@ -266,7 +240,6 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
     const { primary, cash } = reportBenchmarkSeries(btInput);
     const report = buildResultReport({ charter: c, backtest: bt, primary, cash, trialLedgerCount });
 
-    const decisive = decisiveRejectionOf(report);
     const splitBlocking = blocksPromotionEvidence(bt.labels);
     for (const code of splitBlocking) promotionBlocking.add(code);
     const splitCitable = report.citableAsEvidence && splitBlocking.length === 0;
@@ -295,9 +268,7 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
       arms: report.arms.map(armSummary),
       benchmarks: report.benchmarks.map(armSummary),
       drawdown: drawdownCheck(c, report),
-      primaryVersusVolatilityControlled: report.primaryVersusVolatilityControlled,
-      decisiveRejection: decisive.verdict,
-      decisiveRejectionDetail: decisive.detail,
+      approximateVersusAverageExposureBenchmark: report.primaryVersusVolatilityControlled,
       falsifiersEvaluated: ["F1", "F2"],
       falsifiersNotEvaluated: ["F3", "F4", "F5", "F6"],
     });

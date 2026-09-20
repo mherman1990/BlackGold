@@ -13,6 +13,9 @@ changes the question. The short version:
 3. `research evaluate` — the command that produced the evidence — **dropped every number except the primary
    metric**, which is why nobody noticed either fact.
 4. So "the strategy fails its own gate" is imprecise. It fails **F1**. Whether §16.1 rejects it is **unknown**.
+5. **And it cannot be computed today**, because the benchmark §16.1 names — Secondary 2 — is not
+   implemented. What the code labels `VOLATILITY_CONTROLLED_PRIMARY` is a different series. (Found by
+   Codex review of the first draft of this note; see §2a.)
 
 Changing the primary metric now, having seen that it failed, would be metric-shopping. Computing a number the
 charter preregistered and nobody looked at is not. That ordering is the whole recommendation.
@@ -58,7 +61,7 @@ volatility control?** Judging such a strategy only against un-vol-controlled VTI
 which is, in substance, the same worry D-51 raises. The charter's designers already addressed it. They put the
 answer in the decisive falsifier rather than in the primary metric.
 
-The code implements this correctly:
+The code implements the *conjunction* correctly:
 
 ```ts
 // packages/core/src/research/robustness.ts
@@ -68,12 +71,45 @@ const beatsVolControlled = m.primaryVersusVolatilityControlled !== undefined && 
 decisiveRejection: !beatsPrimary && !beatsVolControlled,
 ```
 
-`buildResultReport` computes `primaryVersusVolatilityControlled` on every run. **The 2026-09-13 note does not
-mention it, and could not have**: `runEvaluation` — the function behind `research evaluate` — surfaced only
-`primaryMetric` and a two-field arm summary. Calmar, CAGR, the benchmark metrics, F2's inputs and the whole
-second prong were computed and discarded before the operator saw them.
+`buildResultReport` computes a field called `primaryVersusVolatilityControlled` on every run, and
+`runEvaluation` — the function behind `research evaluate` — discarded it along with Calmar, CAGR, the benchmark
+metrics and F2's inputs. The 2026-09-13 note reports F1 and nothing else because that is all the operator
+surface carried.
 
-That is the root cause of D-51 being framed the way it was.
+## 2a. Correction: the second prong cannot be computed at all yet
+
+The first draft of this note said the second prong existed and only needed surfacing. **That was wrong**, and
+Codex caught it on review. The number `buildResultReport` computes is not Secondary 2:
+
+| | Definition |
+|---|---|
+| **§11 Secondary 2 (registered)** | "VTI scaled to a **10% ex-ante volatility target with the same 63-day estimator**, remainder in BIL" — a dynamically re-scaled series |
+| **§11 Secondary 1 (registered)** | `e * VTI + (1 - e) * BIL`, `e` = the strategy's realized average equity weight **per calendar month** |
+| **What the code builds as `VOLATILITY_CONTROLLED_PRIMARY`** | VTI held at the strategy's **single constant average** realized equity weight over the whole window |
+
+The code says so itself (`report.ts`): *"The charter's secondary 2 … **Approximated here** by holding the
+primary at the strategy's own average equity weight."* That approximation is a coarser **Secondary 1** — same
+weights, less granularity — not a volatility-targeted series. Its volatility and return can differ materially
+from a 63-day ex-ante 10% target, and nothing in the codebase implements that target.
+
+**Consequence:** §16.1's second prong has never been computed because the benchmark it names does not exist in
+code. Treating the approximation as the prong would route a hypothesis to rejection or to owner review against
+an unregistered comparator — which is the same class of error as changing the metric after seeing the result,
+just harder to notice.
+
+Implementing Secondary 2 is a bounded, preregistered piece of work: the estimator (63-day), the target (10%
+ex-ante) and the cash leg (BIL) are all frozen in §11, so it involves no judgement and contaminates nothing.
+It is a prerequisite to answering D-51, and it is listed in §5.
+
+## 2b. §16.1 is an aggregate verdict, not a per-split one
+
+Also caught on review. §16.1 applies "on the **aggregate walk-forward out-of-sample set**". A per-split verdict
+would state a §16.1 rejection over the **in-sample** DESIGN window, and several walk-forward splits would
+produce contradictory verdicts where the charter registers exactly one. The first draft of this PR emitted
+exactly that, and the recommendation below told the owner to read it from `--split design`.
+
+Both mistakes are removed: `research evaluate` now emits **no** §16.1 verdict at any level, and the
+approximate benchmark is labelled as a diagnostic rather than the prong.
 
 ## 3. What this means for the claim "it fails its own gate"
 
@@ -104,10 +140,17 @@ recovers information the charter already committed to; the second spends the cha
 
 ## 5. Recommendation
 
-**Do this first, and it needs no charter change and no decision:**
+**Three steps, in order. None of them changes a charter value or decides D-51.**
 
-Re-run the evaluation on the Pi with the reporting fix in this PR, and read the numbers the charter already
-asked for:
+**Step 1 — implement the registered Secondary 2** (engineering, no judgement). §11 freezes every parameter:
+VTI scaled to a 10% ex-ante volatility target using the 63-day estimator, remainder in BIL. Nothing is chosen
+after the fact, so this contaminates nothing. Until it exists, §16.1's second prong is not computable and no
+§16.1 verdict should be produced by anything.
+
+**Step 2 — evaluate §16.1 over the aggregate walk-forward set**, not per split, and only once Step 1 lands.
+This needs the walk-forward splits pooled into the one out-of-sample set the charter registers.
+
+**Step 3 — read the numbers this PR does surface**, which are correct and per-split by nature:
 
 ```
 node packages/core/dist/main.js research evaluate \
@@ -115,13 +158,12 @@ node packages/core/dist/main.js research evaluate \
   --source tiingo.eod.bars.1d --split design
 ```
 
-The output now carries, per split: `primaryVersusVolatilityControlled` (§16.1's second prong),
-`decisiveRejection` with its reasoning, `drawdown` (F2 with its ratio), and `arms`/`benchmarks` with CAGR,
-Calmar and max drawdown (§13). Runs stay non-evidential while the data carries
-`UNVERIFIED_SINGLE_SOURCE`; these are diagnostics, not promotion evidence.
+Per split it now carries `drawdown` (F2 with its ratio and limit), `arms`/`benchmarks` with CAGR, Calmar and
+max drawdown (§13), and an explicit list of which falsifiers the run evaluated (F1 and F2). It also carries
+`approximateVersusAverageExposureBenchmark`, labelled as a diagnostic and **not** as §16.1's prong. Runs stay
+non-evidential while the data carries `UNVERIFIED_SINGLE_SOURCE`.
 
-**Then D-51 splits into two genuinely different questions, and which one you are answering depends on that
-output:**
+**Then, once Steps 1 and 2 give a real §16.1 verdict, D-51 splits into two genuinely different questions:**
 
 - **If the strategy beats Secondary 2:** §16.1 already routes this to owner review rather than rejection, and
   D-51 becomes "should owner review be able to promote on a drawdown/Calmar basis?" — a real question, but one
@@ -152,14 +194,20 @@ the number is known.
 
 ## 7. What this PR does and does not do
 
-**Does:** surfaces §13's secondary metrics and §16.1's second prong through `research evaluate`, computes F2,
-and reports which falsifiers a single run actually evaluated (F1 and F2) rather than leaving the rest to be
-assumed. It also declines to call a missing second prong a rejection — `decisiveRejection` is `undefined`,
-not `true`, when Secondary 2 was not computed, because "not measured" and "failed" are different findings and
-§16.1 turns on the difference.
+**Does:** surfaces §13's secondary risk metrics (CAGR, Calmar, max drawdown, Sharpe vs cash for every arm and
+benchmark) through `research evaluate`, computes F2 with its ratio and limit, and names which falsifiers a
+single run actually evaluated (F1 and F2) rather than leaving the rest to be assumed. It labels the
+average-exposure benchmark as a diagnostic and explicitly not as §16.1's second prong.
 
-**Does not:** change any metric, threshold, falsifier, or charter value; change the taint or dedupe rules;
-compute the real number (that needs the Pi's store); or decide D-51.
+**Does not:** change any metric, threshold, falsifier, or charter value; implement Secondary 2; emit any §16.1
+verdict at any level; compute the real numbers (that needs the Pi's store); or decide D-51.
+
+**Two errors this note made in its first draft, both caught by Codex review and both corrected above:** it
+claimed the second prong merely needed surfacing (it needs Secondary 2 built first — §2a), and the PR emitted
+a per-split §16.1 verdict that would have stated a rejection over in-sample data (§2b). Both are worth
+recording rather than quietly fixing: each was an attempt to *increase* rigour that would instead have put a
+falsely authoritative verdict in front of the owner. That is the failure mode this project's review
+requirements exist for, and it has now happened three times in one session on three different documents.
 
 Worth stating plainly: the underlying situation is unchanged and may still be bad. The strategy failed F1
 in-sample, and RECENT looks poor on both F1 and F2. Nothing here is an argument that the strategy works. It is

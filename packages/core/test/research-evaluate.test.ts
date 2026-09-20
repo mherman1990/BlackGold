@@ -136,53 +136,39 @@ describe("runEvaluation", () => {
     expect(split?.falsifiersNotEvaluated).toEqual(["F3", "F4", "F5", "F6"]);
   });
 
-  it("computes section 16.1's second prong when the charter asks for the volatility-controlled benchmark", () => {
+  it("labels the average-exposure benchmark as a diagnostic, not section 16.1's second prong", () => {
+    // buildResultReport builds VOLATILITY_CONTROLLED_PRIMARY by holding VTI at the strategy's CONSTANT
+    // average realized equity weight, and its own comment says "Approximated here". The charter's section 11
+    // Secondary 2 is "VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator" - a
+    // dynamically re-scaled series. The approximation is a coarser Secondary 1, so this surface must not
+    // present it as the registered comparator.
     const r = evaluate(evalCharter(), cleanMarket());
     const split = r.splits[0];
-    expect(split?.benchmarks.map((b) => b.arm)).toContain("VOLATILITY_CONTROLLED_PRIMARY");
-    expect(split?.primaryVersusVolatilityControlled).toBeTypeOf("number");
+    expect(split?.approximateVersusAverageExposureBenchmark).toBeTypeOf("number");
+    // The registered second prong is not computed anywhere, so no section 16.1 verdict may appear here.
+    expect(split).not.toHaveProperty("decisiveRejection");
   });
 
-  it("does not call a missing second prong a rejection (section 16.1 is a conjunction)", () => {
-    // Negative/boundary case: with no volatility-controlled benchmark there is no second prong, so the
-    // decisive falsifier is unknown. Reporting `true` here would reject a hypothesis on a number nobody
-    // measured, which is the specific failure section 16.1 exists to prevent.
+  it("emits no per-split section 16.1 verdict: the charter defines it over the aggregate set", () => {
+    // Section 16.1 applies "on the aggregate walk-forward out-of-sample set". A per-split verdict would
+    // state a rejection over the in-sample DESIGN window, and several walk-forward splits would contradict
+    // each other where the charter registers exactly one verdict.
+    const r = evaluate(evalCharter(), cleanMarket());
+    for (const split of r.splits) {
+      expect(split).not.toHaveProperty("decisiveRejection");
+      expect(split).not.toHaveProperty("decisiveRejectionDetail");
+      expect(split.falsifiersEvaluated).not.toContain("F6");
+    }
+  });
+
+  it("omits the approximate benchmark entirely when the charter does not request it", () => {
     const noSecondary = evalCharter((c) => {
       c.benchmarks = { ...c.benchmarks, volatility_controlled_primary: false };
     });
     const r = evaluate(noSecondary, cleanMarket());
     const split = r.splits[0];
     expect(split?.benchmarks.map((b) => b.arm)).not.toContain("VOLATILITY_CONTROLLED_PRIMARY");
-    expect(split?.primaryVersusVolatilityControlled).toBeUndefined();
-
-    if (split?.primaryMetric.passes === true) {
-      // The first prong passing is enough to decide: section 16.1 does not reject.
-      expect(split.decisiveRejection).toBe(false);
-    } else {
-      expect(split?.decisiveRejection).toBeUndefined();
-      expect(split?.decisiveRejectionDetail).toContain("second prong is unknown");
-    }
-  });
-
-  it("decides section 16.1 from both prongs when both are available", () => {
-    const r = evaluate(evalCharter(), cleanMarket());
-    const split = r.splits[0];
-    if (split === undefined) return;
-    const versus = split.primaryVersusVolatilityControlled;
-    expect(versus).toBeTypeOf("number");
-    if (versus === undefined) return;
-
-    if (split.primaryMetric.passes) {
-      expect(split.decisiveRejection).toBe(false);
-      expect(split.decisiveRejectionDetail).toContain("does not reject");
-    } else if (versus > 0) {
-      // Fails the primary metric but beats Secondary 2: owner review, explicitly not rejection.
-      expect(split.decisiveRejection).toBe(false);
-      expect(split.decisiveRejectionDetail).toContain("owner review");
-    } else {
-      expect(split.decisiveRejection).toBe(true);
-      expect(split.decisiveRejectionDetail).toContain("rejects");
-    }
+    expect(split?.approximateVersusAverageExposureBenchmark).toBeUndefined();
   });
 
   it("is deterministic: the same charter and store hash to the same report", () => {
