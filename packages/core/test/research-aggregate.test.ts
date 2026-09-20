@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Dec, isoDate, type IsoDate } from "@blackgold/shared";
 import { fileURLToPath } from "node:url";
-import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
+import { charterHash, loadCharterFile, type Charter } from "../src/strategy/charter.ts";
 import { aggregateWalkForward, AggregateScopeError, SECONDARY_2_OPEN_READINGS, type AggregateSplitInput } from "../src/research/aggregate.ts";
 import { annualizedSharpe, annualizedSharpeDifference, stationaryBootstrapPaired } from "../src/research/stats.ts";
 import type { SharpeInputPoint } from "../src/research/report.ts";
@@ -76,6 +76,8 @@ const BEATS_SECONDARY_2: SplitOverrides = { candidateTotalReturn: new Dec("0.30"
 function run(c: Charter, splits: readonly AggregateSplitInput[], planned?: readonly string[]) {
   return aggregateWalkForward({
     charter: c,
+    // Derived from the charter under test, not a constant, so a charter edit really does move it.
+    charterHash: charterHash(c),
     splits,
     plannedSplitIds: planned ?? splits.map((s) => s.splitId),
     bootstrapResamples: RESAMPLES,
@@ -380,6 +382,27 @@ describe("aggregateWalkForward: hash", () => {
   // registrable, a promotion-blocking data code appearing on a source - so an aggregate that may be cited
   // could otherwise share a hash with one explicitly barred from use. The hash is what a PR body quotes to
   // identify a result, which is precisely where that confusion would do damage.
+  // Codex P2 on PR #94. `charter_version` does not identify a charter: contents change without the version
+  // moving. Most charter values never reach the hashed body directly either, so without the content hash a
+  // verdict keeps its identity while the rule it was judged against changes underneath it.
+  it("separates two runs judged under different charter contents at the same version", () => {
+    const splits = [split("walk_forward/a", 2, 40, LOSING), split("walk_forward/b", 42, 40, LOSING)];
+    // The sharpest case: an estimate that fails BOTH thresholds. Everything the body carries besides the
+    // charter hash is identical - numbers, prong state, verdict, citability - and the version does not move.
+    const lenient = run(charter((c) => (c.pass_fail.primary_threshold = "0.10")), splits);
+    const strict = run(charter((c) => (c.pass_fail.primary_threshold = "0.20")), splits);
+
+    expect(strict.charterVersion).toBe(lenient.charterVersion);
+    expect(strict.primaryMetric?.pointEstimate).toBe(lenient.primaryMetric?.pointEstimate);
+    expect(strict.primaryMetric?.passes).toBe(false);
+    expect(lenient.primaryMetric?.passes).toBe(false);
+    expect(strict.verdict).toBe(lenient.verdict);
+    expect(strict.citableAsEvidence).toBe(lenient.citableAsEvidence);
+    // Only the charter's contents differ, and the hash has to see it.
+    expect(strict.charterHash).not.toBe(lenient.charterHash);
+    expect(strict.aggregateHash).not.toBe(lenient.aggregateHash);
+  });
+
   it("separates a citable aggregate from one barred from evidence", () => {
     const citable = run(charter(SMALL_MINIMUM), [split("walk_forward/a", 2, 40, LOSING), split("walk_forward/b", 42, 40, LOSING)]);
     const barred = run(charter(SMALL_MINIMUM), [

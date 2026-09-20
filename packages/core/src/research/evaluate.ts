@@ -365,7 +365,12 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
   const aggregate =
     aggregateInputs.length === 0
       ? undefined
-      : aggregateWalkForward({ charter: c, splits: aggregateInputs, plannedSplitIds: plannedWalkForwardSplitIds });
+      : aggregateWalkForward({
+          charter: c,
+          charterHash: input.charterHash,
+          splits: aggregateInputs,
+          plannedSplitIds: plannedWalkForwardSplitIds,
+        });
 
   const barsSourceId = input.barsSourceId ?? DEFAULT_BARS_SOURCE_ID;
   const promotionBlockingCodes = [...promotionBlocking].sort();

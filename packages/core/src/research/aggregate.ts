@@ -135,6 +135,12 @@ export type AggregateWalkForward = {
   aggregateVersion: number;
   strategyId: string;
   charterVersion: string;
+  /**
+   * The hash of the exact charter this verdict was computed under, as `runBacktest` and `buildResultReport`
+   * both carry. `charter_version` alone does not identify a charter: its contents can change without the
+   * version moving, which is routine while a version is being drafted. See the hashed body below.
+   */
+  charterHash: string;
   /** Pooled split ids, in evaluation order. */
   splitIds: string[];
   /** Every walk-forward split the charter's schedule declares, whether or not it was run. */
@@ -207,6 +213,8 @@ const SESSIONS_PER_MONTH = 21;
 
 export type AggregateInput = {
   charter: Charter;
+  /** From `runEvaluation`'s own input; bound into the verdict's identity. */
+  charterHash: string;
   /** The walk-forward splits that ran, in any order. */
   splits: readonly AggregateSplitInput[];
   /** Every walk-forward split id in the charter's schedule, from `splitPlan`. */
@@ -456,6 +464,14 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
     aggregateVersion: AGGREGATE_VERSION,
     strategyId: c.strategy_id,
     charterVersion: c.charter_version,
+    // The charter's CONTENT hash, not just its version string. Contents change without the version moving -
+    // routinely, while a version is being drafted - and most charter values never reach this body directly.
+    // `primary_threshold` is the sharpest case: move it from 0.10 to 0.20 with an estimate that fails both
+    // and the numbers, the prong state, the verdict and the citability are all unchanged, so the verdict
+    // would keep its identity while the rule it was judged against had changed underneath it. `runBacktest`
+    // and `buildResultReport` have always hashed this; the aggregate identified its charter by version
+    // alone. Found by Codex on PR #94.
+    charterHash: input.charterHash,
     splitIds,
     complete,
     sessions: pooledSessions.length,
@@ -488,6 +504,7 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
     aggregateVersion: AGGREGATE_VERSION,
     strategyId: c.strategy_id,
     charterVersion: c.charter_version,
+    charterHash: input.charterHash,
     splitIds,
     plannedSplitIds,
     complete,
