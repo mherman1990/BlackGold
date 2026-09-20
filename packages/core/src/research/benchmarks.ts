@@ -80,131 +80,194 @@ export type VolTargetLeg = {
 };
 
 /**
- * Where a new weight was acquired, which decides how its first session is earned.
+ * When a weight was acquired, as an instant on the exchange timeline.
  *
- *   - `open`         - acquired at this session's OPEN (`execution_delay_bars >= 1`). The session is split:
- *                      the old weight earns `prevClose -> open`, the new weight earns `open -> close`.
- *   - `priorClose`   - acquired at the PREVIOUS session's close (`execution_delay_bars === 0`, where
- *                      `simulateFill` fills at the decision close). The new weight holds the position across
- *                      the whole session, overnight included, so there is nothing to split.
+ * Earlier versions expressed this as a mode relative to a landing session ("this weight activates on session
+ * X, at its open"). That could not survive a session missing from one leg: the landing session and the
+ * session the fill actually happened on came apart, and every attempt to reconcile them by shifting the
+ * landing session introduced a different off-by-one. An instant does not have that failure mode - it is the
+ * same instant whatever sessions the legs happen to share, and the index places it or declares that it
+ * cannot.
  */
-export type VolTargetActivation = { weight: Dec; acquireAt: "open" | "priorClose" };
+export type AcquisitionInstant = { kind: "open" | "close"; session: IsoDate };
+
+export type VolTargetActivation = { weight: Dec; acquiredAt: AcquisitionInstant };
 
 export type VolTargetSpec = {
   equity: VolTargetLeg;
   cash: VolTargetLeg;
-  /** Session on which a new equity weight takes effect, mapped to the weight and how it was acquired. */
-  activations: ReadonlyMap<IsoDate, VolTargetActivation>;
+  /** Weight changes with the instant each was acquired. Order is irrelevant; the index sorts them. */
+  activations: readonly VolTargetActivation[];
 };
+
+export type VolTargetIndex = {
+  series: TRSeries;
+  /**
+   * True only when every activation landed on an instant the index can represent exactly: the close of a
+   * session both legs share (the new weight takes the next whole step) or the open of one (the step is
+   * split). False the moment any approximation was made.
+   *
+   * **This is not a cosmetic flag.** Secondary 2 feeds section 16.1's decisive second prong, and an
+   * approximation there has no safe direction: under-crediting the comparator makes it easier to beat and
+   * over-crediting makes it harder, and which one a given misplacement causes depends on the sign of the
+   * weight change and the sign of the move it misassigns. There is no "conservative" way to guess, so the
+   * caller must withhold the prong rather than consume a number built this way.
+   */
+  exact: boolean;
+  /** Why `exact` is false, one entry per approximation. Empty when `exact`. */
+  inexactReasons: string[];
+};
+
+/**
+ * Total order on acquisition instants: an open precedes the close of the same session. Exported so every
+ * consumer sorts and compares the same way - two definitions of this order is how the previous version's
+ * weight path and index came to disagree.
+ */
+export function instantKey(at: AcquisitionInstant): string {
+  return `${at.session}|${at.kind === "open" ? "0" : "1"}`;
+}
 
 /**
  * ALPHA_CHARTER section 11 Secondary 2, built as its own index rather than as a weight fed into
  * `blendSeries`.
  *
  * `blendSeries` cannot express this comparator: it applies one weight to a whole close-to-close return, so a
- * weight acquired at a fill would still earn the part of the session that preceded the fill. Here the
- * rebalance session is decomposed at the open instead, which is where `simulateFill` acquires the strategy's
- * position when `execution_delay_bars >= 1`.
+ * weight acquired at a fill would still earn the part of the session that preceded the fill. Here each
+ * activation carries the instant its position was acquired, and the index places it against the legs' own
+ * return intervals:
+ *
+ *   - acquired at the CLOSE of a shared session - `execution_delay_bars === 0`, where `simulateFill` fills at
+ *     the decision close - the new weight earns the whole of the next step, overnight leg included, and none
+ *     of the step ending at that close.
+ *   - acquired at the OPEN of a shared session - `execution_delay_bars >= 1` - that step is decomposed: the
+ *     old weight earns `prevClose -> open`, the new weight `open -> close`.
+ *   - anywhere else - an instant inside a return interval, with no observable price to split it at - the
+ *     index says so through `exact: false` instead of guessing.
  *
  * **Distributions stay with the holder that earned them.** On an ex-date the distribution rides the overnight
- * leg only: a buyer at the open has no claim to it. So the old weight earns `(adjOpen + dist) / prevAdjClose`
- * and the new weight earns the pure price move `adjClose / adjOpen`. These deliberately do NOT multiply back
- * to the index's own `(adjClose + dist) / prevAdjClose` step when the weights differ, and they should not:
- * the portfolio changed composition mid-session, so its return is not a static full-day return. Forcing that
- * identity was an earlier mistake here, and it paid the new weight part of the old holder's dividend.
+ * leg only: a buyer at the open has no claim to it. So the pre-open holder earns `(adjOpen + dist) /
+ * prevAdjClose` and the new weight the pure price move `adjClose / adjOpen`. These deliberately do NOT
+ * multiply back to the index's own `(adjClose + dist) / prevAdjClose` step when the weights differ, and they
+ * should not: the portfolio changed composition mid-session, so its return is not a static full-day return.
+ * Forcing that identity was an earlier mistake here, and it paid the new weight part of the old holder's
+ * dividend.
  *
- * **A stretched interval stops mattering.** Whatever precedes the open - one session or five, after a missing
- * or stale bar - it is earned by the old weight, which is correct, because the new position did not exist for
- * any of it.
- *
- * Only rebalance sessions are decomposed. Everywhere else the index steps by the plain blended close-to-close
- * return taken straight from the legs' total-return indices.
- *
- * Fail-closed twice over: a rebalance session with no usable open is earned entirely at the OLD weight with a
- * warning (under-crediting the new position rather than handing it a move it did not earn), and an activation
- * whose session is absent from the legs' common sessions is carried forward to the next usable one rather
- * than silently dropped - matching `simulateFill`, which skips an untradable bar and fills on the next.
+ * **A stretched interval is reported, not absorbed.** Whatever precedes a split open - one session or five,
+ * after a missing or stale bar - is earned by the old weight, which is right, because the new position did
+ * not exist for any of it. But an acquisition instant that falls strictly inside such an interval cannot be
+ * placed at all, and that is what `exact` exists to say.
  */
-export function volatilityTargetedSeries(spec: VolTargetSpec): TRSeries {
+export function volatilityTargetedSeries(spec: VolTargetSpec): VolTargetIndex {
   const warnings: string[] = [];
+  const inexactReasons: string[] = [];
   const sessions = commonSessions(spec.equity.tr.points, spec.cash.tr.points);
   const first = sessions[0];
-  if (first === undefined) {
-    return { entityId: "VOL_TARGET", points: [], adjustmentVersion: TR_ADJUSTMENT_VERSION, warnings: ["no common sessions"] };
+  const empty = (reason: string): VolTargetIndex => ({
+    series: { entityId: "VOL_TARGET", points: [], adjustmentVersion: TR_ADJUSTMENT_VERSION, warnings: [reason] },
+    exact: false,
+    inexactReasons: [reason],
+  });
+  if (first === undefined) return empty("no common sessions");
+
+  for (const a of spec.activations) {
+    if (a.weight.isNegative() || a.weight.gt(1)) {
+      throw new RangeError(`equity weight ${a.weight.toFixed()} outside [0, 1] at ${a.acquiredAt.kind} of ${a.acquiredAt.session}`);
+    }
   }
 
   const eqTr = new Map(spec.equity.tr.points.map((p) => [p.session, p]));
   const cashTr = new Map(spec.cash.tr.points.map((p) => [p.session, p]));
   const eqBar = new Map(spec.equity.bars.map((b) => [b.session, b]));
   const cashBar = new Map(spec.cash.bars.map((b) => [b.session, b]));
-  const effective = resolveActivations(spec.activations, sessions, warnings);
+
+  const acts = [...spec.activations].sort((a, b) => {
+    const ka = instantKey(a.acquiredAt);
+    const kb = instantKey(b.acquiredAt);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
 
   const points: TRPoint[] = [{ session: first, trIndex: ONE, adjClose: ONE, distribution: ZERO, terminal: false }];
   let index = ONE;
-  // An activation resolving to the first session needs no split: that session is the base point and earns no
-  // return, so the weight is simply held into the next one.
-  let weight = effective.get(first)?.weight ?? ZERO;
+  let cursor = 0;
+  // Anything acquired at or before the base session's close is simply the weight the index opens with: the
+  // base session earns no return, so there is nothing for it to be placed against.
+  let weight = ZERO;
+  for (; cursor < acts.length; cursor++) {
+    const a = acts[cursor];
+    if (a === undefined || instantKey(a.acquiredAt) > `${first}|1`) break;
+    weight = a.weight;
+  }
 
   for (let i = 1; i < sessions.length; i++) {
-    const session = sessions[i];
+    const cur = sessions[i];
     const prev = sessions[i - 1];
-    if (session === undefined || prev === undefined) continue;
-    const activation = effective.get(session);
+    if (cur === undefined || prev === undefined) continue;
+    const openKey = `${cur}|0`;
+    const closeKey = `${cur}|1`;
 
-    if (activation === undefined || activation.weight.eq(weight)) {
-      if (activation !== undefined) weight = activation.weight;
-      index = index.times(ONE.plus(plainStep(weight, session, prev, eqTr, cashTr)));
-    } else if (activation.acquireAt === "priorClose") {
-      // Acquired at the previous close: the new weight holds the whole session, overnight included.
-      weight = activation.weight;
-      index = index.times(ONE.plus(plainStep(weight, session, prev, eqTr, cashTr)));
+    // Everything acquired in (close of prev, close of cur]. An instant at cur's close belongs to the NEXT
+    // step - it earns none of the step ending at it - so it is held back rather than applied here.
+    let atOpen: Dec | undefined;
+    let atClose: Dec | undefined;
+    // Tracks what is in force as the interval's activations are consumed, so a rebalance that changes nothing
+    // is not reported as an approximation: it makes no difference where an unplaceable no-op would have gone.
+    let running = weight;
+    while (cursor < acts.length) {
+      const a = acts[cursor];
+      if (a === undefined) break;
+      const k = instantKey(a.acquiredAt);
+      if (k > closeKey) break;
+      if (k === closeKey) {
+        atClose = a.weight;
+      } else {
+        if (k !== openKey && !a.weight.eq(running)) {
+          inexactReasons.push(
+            `a weight acquired at the ${a.acquiredAt.kind} of ${a.acquiredAt.session} falls inside the ${prev} -> ${cur} return interval, which has no price to split it at`,
+          );
+        }
+        atOpen = a.weight;
+      }
+      running = a.weight;
+      cursor++;
+    }
+
+    if (atOpen === undefined || atOpen.eq(weight)) {
+      index = index.times(ONE.plus(plainStep(weight, cur, prev, eqTr, cashTr)));
+      if (atOpen !== undefined) weight = atOpen;
     } else {
-      const split = splitAtOpen(session, prev, eqTr, cashTr, eqBar, cashBar);
+      const split = splitAtOpen(cur, prev, eqTr, cashTr, eqBar, cashBar);
       if (split === undefined) {
-        warnings.push(`no usable open on ${session}; the pre-rebalance weight earned the whole session`);
-        index = index.times(ONE.plus(plainStep(weight, session, prev, eqTr, cashTr)));
+        const reason = `no usable open on ${cur}, so the rebalance could not be priced where the fill landed`;
+        warnings.push(reason);
+        inexactReasons.push(reason);
+        index = index.times(ONE.plus(plainStep(weight, cur, prev, eqTr, cashTr)));
       } else {
         const overnight = weight.times(split.eqOvernight).plus(ONE.minus(weight).times(split.cashOvernight));
-        const intraday = activation.weight.times(split.eqIntraday).plus(ONE.minus(activation.weight).times(split.cashIntraday));
+        const intraday = atOpen.times(split.eqIntraday).plus(ONE.minus(atOpen).times(split.cashIntraday));
         index = index.times(ONE.plus(overnight)).times(ONE.plus(intraday));
       }
-      weight = activation.weight;
+      weight = atOpen;
     }
-    points.push({ session, trIndex: index, adjClose: index, distribution: ZERO, terminal: false });
+    if (atClose !== undefined) weight = atClose;
+    points.push({ session: cur, trIndex: index, adjClose: index, distribution: ZERO, terminal: false });
   }
-  return { entityId: "VOL_TARGET", points, adjustmentVersion: TR_ADJUSTMENT_VERSION, warnings };
-}
 
-/**
- * Map each activation onto the session it can actually take effect on.
- *
- * An activation dated to a session the legs do not share - a stale bar dropped from a total-return series, a
- * holiday one leg observes - would otherwise never be consulted, leaving the old weight in force silently.
- * `simulateFill` skips an untradable bar and fills on the next one, so the activation is carried forward the
- * same way, and carried activations acquire at the OPEN of the session they land on.
- */
-function resolveActivations(
-  activations: ReadonlyMap<IsoDate, VolTargetActivation>,
-  sessions: readonly IsoDate[],
-  warnings: string[],
-): Map<IsoDate, VolTargetActivation> {
-  const out = new Map<IsoDate, VolTargetActivation>();
-  const ordered = [...activations.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  for (const [wanted, act] of ordered) {
-    const landing = sessions.find((s) => s >= wanted);
-    if (landing === undefined) {
-      warnings.push(`activation on ${wanted} falls after the last common session; never applied`);
-      continue;
-    }
-    if (landing !== wanted) {
-      warnings.push(`activation on ${wanted} has no common session; carried forward to ${landing}`);
-      out.set(landing, { weight: act.weight, acquireAt: "open" });
-    } else {
-      // A later activation landing on the same session supersedes an earlier one, as the decisions did.
-      out.set(landing, act);
-    }
+  // A rebalance the comparator never reflected is a divergence from the strategy, not a tidy end-of-window
+  // detail: the weight the strategy went on holding is not the weight this index held.
+  for (; cursor < acts.length; cursor++) {
+    const a = acts[cursor];
+    if (a === undefined || a.weight.eq(weight)) continue;
+    const reason = `a weight acquired at the ${a.acquiredAt.kind} of ${a.acquiredAt.session} falls after the last shared session and was never applied`;
+    warnings.push(reason);
+    inexactReasons.push(reason);
+    weight = a.weight;
   }
-  return out;
+
+  return {
+    series: { entityId: "VOL_TARGET", points, adjustmentVersion: TR_ADJUSTMENT_VERSION, warnings },
+    exact: inexactReasons.length === 0,
+    inexactReasons,
+  };
 }
 
 type SessionSplit = { eqOvernight: Dec; eqIntraday: Dec; cashOvernight: Dec; cashIntraday: Dec };

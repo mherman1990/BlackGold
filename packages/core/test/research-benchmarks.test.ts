@@ -135,8 +135,8 @@ describe("benchmarks", () => {
 
 describe("volatilityTargetedSeries (ALPHA_CHARTER section 11 Secondary 2)", () => {
   const S = (n: number): ReturnType<typeof isoDate> => isoDate(`2026-01-${String(n).padStart(2, "0")}`);
-  const atOpen = (w: string): VolTargetActivation => ({ weight: dec(w), acquireAt: "open" });
-  const atPriorClose = (w: string): VolTargetActivation => ({ weight: dec(w), acquireAt: "priorClose" });
+  const atOpen = (w: string, day: number): VolTargetActivation => ({ weight: dec(w), acquiredAt: { kind: "open", session: S(day) } });
+  const atClose = (w: string, day: number): VolTargetActivation => ({ weight: dec(w), acquiredAt: { kind: "close", session: S(day) } });
 
   /** A leg from explicit `[day, open, close, distribution?]` rows. No splits. */
   function leg(rows: readonly (readonly [number, number, number] | readonly [number, number, number, number])[]): VolTargetLeg {
@@ -160,85 +160,94 @@ describe("volatilityTargetedSeries (ALPHA_CHARTER section 11 Secondary 2)", () =
     return { bars, tr: { entityId: "X", points, adjustmentVersion: "test", warnings: [] } };
   }
 
-  // Equity gaps UP 10% overnight on day 2, then is flat intraday. Cash is flat throughout.
-  // A weight activating on day 2 must NOT earn that gap: the old weight (0) does.
+  // Equity gaps UP 10% overnight on day 2, then is flat intraday; day 3 is flat throughout.
+  // A weight acquired at day 2's OPEN must not earn that gap; one acquired at day 1's CLOSE must.
   const equity = leg([[1, 100, 100], [2, 110, 110], [3, 110, 110]]);
   const cash = leg([[1, 10, 10], [2, 10, 10], [3, 10, 10]]);
 
-  it("gives a pre-fill gap to the OLD weight, not the newly activated one", () => {
-    const s = volatilityTargetedSeries({ equity, cash, activations: new Map([[S(2), atOpen("1")]]) });
+  it("gives a pre-fill gap to the OLD weight, not the newly acquired one", () => {
+    const s = volatilityTargetedSeries({ equity, cash, activations: [atOpen("1", 2)] });
     // Day 2: overnight earned at weight 0 (flat cash) => +0%. Intraday at weight 1 => open 110 -> close 110 => +0%.
     // So the index is unchanged on day 2 despite the equity leg gaining 10%.
-    expect(s.points[1]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
-    expect(s.warnings).toEqual([]);
+    expect(s.series.points[1]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
+    expect(s.exact).toBe(true);
+    expect(s.inexactReasons).toEqual([]);
   });
 
-  it("earns the gap when the weight was already in place before the session", () => {
-    // Same data, but the weight activates on day 1, so day 2's overnight is earned at weight 1. Day 1 is the
-    // base point and earns no return, so an activation there must still reach day 2 rather than be dropped.
-    const s = volatilityTargetedSeries({ equity, cash, activations: new Map([[S(1), atOpen("1")]]) });
-    expect(s.points[1]?.trIndex.toFixed(8)).toBe(dec("1.1").toFixed(8));
+  it("earns the gap when the weight was acquired at the prior close", () => {
+    // `execution_delay_bars === 0`: `simulateFill` fills at the decision close, so the position DOES exist for
+    // the following overnight leg. Nothing is split - the new weight holds the whole step.
+    const s = volatilityTargetedSeries({ equity, cash, activations: [atClose("1", 1)] });
+    expect(s.series.points[1]?.trIndex.toFixed(8)).toBe(dec("1.1").toFixed(8));
+    expect(s.exact).toBe(true);
+  });
+
+  it("earns NONE of the step ending at the close it was acquired on", () => {
+    // The look-ahead invariant, now structural rather than clamped: a weight acquired at day 2's close was set
+    // by data through that close, so it must earn nothing of the day-1-to-day-2 move and everything after.
+    const rising = leg([[1, 100, 100], [2, 110, 110], [3, 110, 121]]);
+    const s = volatilityTargetedSeries({ equity: rising, cash, activations: [atClose("1", 2)] });
+    expect(s.series.points[1]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
+    expect(s.series.points[2]?.trIndex.toFixed(8)).toBe(dec("1.1").toFixed(8));
+    expect(s.exact).toBe(true);
   });
 
   it("earns the intraday move at the NEW weight", () => {
-    // Equity flat overnight, then +10% intraday on day 2. Activating on day 2 must capture it.
     const intraday = leg([[1, 100, 100], [2, 100, 110], [3, 110, 110]]);
-    const s = volatilityTargetedSeries({ equity: intraday, cash, activations: new Map([[S(2), atOpen("1")]]) });
-    expect(s.points[1]?.trIndex.toFixed(8)).toBe(dec("1.1").toFixed(8));
-  });
-
-  it("gives a weight acquired at the PRIOR CLOSE the whole session, overnight gap included", () => {
-    // `execution_delay_bars === 0`: `simulateFill` fills at the decision close, which is day 2's prior close,
-    // so the new position DOES exist for day 2's overnight leg. Splitting here would under-credit it.
-    const s = volatilityTargetedSeries({ equity, cash, activations: new Map([[S(2), atPriorClose("1")]]) });
-    expect(s.points[1]?.trIndex.toFixed(8)).toBe(dec("1.1").toFixed(8));
-    expect(s.warnings).toEqual([]);
+    const s = volatilityTargetedSeries({ equity: intraday, cash, activations: [atOpen("1", 2)] });
+    expect(s.series.points[1]?.trIndex.toFixed(8)).toBe(dec("1.1").toFixed(8));
+    expect(s.exact).toBe(true);
   });
 
   it("leaves an ex-date distribution with the overnight holder", () => {
     // Day 2 goes ex a 2.00 distribution on a 100.00 close: the full-day total return is +2%, all of it
-    // overnight. A buyer at day 2's open has no claim to it, so a weight activating at that open earns only
-    // the (zero) intraday price move.
+    // overnight. A buyer at day 2's open has no claim to it.
     const exDate = leg([[1, 100, 100], [2, 100, 100, 2], [3, 100, 100]]);
-    const bought = volatilityTargetedSeries({ equity: exDate, cash, activations: new Map([[S(2), atOpen("1")]]) });
-    expect(bought.points[1]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
-    // Held from before the ex-date, the same distribution IS earned - and the two legs then reproduce the
-    // leg's own full-day total-return step exactly.
-    const held = volatilityTargetedSeries({ equity: exDate, cash, activations: new Map([[S(1), atOpen("1")]]) });
-    expect(held.points[1]?.trIndex.toFixed(8)).toBe(dec("1.02").toFixed(8));
-    expect(held.points[1]?.trIndex.toFixed(8)).toBe(exDate.tr.points[1]?.trIndex.toFixed(8));
+    const bought = volatilityTargetedSeries({ equity: exDate, cash, activations: [atOpen("1", 2)] });
+    expect(bought.series.points[1]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
+    // Held from before the ex-date the distribution IS earned, and the two legs then reproduce the leg's own
+    // full-day total-return step exactly.
+    const held = volatilityTargetedSeries({ equity: exDate, cash, activations: [atOpen("1", 1)] });
+    expect(held.series.points[1]?.trIndex.toFixed(8)).toBe(dec("1.02").toFixed(8));
+    expect(held.series.points[1]?.trIndex.toFixed(8)).toBe(exDate.tr.points[1]?.trIndex.toFixed(8));
   });
 
-  it("falls back to the old weight for the whole session when the open is unusable", () => {
+  it("declares itself inexact when the open cannot be split", () => {
     const noOpen = leg([[1, 100, 100], [2, 0, 110], [3, 110, 110]]);
-    const s = volatilityTargetedSeries({ equity: noOpen, cash, activations: new Map([[S(2), atOpen("1")]]) });
-    // Old weight is 0, so the session is earned flat rather than at the new weight.
-    expect(s.points[1]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
-    expect(s.warnings.join(" ")).toContain("no usable open");
+    const s = volatilityTargetedSeries({ equity: noOpen, cash, activations: [atOpen("1", 2)] });
+    expect(s.exact).toBe(false);
+    expect(s.inexactReasons.join(" ")).toContain("no usable open on 2026-01-02");
+    expect(s.series.warnings.join(" ")).toContain("no usable open");
   });
 
-  it("carries an activation with no common session forward instead of dropping it", () => {
-    // Cash observes no day 2, so the legs share only days 1 and 3 - and the strategy's own fill would have
-    // landed on the next tradable session too. The carried weight earns day 3 from its open, so the whole
-    // stretched day-1-close to day-3-open move stays with the old weight.
+  it("declares itself inexact when the acquisition falls inside a return interval", () => {
+    // Cash observes no day 2, so the legs share only days 1 and 3. A fill at day 2's open is inside the
+    // day-1-to-day-3 interval and there is no price to split it at. Guessing a side would bias the decisive
+    // comparator in a direction that depends on the gap's sign, so the index says so instead.
     const sparseCash = leg([[1, 10, 10], [3, 10, 10]]);
-    const s = volatilityTargetedSeries({ equity, cash: sparseCash, activations: new Map([[S(2), atOpen("1")]]) });
-    expect(s.points.map((p) => p.session)).toEqual([S(1), S(3)]);
-    expect(s.points[1]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
-    expect(s.warnings.join(" ")).toContain("carried forward to 2026-01-03");
+    const s = volatilityTargetedSeries({ equity, cash: sparseCash, activations: [atOpen("1", 2)] });
+    expect(s.series.points.map((p) => p.session)).toEqual([S(1), S(3)]);
+    expect(s.exact).toBe(false);
+    expect(s.inexactReasons.join(" ")).toContain("falls inside the 2026-01-01 -> 2026-01-03 return interval");
   });
 
-  it("warns rather than silently ignoring an activation past the last common session", () => {
-    const s = volatilityTargetedSeries({ equity, cash, activations: new Map([[S(9), atOpen("1")]]) });
-    expect(s.points[2]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
-    expect(s.warnings.join(" ")).toContain("never applied");
+  it("declares itself inexact when a rebalance falls past the last shared session", () => {
+    const s = volatilityTargetedSeries({ equity, cash, activations: [atOpen("1", 9)] });
+    expect(s.series.points[2]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
+    expect(s.exact).toBe(false);
+    expect(s.inexactReasons.join(" ")).toContain("never applied");
   });
 
   it("decomposes a session without creating or destroying return", () => {
     // With the weight unchanged across the split, the two legs must multiply back to the plain step.
-    const held = volatilityTargetedSeries({ equity, cash, activations: new Map([[S(1), atOpen("1")]]) });
-    const last = held.points[held.points.length - 1];
-    // Equity went 100 -> 110 -> 110, fully held: the index must be exactly 1.1.
+    const held = volatilityTargetedSeries({ equity, cash, activations: [atOpen("1", 1)] });
+    const last = held.series.points[held.series.points.length - 1];
     expect(last?.trIndex.toFixed(8)).toBe(dec("1.1").toFixed(8));
+    expect(held.exact).toBe(true);
+  });
+
+  it("refuses a weight outside [0, 1], keeping the comparator long-only and unlevered", () => {
+    expect(() => volatilityTargetedSeries({ equity, cash, activations: [atOpen("1.5", 2)] })).toThrow(RangeError);
+    expect(() => volatilityTargetedSeries({ equity, cash, activations: [atOpen("-0.1", 2)] })).toThrow(RangeError);
   });
 });

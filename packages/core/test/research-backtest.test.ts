@@ -340,10 +340,13 @@ describe("runBacktest", () => {
     expect(idx.points.length).toBeGreaterThan(1);
   });
 
-  it("never activates a Secondary 2 weight on the decision session, even at zero delay", () => {
-    // delayBarsOverride: 0 fills at the decision close, so the position exists only from that close. If the
-    // weight activated on the decision session, it would earn the previous-close-to-decision-close return -
-    // a volatility estimated AT that close earning the return ending at it.
+  it("puts a zero-delay Secondary 2 weight in force at the decision close, and no earlier", () => {
+    // `delayBarsOverride: 0` fills at the decision close, so the weight IS in force at the end of the decision
+    // session - and earns none of that session's return, because a close instant is the right endpoint of the
+    // step ending at it. The earlier version of this test asserted the weight could not change on a decision
+    // session at all, which was a symptom of the calendar-shift hack rather than the invariant: what must
+    // never happen is the weight EARNING that session, which `secondary2Weights` alone cannot show. The index
+    // oracle below pins that half.
     const { input } = setup();
     const r = runBacktest({ ...input, costs: { ...input.costs, delayBars: 0 } });
     const decisionSessions = new Set(r.decisions.map((d) => d.decisionSession));
@@ -354,42 +357,91 @@ describe("runBacktest", () => {
       if (prev === undefined || cur === undefined) continue;
       if (!cur.weight.eq(prev.weight)) {
         changes++;
-        expect(decisionSessions.has(cur.session)).toBe(false);
+        expect(decisionSessions.has(cur.session)).toBe(true);
       }
     }
-    // Without this the assertion above is vacuous: a run that never changes weight would pass trivially.
     expect(changes).toBeGreaterThan(0);
   });
 
-  // The split has to be driven by the RUN's delay, not hardcoded. `blendSeries` is the independent oracle:
-  // it applies one weight to each whole close-to-close return, which is exactly right at zero delay (the fill
-  // lands at the prior close, so the new weight holds the whole session) and exactly wrong at delay >= 1.
+  // The split has to be driven by the RUN's delay, not hardcoded. `blendSeries` is the independent oracle: it
+  // applies one weight to each whole close-to-close return, so feeding it the weight in force at the PREVIOUS
+  // close reproduces a zero-delay Secondary 2 exactly (the fill is at that close, nothing is split) and cannot
+  // reproduce a delayed one (every rebalance session is decomposed at its open).
   it("splits only when the run's own fills land at an open, not at the prior close", () => {
     const { input } = setup();
     const legs = reportBenchmarkSeries(input);
 
-    const asBlend = (r: ReturnType<typeof runBacktest>): string[] => {
-      const bySession = new Map(r.secondary2Weights.map((w) => [w.session, w.weight]));
+    const asLaggedBlend = (r: ReturnType<typeof runBacktest>): string[] => {
+      // Weight held INTO each session: the one in force at the previous session's close.
+      const heldInto = new Map<string, Dec>();
+      for (let i = 1; i < r.secondary2Weights.length; i++) {
+        const cur = r.secondary2Weights[i];
+        const prev = r.secondary2Weights[i - 1];
+        if (cur !== undefined && prev !== undefined) heldInto.set(cur.session, prev.weight);
+      }
       return blendSeries({
         equity: legs.primary,
         cash: legs.cash,
-        equityWeight: (session) => bySession.get(session) ?? ZERO,
+        equityWeight: (session) => heldInto.get(session) ?? ZERO,
       }).points.map((p) => p.trIndex.toFixed(12));
     };
     const levels = (r: ReturnType<typeof runBacktest>): string[] => (r.secondary2Index?.points ?? []).map((p) => p.trIndex.toFixed(12));
 
-    // Zero delay: every activation is acquired at the prior close, so no session is split and the index is
-    // the plain daily-rebalanced blend.
+    // Zero delay: every weight is acquired at a close, so no session is split.
     const zero = runBacktest({ ...input, costs: { ...input.costs, delayBars: 0 } });
     expect(levels(zero).length).toBeGreaterThan(1);
-    expect(levels(zero)).toEqual(asBlend(zero));
+    expect(zero.secondary2Exact).toBe(true);
+    expect(levels(zero)).toEqual(asLaggedBlend(zero));
 
-    // Delayed: the fill lands at the open, so at least one rebalance session is decomposed and the index
-    // parts company with the blend. Without this the assertion above could pass on a no-op split.
-    const delayed = runBacktest(input);
-    expect(input.costs.delayBars).toBeGreaterThanOrEqual(1);
+    // Delayed: the fill lands at an open, so every rebalance session is decomposed and the index parts
+    // company with the blend. This needs a fixture whose open differs from its close - the default fixture
+    // sets `open = close`, which makes every session's move entirely overnight and a split indistinguishable
+    // from no split. Without this half, the zero-delay assertion above could pass on a no-op split.
+    const gapMarket = buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-06-30"), openRatio: { VTI: N("0.985"), BIL: N("0.999") } });
+    const gapped = setup({ pit: gapMarket.pit, calendar: gapMarket.calendar });
+    const delayed = runBacktest(gapped.input);
+    expect(gapped.input.costs.delayBars).toBeGreaterThanOrEqual(1);
+    const gapLegs = reportBenchmarkSeries(gapped.input);
+    const heldInto = new Map<string, Dec>();
+    for (let i = 1; i < delayed.secondary2Weights.length; i++) {
+      const cur = delayed.secondary2Weights[i];
+      const prev = delayed.secondary2Weights[i - 1];
+      if (cur !== undefined && prev !== undefined) heldInto.set(cur.session, prev.weight);
+    }
+    const gapBlend = blendSeries({
+      equity: gapLegs.primary,
+      cash: gapLegs.cash,
+      equityWeight: (session) => heldInto.get(session) ?? ZERO,
+    }).points.map((p) => p.trIndex.toFixed(12));
+    expect(delayed.secondary2Exact).toBe(true);
     expect(levels(delayed).length).toBeGreaterThan(1);
-    expect(levels(delayed)).not.toEqual(asBlend(delayed));
+    expect(levels(delayed)).not.toEqual(gapBlend);
+  });
+
+  it("reports Secondary 2 inexact when a fill lands on a session the legs do not share", () => {
+    // BIL loses the session VTI's fill lands on, so that instant falls inside a stretched return interval
+    // with no price to place it at. There is no safe side to guess: under-crediting the comparator makes the
+    // strategy easier to promote, over-crediting makes it harder, and which one a guess causes depends on the
+    // signs of the weight change and of the move. The index says so instead, and `report.ts` withholds the
+    // prong on it.
+    const holed = buildMarket({
+      paths: PATHS,
+      from: D("2026-01-02"),
+      to: D("2026-06-30"),
+      omitSessions: { BIL: [D("2026-03-09")] },
+    });
+    const r = runBacktest(setup({ pit: holed.pit, calendar: holed.calendar }).input);
+    expect(r.secondary2Index).toBeDefined();
+    expect(r.secondary2Exact).toBe(false);
+    expect(r.secondary2InexactReasons.join(" ")).toContain("falls inside the");
+  });
+
+  it("reports an exactly-placed Secondary 2 on clean data, with no approximation", () => {
+    const { input } = setup();
+    const r = runBacktest(input);
+    expect(r.secondary2Exact).toBe(true);
+    expect(r.secondary2InexactReasons).toEqual([]);
+    expect(r.secondary2Index?.warnings).toEqual([]);
   });
 
   it("holds Secondary 2 in cash until its first decision takes effect, and keeps it long-only", () => {

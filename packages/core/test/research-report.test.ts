@@ -192,6 +192,27 @@ describe("buildResultReport", () => {
     };
   }
 
+  // Section 16.1's second prong is decisive, and an approximated comparator has no safe direction of error.
+  // So an index that could not place every rebalance exactly loses the registered name and takes the prong
+  // with it, rather than being published as though it were the charter's Secondary 2.
+  it("withholds the second prong and renames the arm when Secondary 2 was not placed exactly", () => {
+    const base = run();
+    const exact = buildResultReport(base);
+    expect(exact.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
+    expect(exact.primaryVersusSecondary2).toBeDefined();
+
+    const inexact = buildResultReport({
+      ...base,
+      backtest: { ...base.backtest, secondary2Exact: false, secondary2InexactReasons: ["no usable open on 2026-03-09"] },
+    });
+    expect(inexact.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT");
+    expect(inexact.benchmarks.map((b) => b.arm)).not.toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
+    expect(inexact.primaryVersusSecondary2).toBeUndefined();
+    // The series itself is still reported - it remains a usable reporting comparator - with its own metrics.
+    const arm = inexact.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT");
+    expect(arm?.totalReturn.isZero()).toBe(false);
+  });
+
   it("reports both arms, the charter's benchmarks, and the primary metric with its interval", () => {
     const r = buildResultReport(run());
     expect(r.version).toBe(REPORT_VERSION);

@@ -20,7 +20,7 @@ import type { ArmResult, BacktestResult } from "./backtest.ts";
  *    charters, optimistic delays, survivorship labels and synthetic missing data all land there.
  */
 
-export const REPORT_VERSION = 1;
+export const REPORT_VERSION = 2;
 
 export type ArmMetrics = {
   arm: string;
@@ -261,7 +261,12 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
   // it. Absent when the primary is not a risk ETF: the registered estimator produces no volatility for it,
   // and no stand-in is offered in its place.
   if (c.benchmarks.volatility_controlled_primary && bt.secondary2Index !== undefined) {
-    benchmarkSeries.push({ name: "SECONDARY_2_VOL_TARGET_PRIMARY", series: bt.secondary2Index });
+    // An index that could not place every rebalance exactly is published under a name that says so, and the
+    // decisive prong below is withheld from it. The name rather than a warnings field, for the same reason as
+    // before: a name is the only warning that survives the number being copied into a spreadsheet or a log
+    // line. The registered, unqualified name is reserved for a comparator built exactly.
+    const name = bt.secondary2Exact ? "SECONDARY_2_VOL_TARGET_PRIMARY" : "SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT";
+    benchmarkSeries.push({ name, series: bt.secondary2Index });
   }
   if (c.benchmarks.volatility_controlled_primary) {
     // NOT the charter's Secondary 2. Section 11 registers Secondary 2 as "VTI scaled to a 10% ex-ante
@@ -304,7 +309,8 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
   const threshold = Number(c.pass_fail.primary_threshold);
   // Section 16.1's second prong, against the REGISTERED Secondary 2. The average-exposure approximation is
   // never substituted for it: when Secondary 2 is unavailable the prong stays undefined
-  // (docs/analysis/2026-09-20-d51-primary-metric.md).
+  // (docs/analysis/2026-09-20-d51-primary-metric.md). The lookup is by the unqualified name on purpose, so an
+  // index published as `__INEXACT` cannot satisfy it even if the exactness check below were removed.
   const secondary2 = benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
   const volControlled = benchmarks.find((b) => b.arm === "APPROX_AVERAGE_EXPOSURE_PRIMARY");
   const candidateMetrics = arms[0];
@@ -356,9 +362,16 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
     },
     primaryVersusVolatilityControlled:
       volControlled === undefined || candidateMetrics === undefined ? undefined : candidateMetrics.sharpeVsCash - volControlled.sharpeVsCash,
-    /** ALPHA_CHARTER section 16.1's second prong: excess return over the registered Secondary 2 (section 13). */
+    /**
+     * ALPHA_CHARTER section 16.1's second prong: excess return over the registered Secondary 2 (section 13).
+     *
+     * `undefined` unless the comparator was built exactly. `evaluateFalsifiers` then reports
+     * `decisiveRejection: undefined` rather than deciding from a number whose error has an unknown sign.
+     */
     primaryVersusSecondary2:
-      secondary2 === undefined || candidateMetrics === undefined ? undefined : candidateMetrics.totalReturn.minus(secondary2.totalReturn),
+      secondary2 === undefined || candidateMetrics === undefined || !bt.secondary2Exact
+        ? undefined
+        : candidateMetrics.totalReturn.minus(secondary2.totalReturn),
     taxScenarios: tax,
     independentDecisions: Math.floor(bt.sessions.length / SESSIONS_PER_MONTH),
     decisions: bt.decisions.length,
