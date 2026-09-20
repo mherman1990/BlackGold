@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Dec } from "@blackgold/shared";
 import { fileURLToPath } from "node:url";
 import { loadCharterFile, registrabilityReasons, type Charter } from "../src/strategy/charter.ts";
 import { runEvaluation } from "../src/research/evaluate.ts";
@@ -146,37 +147,22 @@ describe("runEvaluation", () => {
   it("builds the registered Secondary 2 as a reporting benchmark", () => {
     const r = evaluate(evalCharter(), cleanMarket());
     const split = r.splits[0];
-    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY__TIMING_BIASED");
+    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
     expect(s2).toBeDefined();
     // Its section 13 metrics are populated like any other benchmark's.
     expect(s2?.totalReturn).toMatch(/^-?\d+\.\d{8}$/);
     expect(s2?.maxDrawdown).toMatch(/^-?\d+\.\d{8}$/);
   });
 
-  it("names the published Secondary 2 series for its timing bias, so the warning travels with the number", () => {
-    // The prong is withheld, but an operator can still subtract this total return from B1's and rebuild it.
-    // The bias can reverse that difference, so the arm name itself carries the warning into any JSON, log or
-    // spreadsheet the number is copied into. It loses the suffix when the fill timing is exact.
+  it("reports section 16.1's second prong as excess return over the registered Secondary 2", () => {
     const r = evaluate(evalCharter(), cleanMarket());
-    for (const split of r.splits) {
-      const names = split.benchmarks.map((b) => b.arm);
-      expect(names).toContain("SECONDARY_2_VOL_TARGET_PRIMARY__TIMING_BIASED");
-      // The unqualified, registered-sounding name must never appear while the bias is present.
-      expect(names).not.toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
-    }
-  });
-
-  it("withholds section 16.1's second prong while the comparator's fill timing is biased", () => {
-    // Owner decision 2026-09-20, and fail-closed rather than a gap: blendSeries activates the weight on the
-    // fill session and applies it to that session's whole previous-close-to-close return, while simulateFill
-    // acquires at the OPEN - so Secondary 2 earns a pre-fill gap once per rebalance. It also restricts to
-    // sessions common to both legs, so a missing session can stretch an interval back across the decision.
-    // Neither belongs in a number that can reject a hypothesis, so the prong stays undefined until the
-    // timing is exact. Publishing the series for reporting is fine; feeding the falsifier is not.
-    const r = evaluate(evalCharter(), cleanMarket());
-    for (const split of r.splits) {
-      expect(split.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY__TIMING_BIASED");
-      expect(split.primaryVersusSecondary2).toBeUndefined();
+    const split = r.splits[0];
+    expect(split?.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
+    expect(split?.primaryVersusSecondary2).toMatch(/^-?\d+\.\d{8}$/);
+    const b1 = split?.arms.find((a) => a.arm === "B1_DETERMINISTIC");
+    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
+    if (b1 !== undefined && s2 !== undefined && split?.primaryVersusSecondary2 !== undefined) {
+      expect(new Dec(split.primaryVersusSecondary2).toFixed(8)).toBe(new Dec(b1.totalReturn).minus(new Dec(s2.totalReturn)).toFixed(8));
     }
   });
 
@@ -190,7 +176,7 @@ describe("runEvaluation", () => {
     });
     const r = evaluate(noPrimaryInUniverse, cleanMarket());
     const split = r.splits[0];
-    expect(split?.benchmarks.map((b) => b.arm)).not.toContain("SECONDARY_2_VOL_TARGET_PRIMARY__TIMING_BIASED");
+    expect(split?.benchmarks.map((b) => b.arm)).not.toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
     expect(split?.primaryVersusSecondary2).toBeUndefined();
     // The approximation is still reported as its own diagnostic, and is NOT promoted into the prong.
     expect(split?.approximateVersusAverageExposureBenchmark).toBeTypeOf("number");
@@ -201,7 +187,7 @@ describe("runEvaluation", () => {
     // volatility-targeted per decision, the other is a single constant average exposure.
     const r = evaluate(evalCharter(), cleanMarket());
     const split = r.splits[0];
-    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY__TIMING_BIASED");
+    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
     const approx = split?.benchmarks.find((b) => b.arm === "APPROX_AVERAGE_EXPOSURE_PRIMARY");
     expect(s2).toBeDefined();
     expect(approx).toBeDefined();

@@ -126,88 +126,49 @@ Built to mirror §9.5 with the holding set reduced to the primary alone:
 comparator. That closes the latent defect recorded below: it previously decided rejection from the
 approximation.
 
-**A known one-session approximation, and a second owner call.** `simulateFill` fills at the **open** of the
-fill session, so the strategy's new position earns only that session's open-to-close move. `blendSeries` works
-on close-to-close total-return indices, so Secondary 2's new weight earns the whole previous-close-to-close
-move — including the overnight or weekend gap the strategy's position did not exist for. The error is one gap
-per rebalance, signed by whichever way gaps run, and with weekly rebalancing that is a few hundred gaps over a
-design window.
+**The fill-timing problem, and how it was finally fixed.** The first implementation fed a per-session weight
+into `blendSeries`, and Codex took four rounds to dismantle it. Each round refuted the justification given in
+the round before:
 
-**A correction: my first reason for deferring this was wrong.** I argued `EXPOSURE_MATCHED` (Secondary 1) has
-the identical property, so the timing was an established convention Secondary 2 merely inherited. It shares the
-*mechanics*, but §11 defines Secondary 1 as the realized average equity weight in **each calendar month,
-applied ex post** — while the code uses a per-session post-fill weight. So **Secondary 1 as implemented is
-itself not the registered benchmark**, and cannot serve as precedent for anything. Found by Codex; the appeal
-to precedent collapses.
+1. *"`EXPOSURE_MATCHED` sets the precedent."* — §11 defines Secondary 1 as a calendar-month **ex-post**
+   average; the code uses a per-session weight, so it is not the registered benchmark either.
+2. *"An exact treatment is not expressible in the series model."* — it is: `runBacktest` already loads raw
+   opens for both legs.
+3. *Withhold the prong instead.* — `evaluateFalsifiers` treated an absent prong as "does not beat", so
+   withholding would have emitted a §16.1 rejection on **every** run whose primary metric failed. And the
+   published series let anyone rebuild the withheld number by subtracting two fields.
 
-That leaves a second, larger finding: **two of the charter's registered comparators are unimplemented.**
-Secondary 2 did not exist until this PR, and Secondary 1 is a per-session approximation of a monthly ex-post
-definition. Both feed §13's registered metrics.
+The owner's call after round four was to **stop patching and build it properly**, which was right: every
+defect above traced to one mismatch — `blendSeries` applies a single weight to a whole close-to-close return,
+and Secondary 2 needs a weight that changes intraday.
 
-**Resolved by the owner, 2026-09-20: publish the benchmark, withhold the prong.** Secondary 2 ships as a
-reporting comparator with its §13 metrics, and `primaryVersusSecondary2` stays `undefined` until the timing is
-exact, so **nothing decisive consumes a biased number**. That is fail-closed in the project's usual sense:
-unknown state does not get to authorise anything.
+**`volatilityTargetedSeries` (`research/benchmarks.ts`) builds Secondary 2 as its own index.** The rebalance
+session is split at the open: the **old** weight earns `prevClose → open`, the **new** weight earns
+`open → close` — exactly where `simulateFill` acquires the strategy's position. Two consequences:
 
-Two further points closed the argument for deferring a *fix* rather than the prong:
+- **The pre-fill gap is gone.** The new weight no longer earns an overnight move its position did not exist
+  for.
+- **The common-session stretch stops mattering.** Whatever interval precedes the open — one session or five —
+  the old weight earns it, which is correct, because the new position did not exist for any of it. The fix
+  for the second defect fell out of the fix for the first.
 
-- **The data is already there.** `runBacktest` loads both VTI and BIL as `EntitySeries` carrying raw opens and
-  corporate actions, so the fill-session return can be split at the open without new market data. My claim
-  that a close-to-close blend "cannot express" it was wrong.
-- **A second, related leak.** `blendSeries` restricts to sessions common to both legs, so a session missing
-  from either (including a `STALE_BAR` dropped from its total-return series) can stretch a return interval
-  back across the decision — a calendar-session clamp does not prevent it. `GAP` and `STALE_BAR` do not bar
-  promotion evidence, so labelling does not contain it either.
+The split preserves the session's total return exactly: the distribution rides the overnight leg and the
+intraday leg carries it through, so the two multiply back to the index's own step. Only rebalance sessions are
+decomposed; everywhere else the index steps by the plain blended close-to-close return.
 
-Both are fixed by building Secondary 2 as its own index from the raw bars rather than feeding a
-calendar-indexed weight into `blendSeries`. That is the work that restores the prong, and it is not done here.
+Fail-closed where it cannot be done: if a rebalance session has no usable open on either leg, the **old**
+weight earns the whole session and a warning is recorded — under-crediting the new position rather than
+handing it a move it did not earn.
 
-The two positions weighed before that decision:
+With the timing exact, **the prong is restored**: `primaryVersusSecondary2` is published again, and the
+`__TIMING_BIASED` suffix that labelled the interim series is gone. `evaluateFalsifiers` keeps the corrected
+three-state `decisiveRejection`, because "unmeasured" and "failed" remain different things.
 
-- **Accept it.** Both secondaries share the bias, so comparisons between them are consistent, and a
-  frictionless index blend is an approximation by construction anyway.
-- **Fix it.** §16.1's second prong is a *decisive* input, and a systematic few-hundred-gap bias in a decisive
-  comparator is a different thing from a cosmetic one in a reporting benchmark.
+A bug the new unit tests caught immediately, worth recording because it is the kind the previous approach hid:
+an activation on the **first** session was silently ignored, since the loop starts at the second, so the whole
+series would have run at zero weight.
 
-Found by Codex review of this PR — across four rounds, each of which refuted the reason given in the round
-before.
-
-**Round four found that withholding, as first implemented, was itself incomplete in two ways:**
-
-1. **`evaluateFalsifiers` turned the withheld value into a rejection.** It treated an absent second prong as
-   "does not beat", so `decisiveRejection` came back `true` whenever the primary metric failed. Combined with
-   deliberately withholding the prong, that meant the function would emit a §16.1 rejection on *every* such
-   run — manufacturing precisely the verdict withholding exists to prevent. It now returns `undefined` when
-   the prong is unmeasured: §16.1 rejects "if both fail", and absence is not failure. (I had earlier called
-   changing this an owner reading rather than a bug fix. That was right until the prong became deliberately
-   absent; after that, treating absence as failure stopped being conservative and started being wrong.)
-2. **The published series could be used to rebuild the prong.** `runEvaluation` serialises Secondary 2's total
-   return alongside `B1_DETERMINISTIC`'s, so an operator could subtract the two and recover exactly the
-   withheld number — which the bias can reverse. The arm is therefore published as
-   **`SECONDARY_2_VOL_TARGET_PRIMARY__TIMING_BIASED`**: the warning travels with the number into any JSON, log
-   or spreadsheet it is copied into, and a test asserts the unqualified registered-sounding name never appears
-   while the bias is present. The suffix comes off when the timing is exact.
-
-**A related charter ambiguity — resolved by the owner, 2026-09-20: excess return.** §13 lists "**excess
-return** versus Secondary 1 and Secondary 2" among the registered metrics, while §16.1 says only that the
-strategy must not "fail to beat Secondary 2". The first implementation used the **Sharpe difference**, by
-parallel with §16.1's first prong ("fails to improve *the primary metric* over VTI"); Codex read §13 as
-governing. The two can disagree — a strategy can have a higher return and a lower Sharpe than Secondary 2 —
-and the disagreement can flip a decisive rejection, which is why it was an owner call rather than a code
-choice.
-
-Matt resolved it to §13's reading. `primaryVersusSecondary2` is now the **total-return difference** over the
-window, carried as a decimal (it feeds a rejection verdict, so no binary float), and `evaluateFalsifiers`
-decides `beatsSecondary2` from it. **No charter edit was required**: §13 already said excess return, so this
-implements the registered metric rather than changing one. Nothing inherits or loses evidence.
-
-**A zero-delay look-ahead, found and fixed.** With `delayBarsOverride: 0` the simulator fills at the decision
-close, but the weight activated on the decision session itself, letting a volatility estimated *at* that close
-earn the return ending at it. The shift is now `max(delayBars, 1)`. Worth recording that the original
-weight-timing test **explicitly permitted** this case — it asserted the change may land on a decision session
-when `delay === 0`, blessing the exact leak it was written to catch.
-
-**One charter ambiguity this forced into the open, and an owner call.** §11 does not state a re-scaling
+**One charter ambiguity this forced into the open, and an owner call.****One charter ambiguity this forced into the open, and an owner call.** §11 does not state a re-scaling
 cadence. The implementation re-scales **weekly, at the strategy's decision instants**, chosen so that
 everything except selection matches the strategy and the comparison isolates what §11 says it isolates. The
 literal alternative — re-scaling every session — is defensible and would give a different number. This is the

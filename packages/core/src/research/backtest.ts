@@ -8,6 +8,7 @@ import { admittedRiskEtfs, type Charter } from "../strategy/charter.ts";
 import { candidateParamsFromCharter, selectCandidates, type CandidateParams, type CandidateSet } from "../strategy/candidates.ts";
 import { computeFeatures, featureParamsFromCharter, type FeatureParams } from "../strategy/features.ts";
 import { constructTargets, rebalanceOrders, shareTargets, sizingParamsFromCharter, type SizingParams, type TargetWeights } from "../strategy/construct.ts";
+import { volatilityTargetedSeries } from "./benchmarks.ts";
 import { dailyNavSeries, type PortfolioEvent } from "./nav.ts";
 import { simulateFill, type CostModel } from "./simulator.ts";
 import type { LeakageAuditor } from "./leakage.ts";
@@ -128,6 +129,13 @@ export type BacktestResult = {
    * absent rather than approximated - approximating this comparator is what D-51 had to unwind.
    */
   secondary2Weights: { session: IsoDate; weight: Dec }[];
+  /**
+   * ALPHA_CHARTER section 11 Secondary 2 as a total-return index, with each rebalance session split at the
+   * open so the new weight earns only from where `simulateFill` would have acquired the position. Absent
+   * when Secondary 2 cannot be built (the primary is not a risk ETF, so the registered estimator produces no
+   * volatility for it). See `volatilityTargetedSeries`.
+   */
+  secondary2Index?: TRSeries;
   labels: string[];
   /**
    * Fills that landed on or before the decision that caused them. Must be empty: a non-empty list is a
@@ -288,6 +296,17 @@ export function reportBenchmarkSeries(input: BacktestInput): { primary: TRSeries
     primary: loadExecutionSeries(input, input.charter.benchmarks.primary, endAt).tr,
     cash: loadExecutionSeries(input, input.charter.universe.cash_etf, endAt).tr,
   };
+}
+
+/** Sessions at which the Secondary 2 weight changes, mapped to the new weight: the rebalance instants. */
+function secondary2Activations(perSession: readonly { session: IsoDate; weight: Dec }[]): Map<IsoDate, Dec> {
+  const out = new Map<IsoDate, Dec>();
+  let prev: Dec | undefined;
+  for (const { session, weight } of perSession) {
+    if (prev === undefined || !weight.eq(prev)) out.set(session, weight);
+    prev = weight;
+  }
+  return out;
 }
 
 /**
@@ -576,6 +595,19 @@ export function runBacktest(input: BacktestInput): BacktestResult {
   // change when the strategy's fills land (`simulateFill` takes `input.costs.delayBars`), and a comparator
   // that shifted by a different number of bars would quietly break the delay-sensitivity test it feeds.
   const secondary2Weights = secondary2WeightSeries(secondary2ByDecision, allSessions, input.costs.delayBars);
+  // ALPHA_CHARTER section 11 Secondary 2, built as its own index with the rebalance session split at the
+  // open (research/benchmarks.ts). Not a weight fed into `blendSeries`: that applies one weight to a whole
+  // close-to-close return, which would hand the new weight an overnight gap its position did not exist for.
+  const s2Equity = series.get(benchmark);
+  const s2Cash = series.get(cashEtf);
+  const secondary2Index =
+    secondary2Weights.length === 0 || s2Equity === undefined || s2Cash === undefined
+      ? undefined
+      : volatilityTargetedSeries({
+          equity: { bars: s2Equity.bars, tr: s2Equity.tr },
+          cash: { bars: s2Cash.bars, tr: s2Cash.tr },
+          activations: secondary2Activations(secondary2Weights),
+        });
   const citability: string[] = [...(input.registrabilityReasons ?? [])];
   for (const l of ["SURVIVORSHIP_BIASED", "OPTIMISTIC_DELAY"]) if (labels.has(l)) citability.push(`run carries the ${l} label`);
   if (labels.has("SYNTHETIC_MISSING_DATA")) citability.push("run injected synthetic missing data for the sensitivity grid");
@@ -619,6 +651,7 @@ export function runBacktest(input: BacktestInput): BacktestResult {
     sessions: allSessions,
     equityWeights,
     secondary2Weights,
+    ...(secondary2Index === undefined ? {} : { secondary2Index }),
     labels: [...labels].sort(),
     executionOrderViolations,
     citableAsEvidence: citability.length === 0,

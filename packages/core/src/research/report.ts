@@ -91,24 +91,12 @@ export type ResultReport = {
    * Secondary 2 ("VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator, remainder in
    * BIL"). Positive means trend selection adds something beyond volatility control alone.
    *
-   * **Currently always `undefined`, by owner decision (2026-09-20), and that is fail-closed rather than a
-   * gap.** The Secondary 2 series is published for reporting, but the prong that feeds a decisive rejection
-   * is withheld until the comparator's fill-session timing is exact.
+   * **Excess return, not a Sharpe difference.** Section 16.1 says only "fails to beat Secondary 2" without
+   * naming a measure, and section 13 registers "excess return versus Secondary 1 and Secondary 2". The owner
+   * resolved the ambiguity to section 13's reading (2026-09-20). No charter edit was needed: section 13
+   * already said excess return. Decimal, not a float, since it feeds a rejection verdict.
    *
-   * Why: `blendSeries` activates the weight on the fill session and applies it to that session's whole
-   * previous-close-to-close return, while `simulateFill` acquires the position at the OPEN. Secondary 2
-   * therefore earns a pre-fill gap its position did not exist for - once per rebalance, signed by whichever
-   * way gaps run. `blendSeries` also restricts to sessions common to both legs, so a session missing from
-   * VTI or BIL can stretch a return interval back across the decision. Neither is acceptable in a number
-   * that can reject a hypothesis, and both are fixable from the raw opens `runBacktest` already loads.
-   *
-   * **When it is restored** it is the **excess return** over Secondary 2, not a Sharpe difference: section
-   * 16.1 says only "fails to beat Secondary 2" without naming a measure, and section 13 registers "excess
-   * return versus Secondary 1 and Secondary 2". The owner resolved that ambiguity to section 13's reading on
-   * 2026-09-20; no charter edit was needed, because section 13 already said excess return. Decimal, not a
-   * float, since it feeds a rejection verdict.
-   *
-   * Also `undefined` when Secondary 2 could not be built. Nothing substitutes for it in either case.
+   * `undefined` when Secondary 2 could not be built. Nothing substitutes for it in that case.
    */
   primaryVersusSecondary2: Dec | undefined;
   taxScenarios: TaxScenarioResult[];
@@ -268,21 +256,12 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
   const exposureMatched: BlendSpec = { equity: input.primary, cash: input.cash, equityWeight: (session) => weightBySession.get(session) ?? ZERO };
   const benchmarkSeries: { name: string; series: TRSeries }[] = [{ name: `${c.benchmarks.primary}_TR`, series: input.primary }];
   if (c.benchmarks.exposure_matched) benchmarkSeries.push({ name: "EXPOSURE_MATCHED", series: blendSeries(exposureMatched) });
-  // ALPHA_CHARTER section 11 Secondary 2, built by `runBacktest` from the strategy's own covariance window.
-  // Empty when the primary is not a risk ETF, in which case the registered comparator simply is not available
+  // ALPHA_CHARTER section 11 Secondary 2, built by `runBacktest` as its own index with each rebalance
+  // session split at the open, so the weight earns only from where the strategy's fill would have acquired
+  // it. Absent when the primary is not a risk ETF: the registered estimator produces no volatility for it,
   // and no stand-in is offered in its place.
-  //
-  // The arm name carries `__TIMING_BIASED` deliberately. Its section 13 metrics are published for reporting,
-  // but two fill-timing defects remain (the pre-fill gap and the common-session interval stretch), so an
-  // operator subtracting this total return from B1's would reconstruct exactly the prong that is withheld -
-  // and that difference can be reversed by the bias. The name is the warning that travels with the number
-  // into any JSON, log or spreadsheet it is copied into. It loses the suffix when the timing is exact.
-  if (c.benchmarks.volatility_controlled_primary && bt.secondary2Weights.length > 0) {
-    const byS2Session = new Map(bt.secondary2Weights.map((w) => [w.session, w.weight]));
-    benchmarkSeries.push({
-      name: "SECONDARY_2_VOL_TARGET_PRIMARY__TIMING_BIASED",
-      series: blendSeries({ equity: input.primary, cash: input.cash, equityWeight: (session) => byS2Session.get(session) ?? ZERO }),
-    });
+  if (c.benchmarks.volatility_controlled_primary && bt.secondary2Index !== undefined) {
+    benchmarkSeries.push({ name: "SECONDARY_2_VOL_TARGET_PRIMARY", series: bt.secondary2Index });
   }
   if (c.benchmarks.volatility_controlled_primary) {
     // NOT the charter's Secondary 2. Section 11 registers Secondary 2 as "VTI scaled to a 10% ex-ante
@@ -323,11 +302,10 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
     ...(input.bootstrapSeed === undefined ? {} : { seed: input.bootstrapSeed }),
   });
   const threshold = Number(c.pass_fail.primary_threshold);
-  // Section 16.1's second prong compares against the REGISTERED Secondary 2, and is currently WITHHELD -
-  // see the `primaryVersusSecondary2` doc comment. When restored it is
-  // `candidateMetrics.totalReturn.minus(<SECONDARY_2_VOL_TARGET_PRIMARY>.totalReturn)`; no lookup is kept
-  // here meanwhile, so nothing can quietly start consuming it. The average-exposure approximation is never
-  // substituted for it either (docs/analysis/2026-09-20-d51-primary-metric.md).
+  // Section 16.1's second prong, against the REGISTERED Secondary 2. The average-exposure approximation is
+  // never substituted for it: when Secondary 2 is unavailable the prong stays undefined
+  // (docs/analysis/2026-09-20-d51-primary-metric.md).
+  const secondary2 = benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
   const volControlled = benchmarks.find((b) => b.arm === "APPROX_AVERAGE_EXPOSURE_PRIMARY");
   const candidateMetrics = arms[0];
 
@@ -378,10 +356,9 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
     },
     primaryVersusVolatilityControlled:
       volControlled === undefined || candidateMetrics === undefined ? undefined : candidateMetrics.sharpeVsCash - volControlled.sharpeVsCash,
-    // ALPHA_CHARTER section 16.1's second prong. WITHHELD: see the field's doc comment. The Secondary 2
-    // series below is published for reporting, but nothing decisive consumes it while its fill-session
-    // timing carries a known bias. Deliberately not `candidateMetrics.totalReturn.minus(...)`.
-    primaryVersusSecondary2: undefined,
+    /** ALPHA_CHARTER section 16.1's second prong: excess return over the registered Secondary 2 (section 13). */
+    primaryVersusSecondary2:
+      secondary2 === undefined || candidateMetrics === undefined ? undefined : candidateMetrics.totalReturn.minus(secondary2.totalReturn),
     taxScenarios: tax,
     independentDecisions: Math.floor(bt.sessions.length / SESSIONS_PER_MONTH),
     decisions: bt.decisions.length,

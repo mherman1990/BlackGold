@@ -93,6 +93,9 @@ export type SplitEvaluation = {
    * Excess return rather than a Sharpe difference, per section 13's registered metric list; the owner
    * resolved that ambiguity on 2026-09-20. A decimal string, because it feeds a rejection verdict.
    *
+   * Secondary 2 is built as its own index with each rebalance session split at the open, so this number is
+   * free of the fill-timing bias that made it unpublishable earlier in this work.
+   *
    * Still a **per-split** number. Section 16.1's verdict is defined on the aggregate walk-forward
    * out-of-sample set, so this is an input to that verdict, never the verdict itself, and no §16.1 outcome
    * is emitted here. `undefined` when Secondary 2 could not be built (the primary is not a risk ETF, so the

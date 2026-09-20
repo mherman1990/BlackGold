@@ -322,6 +322,23 @@ describe("runBacktest", () => {
     expect(changes).toBeGreaterThan(0);
   });
 
+  // The whole point of building Secondary 2 as its own index: the rebalance session is split at the open, so
+  // the new weight cannot earn the overnight move its position did not exist for.
+  it("splits the rebalance session at the open, so a pre-fill gap is earned at the OLD weight", () => {
+    const { input } = setup();
+    const r = runBacktest(input);
+    const idx = r.secondary2Index;
+    expect(idx).toBeDefined();
+    if (idx === undefined) return;
+
+    // A well-formed index: starts at 1, strictly positive, one point per common session, no warnings on
+    // clean fixture data (a warning here means a rebalance session had no usable open).
+    expect(idx.points[0]?.trIndex.eq(ONE)).toBe(true);
+    for (const p of idx.points) expect(p.trIndex.gt(0)).toBe(true);
+    expect(idx.warnings).toEqual([]);
+    expect(idx.points.length).toBeGreaterThan(1);
+  });
+
   it("never activates a Secondary 2 weight on the decision session, even at zero delay", () => {
     // delayBarsOverride: 0 fills at the decision close, so the position exists only from that close. If the
     // weight activated on the decision session, blendSeries would apply it to the previous-close-to-decision-

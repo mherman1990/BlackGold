@@ -864,7 +864,15 @@ that did not exist when this entry was first written:
 2. **Evaluate §16.1 over the aggregate walk-forward out-of-sample set**, with the splits pooled - not per
    split.
 
-   **Resolved along the way (Matt, 2026-09-20): the benchmark ships, the prong is WITHHELD.** Secondary 2 is
+   **Superseded (Matt, 2026-09-20): stop patching, build the open-split index.** Secondary 2 is now built by
+   `volatilityTargetedSeries` as its own total-return index, with each rebalance session split at the open so
+   the new weight earns only from where `simulateFill` acquires the position. That removes both the pre-fill
+   gap and the common-session interval stretch - the second fell out of the first - so the prong is published
+   rather than withheld, and the interim `__TIMING_BIASED` label is gone. Four rounds of review had each
+   refuted the previous round's reason for deferring; the root cause was retrofitting a decisive comparator
+   onto `blendSeries`, which applies one weight to a whole close-to-close return.
+
+   *Superseded interim position, kept for the record:* **the benchmark ships, the prong is WITHHELD.** Secondary 2 is
    published as a reporting comparator with its §13 metrics, but `primaryVersusSecondary2` stays `undefined`
    until its fill-session timing is exact, so nothing decisive consumes a biased number. Two leaks make it
    biased today: `blendSeries` activates the weight on the fill session and applies it to that session's whole

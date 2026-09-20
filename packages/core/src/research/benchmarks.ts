@@ -1,5 +1,6 @@
 import { Dec, dec, ONE, ZERO, type IsoDate } from "@blackgold/shared";
-import { simpleReturns, TR_ADJUSTMENT_VERSION, type TRPoint, type TRSeries } from "../market/series.ts";
+import { simpleReturns, TR_ADJUSTMENT_VERSION, type LoadedBar, type TRPoint, type TRSeries } from "../market/series.ts";
+import type { RawBar } from "../market/types.ts";
 
 /**
  * Benchmark engine (docs/EXPERIMENT_PROTOCOL.md section 9 benchmark policy; PLAN.md Phase 1).
@@ -69,6 +70,169 @@ export function blendSeries(spec: BlendSpec): TRSeries {
     points.push({ session: e.session, trIndex: index, adjClose: index, distribution: ZERO, terminal: false });
   }
   return { entityId: `BLEND(${spec.equity.entityId}/${spec.cash.entityId})`, points, adjustmentVersion: TR_ADJUSTMENT_VERSION, warnings: [] };
+}
+
+export type VolTargetLeg = {
+  /** Raw bars, for the open that splits a rebalance session. */
+  bars: readonly (RawBar | LoadedBar)[];
+  /** The leg's total-return index: the authority for every close-to-close return. */
+  tr: TRSeries;
+};
+
+export type VolTargetSpec = {
+  equity: VolTargetLeg;
+  cash: VolTargetLeg;
+  /**
+   * Session on which a new equity weight takes effect, mapped to that weight. The weight is acquired at that
+   * session's OPEN, matching where `simulateFill` acquires the strategy's position.
+   */
+  activations: ReadonlyMap<IsoDate, Dec>;
+};
+
+/**
+ * ALPHA_CHARTER section 11 Secondary 2, built as its own index rather than as a weight fed into
+ * `blendSeries`.
+ *
+ * `blendSeries` cannot express this comparator correctly, which four rounds of review established the hard
+ * way. It applies one weight to a whole close-to-close return, so a weight acquired at the fill session's
+ * open still earns that session's overnight move - a gap the position did not exist for, once per rebalance.
+ * It also restricts to sessions common to both legs, so a session missing from either stretches a return
+ * interval backwards, potentially across the decision that set the weight.
+ *
+ * Both follow from the same mismatch, and both disappear here:
+ *
+ *   - **The rebalance session is split at the open.** The OLD weight earns `prevClose -> open`; the NEW
+ *     weight earns `open -> close`. This is exactly how the strategy experiences a fill.
+ *   - **The stretch stops mattering.** Whatever interval precedes the open - one session or five - it is
+ *     earned by the old weight, which is correct, because the new position did not exist for any of it.
+ *
+ * Every close-to-close return comes from the legs' total-return indices, so on non-rebalance sessions this is
+ * identical to the blend. Only the rebalance session is decomposed, and only there can it differ.
+ *
+ * The split keeps the session's total return intact: the distribution rides the overnight leg
+ * (`(adjOpen + dist) / prevAdjClose`) and the intraday leg carries it through
+ * (`(adjClose + dist) / (adjOpen + dist)`), so the two legs multiply back to the index's own
+ * `(adjClose + dist) / prevAdjClose`. No return is created or destroyed by decomposing it.
+ *
+ * Fail-closed: when a rebalance session has no usable open on either leg the split cannot be computed, so the
+ * OLD weight earns the whole session and a warning is recorded. That under-credits the new position rather
+ * than handing it a move it did not earn.
+ */
+export function volatilityTargetedSeries(spec: VolTargetSpec): TRSeries {
+  const warnings: string[] = [];
+  const sessions = commonSessions(spec.equity.tr.points, spec.cash.tr.points);
+  const first = sessions[0];
+  if (first === undefined) {
+    return { entityId: "VOL_TARGET", points: [], adjustmentVersion: TR_ADJUSTMENT_VERSION, warnings: ["no common sessions"] };
+  }
+
+  const eqTr = new Map(spec.equity.tr.points.map((p) => [p.session, p]));
+  const cashTr = new Map(spec.cash.tr.points.map((p) => [p.session, p]));
+  const eqBar = new Map(spec.equity.bars.map((b) => [b.session, b]));
+  const cashBar = new Map(spec.cash.bars.map((b) => [b.session, b]));
+
+  const points: TRPoint[] = [{ session: first, trIndex: ONE, adjClose: ONE, distribution: ZERO, terminal: false }];
+  let index = ONE;
+  // An activation on the very first session needs no split: that session is the index's base point and earns
+  // no return, so the weight is simply held into the next one. Without this the loop below, which starts at
+  // the second session, would silently ignore it and run the whole series at zero.
+  let weight = spec.activations.get(first) ?? ZERO;
+
+  for (let i = 1; i < sessions.length; i++) {
+    const session = sessions[i];
+    const prev = sessions[i - 1];
+    if (session === undefined || prev === undefined) continue;
+    const activation = spec.activations.get(session);
+
+    if (activation === undefined || activation.eq(weight)) {
+      // No rebalance: one close-to-close step at the current weight, straight from the indices.
+      if (activation !== undefined) weight = activation;
+      index = index.times(ONE.plus(blendStep(weight, weight, undefined, session, prev, eqTr, cashTr)));
+    } else {
+      const split = splitAtOpen(session, prev, eqTr, cashTr, eqBar, cashBar);
+      if (split === undefined) {
+        warnings.push(`no usable open on ${session}; the pre-rebalance weight earned the whole session`);
+        index = index.times(ONE.plus(blendStep(weight, weight, undefined, session, prev, eqTr, cashTr)));
+      } else {
+        index = index.times(ONE.plus(blendStep(weight, activation, split, session, prev, eqTr, cashTr)));
+      }
+      weight = activation;
+    }
+    points.push({ session, trIndex: index, adjClose: index, distribution: ZERO, terminal: false });
+  }
+  return { entityId: "VOL_TARGET", points, adjustmentVersion: TR_ADJUSTMENT_VERSION, warnings };
+}
+
+type SessionSplit = { eqOvernight: Dec; eqIntraday: Dec; cashOvernight: Dec; cashIntraday: Dec };
+
+/** One session's blended return, decomposed at the open when `split` is present. */
+function blendStep(
+  weightBefore: Dec,
+  weightAfter: Dec,
+  split: SessionSplit | undefined,
+  session: IsoDate,
+  prev: IsoDate,
+  eqTr: ReadonlyMap<string, TRPoint>,
+  cashTr: ReadonlyMap<string, TRPoint>,
+): Dec {
+  if (split === undefined) {
+    const eq = closeToClose(eqTr, session, prev);
+    const cash = closeToClose(cashTr, session, prev);
+    return weightBefore.times(eq).plus(ONE.minus(weightBefore).times(cash));
+  }
+  const overnight = weightBefore.times(split.eqOvernight).plus(ONE.minus(weightBefore).times(split.cashOvernight));
+  const intraday = weightAfter.times(split.eqIntraday).plus(ONE.minus(weightAfter).times(split.cashIntraday));
+  return ONE.plus(overnight).times(ONE.plus(intraday)).minus(ONE);
+}
+
+function closeToClose(tr: ReadonlyMap<string, TRPoint>, session: IsoDate, prev: IsoDate): Dec {
+  const cur = tr.get(session);
+  const before = tr.get(prev);
+  if (cur === undefined || before?.trIndex.gt(0) !== true) return ZERO;
+  return cur.trIndex.div(before.trIndex).minus(ONE);
+}
+
+/**
+ * Decompose both legs' session return at the open.
+ *
+ * The index's own step is `(adjClose + dist) / prevAdjClose`. Scaling the raw open by the same split factor
+ * the index applied to that session's close (`adjClose / close`) gives a comparable `adjOpen`, and the two
+ * pieces are chosen to multiply back to exactly that step. Returns `undefined` when any input is missing or
+ * non-positive, so the caller can fall back rather than invent a number.
+ */
+function splitAtOpen(
+  session: IsoDate,
+  prev: IsoDate,
+  eqTr: ReadonlyMap<string, TRPoint>,
+  cashTr: ReadonlyMap<string, TRPoint>,
+  eqBar: ReadonlyMap<string, RawBar | LoadedBar>,
+  cashBar: ReadonlyMap<string, RawBar | LoadedBar>,
+): SessionSplit | undefined {
+  const eq = legSplit(eqTr, eqBar, session, prev);
+  const cash = legSplit(cashTr, cashBar, session, prev);
+  if (eq === undefined || cash === undefined) return undefined;
+  return { eqOvernight: eq.overnight, eqIntraday: eq.intraday, cashOvernight: cash.overnight, cashIntraday: cash.intraday };
+}
+
+function legSplit(
+  tr: ReadonlyMap<string, TRPoint>,
+  bars: ReadonlyMap<string, RawBar | LoadedBar>,
+  session: IsoDate,
+  prev: IsoDate,
+): { overnight: Dec; intraday: Dec } | undefined {
+  const cur = tr.get(session);
+  const before = tr.get(prev);
+  const bar = bars.get(session);
+  if (cur === undefined || before === undefined || bar === undefined) return undefined;
+  if (!before.adjClose.gt(0) || !cur.adjClose.gt(0) || !bar.close.gt(0) || !bar.open.gt(0)) return undefined;
+  // The index scaled this session's close by `adjClose / close`; apply the same factor to the open.
+  const adjOpen = bar.open.times(cur.adjClose).div(bar.close);
+  const openPlusDist = adjOpen.plus(cur.distribution);
+  if (!openPlusDist.gt(0)) return undefined;
+  return {
+    overnight: openPlusDist.div(before.adjClose).minus(ONE),
+    intraday: cur.adjClose.plus(cur.distribution).div(openPlusDist).minus(ONE),
+  };
 }
 
 // ---------------------------------------------------------------------------------------------

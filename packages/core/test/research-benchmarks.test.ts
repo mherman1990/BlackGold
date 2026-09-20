@@ -6,6 +6,8 @@ import {
   annualizedVol,
   benchmarkSeries,
   blendSeries,
+  volatilityTargetedSeries,
+  type VolTargetLeg,
   cagr,
   informationRatio,
   maxDrawdown,
@@ -127,5 +129,72 @@ describe("benchmarks", () => {
     // 100000 / 100000 / (731/365.25) = 0.49965...
     expect(t.toFixed(5)).toBe(new Dec("365.25").div(731).toFixed(5));
     expect(() => annualTurnover({ tradedNotional: [], averageNav: dec(0), from: d("2024-01-01"), to: d("2026-01-01") })).toThrow(RangeError);
+  });
+});
+
+describe("volatilityTargetedSeries (ALPHA_CHARTER section 11 Secondary 2)", () => {
+  const S = (n: number): ReturnType<typeof isoDate> => isoDate(`2026-01-${String(n).padStart(2, "0")}`);
+
+  /** A leg from explicit opens and closes, with no splits or distributions. */
+  function leg(closes: readonly [number, number, number][]): VolTargetLeg {
+    const bars = closes.map(([day, open, close]) => ({
+      session: S(day),
+      symbol: "X",
+      open: dec(String(open)),
+      high: dec(String(Math.max(open, close))),
+      low: dec(String(Math.min(open, close))),
+      close: dec(String(close)),
+      volume: 1000n,
+      venue: "test",
+    }));
+    let tr = dec("1");
+    const points = bars.map((b, i) => {
+      const prev = bars[i - 1];
+      if (prev !== undefined) tr = tr.times(b.close).div(prev.close);
+      return { session: b.session, trIndex: tr, adjClose: b.close, distribution: dec("0"), terminal: false };
+    });
+    return { bars, tr: { entityId: "X", points, adjustmentVersion: "test", warnings: [] } };
+  }
+
+  // Equity gaps UP 10% overnight on day 2, then is flat intraday. Cash is flat throughout.
+  // A weight activating on day 2 must NOT earn that gap: the old weight (0) does.
+  const equity = leg([[1, 100, 100], [2, 110, 110], [3, 110, 110]]);
+  const cash = leg([[1, 10, 10], [2, 10, 10], [3, 10, 10]]);
+
+  it("gives a pre-fill gap to the OLD weight, not the newly activated one", () => {
+    const s = volatilityTargetedSeries({ equity, cash, activations: new Map([[S(2), dec("1")]]) });
+    // Day 2: overnight earned at weight 0 (flat cash) => +0%. Intraday at weight 1 => open 110 -> close 110 => +0%.
+    // So the index is unchanged on day 2 despite the equity leg gaining 10%.
+    expect(s.points[1]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
+    expect(s.warnings).toEqual([]);
+  });
+
+  it("earns the gap when the weight was already in place before the session", () => {
+    // Same data, but the weight activates on day 1, so day 2's overnight is earned at weight 1.
+    const s = volatilityTargetedSeries({ equity, cash, activations: new Map([[S(1), dec("1")]]) });
+    expect(s.points[1]?.trIndex.toFixed(8)).toBe(dec("1.1").toFixed(8));
+  });
+
+  it("earns the intraday move at the NEW weight", () => {
+    // Equity flat overnight, then +10% intraday on day 2. Activating on day 2 must capture it.
+    const intraday = leg([[1, 100, 100], [2, 100, 110], [3, 110, 110]]);
+    const s = volatilityTargetedSeries({ equity: intraday, cash, activations: new Map([[S(2), dec("1")]]) });
+    expect(s.points[1]?.trIndex.toFixed(8)).toBe(dec("1.1").toFixed(8));
+  });
+
+  it("falls back to the old weight for the whole session when the open is unusable", () => {
+    const noOpen = leg([[1, 100, 100], [2, 0, 110], [3, 110, 110]]);
+    const s = volatilityTargetedSeries({ equity: noOpen, cash, activations: new Map([[S(2), dec("1")]]) });
+    // Old weight is 0, so the session is earned flat rather than at the new weight.
+    expect(s.points[1]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
+    expect(s.warnings.join(" ")).toContain("no usable open");
+  });
+
+  it("decomposes a session without creating or destroying return", () => {
+    // With the weight unchanged across the split, the two legs must multiply back to the plain step.
+    const held = volatilityTargetedSeries({ equity, cash, activations: new Map([[S(1), dec("1")]]) });
+    const last = held.points[held.points.length - 1];
+    // Equity went 100 -> 110 -> 110, fully held: the index must be exactly 1.1.
+    expect(last?.trIndex.toFixed(8)).toBe(dec("1.1").toFixed(8));
   });
 });
