@@ -891,11 +891,42 @@ that did not exist when this entry was first written:
 3. **Then** decide the metric question. Selecting a new primary metric after seeing that the current one
    failed is metric-shopping; reporting a secondary the charter already committed to is not.
 
-**Known defect this surfaced — half fixed 2026-09-20.** `evaluateFalsifiers` computed `decisiveRejection`
-from the unregistered approximation; it now takes the registered Secondary 2. What remains, deliberately, is
-that a **missing** second prong still counts as "does not beat", so a rejection can rest on a number nobody
-measured. That is conservative for promotion but it is not what §16.1 says ("if both fail"), and changing it
-is an owner reading of the charter rather than a bug fix. Pinned by a test so the behaviour is visible.
+**Final state as merged (PR #91, `4135453`, 2026-09-20).** Step 1 is done and the descriptions above are
+superseded in one respect worth naming: a rebalance is no longer described as *a session plus a mode* but as
+the **instant** `simulateFill` would have acquired it, with the delay counted on the equity leg's own bars.
+Three consecutive review findings traced to the landing-session formulation, which comes apart whenever a leg
+is missing a bar. The index withholds the prong — and `decisiveRejection` reports **unknown** — on any of five
+conditions: an unplaceable rebalance, an unusable open, a window whose endpoints differ from the run's, a step
+collapsing daily rebalances because an expected session is missing from either or both legs, and a primary
+volatility lost after a target exists. That set grew by enumeration rather than construction and should be
+presumed incomplete.
+
+**Merged with three accepted findings open,** by the owner's decision to stop an eleven-round fix loop. They
+are listed in `STATE.md` → *Secondary 2* and in full on PR #91. One is a gate:
+
+> **No Secondary 2 number may be generated or cited until `legSplit`'s distribution handling is fixed.** It
+> puts the pre-open holder's distribution through the new allocation's intraday factor, so a rebalance out of
+> equity on an ex-date is mispriced. A two-factor multiplicative split cannot be made correct — reproducing
+> the leg's total-return step is exactly what scales the distribution — so the decomposition needs three
+> parts: price to the open at the old weight, the distribution credited as cash to the old weight, and
+> open-to-close applied only to the price portion at the new weight.
+>
+> **This gate's first wording blocked only the step-2 aggregate slice, and was wrong.** It reasoned that no
+> run is citable because the charter is DRAFT. The charter is **APPROVED** (0.2.0, owner-signed 2026-09-12);
+> that DRAFT reason belongs to the synthetic charter in the backtest tests. The real remaining citability
+> blocker is reconciled ≥2-source corporate actions — curable, and the next thing on the list — so clearing it
+> yields a **citable per-split** result carrying `primaryVersusSecondary2` through the defect without step 2
+> ever landing. Curating those actions is inside this gate.
+
+**Known defect this surfaced — now fixed (2026-09-20).** `evaluateFalsifiers` computed `decisiveRejection`
+from the unregistered approximation; it now takes the registered Secondary 2. The interim position recorded
+below — that a **missing** second prong still counts as "does not beat" — was **reversed** in the same PR and
+this paragraph's earlier text no longer describes the code. `decisiveRejection` is `boolean | undefined` and
+reports `undefined` when the prong is unmeasured, because §16.1 rejects "if both fail" and absence is not
+failure. The reversal was forced by the withholding decision: once the prong was deliberately always-absent,
+treating absence as failure made rejection the *only* outcome for any run whose primary metric failed. The
+tri-state value also enters the hashed `verdictHash`, so a withheld verdict and a measured rejection cannot
+share an identity; `ROBUSTNESS_VERSION` 1 → 2.
 
 **Correction history.** This entry's first version (2026-09-20) said the second prong was computed on every
 run and merely needed surfacing, and recommended running it. That was wrong on both counts and is corrected

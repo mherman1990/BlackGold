@@ -195,15 +195,38 @@ describe("buildResultReport", () => {
   // Section 16.1's second prong is decisive, and an approximated comparator has no safe direction of error.
   // So an index that could not place every rebalance exactly loses the registered name and takes the prong
   // with it, rather than being published as though it were the charter's Secondary 2.
-  it("withholds the second prong and renames the arm when Secondary 2 was not placed exactly", () => {
+  it("treats a result with no withhold field as withheld, not as usable", () => {
+    // A BacktestResult written by an earlier schema - deserialized from a store, or built by an external
+    // caller of the exported buildResultReport - has no `secondary2Withheld`. Read as a truthiness test,
+    // `undefined` would mean "not withheld" and hand that result the registered arm name and the prong. The
+    // gate would then be defeated by a schema gap rather than by any argument about the comparator.
     const base = run();
-    const exact = buildResultReport(base);
-    expect(exact.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
-    expect(exact.primaryVersusSecondary2).toBeDefined();
+    const legacy = { ...base.backtest } as Record<string, unknown>;
+    delete legacy["secondary2Withheld"];
+    const r = buildResultReport({ ...base, backtest: legacy as unknown as typeof base.backtest });
+    expect(r.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT");
+    expect(r.benchmarks.map((b) => b.arm)).not.toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
+    expect(r.primaryVersusSecondary2).toBeUndefined();
+  });
+
+  it("withholds the second prong and renames the arm whenever Secondary 2 is withheld", () => {
+    const base = run();
+    // Every real run is withheld today by SECONDARY_2_KNOWN_DEFECT, so the usable case has to be constructed.
+    // That is deliberate: the withhold is unconditional in `runBacktest`, and a test that could turn it off
+    // from the outside would not be much of a gate.
+    const usable = buildResultReport({ ...base, backtest: { ...base.backtest, secondary2Withheld: false } });
+    expect(usable.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
+    expect(usable.primaryVersusSecondary2).toBeDefined();
+    // The §13 measure, still pinned: excess return, candidate minus Secondary 2, not a Sharpe difference.
+    const b1 = usable.arms.find((a) => a.arm === "B1_DETERMINISTIC");
+    const s2 = usable.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
+    if (b1 !== undefined && s2 !== undefined && usable.primaryVersusSecondary2 !== undefined) {
+      expect(usable.primaryVersusSecondary2.toFixed(8)).toBe(b1.totalReturn.minus(s2.totalReturn).toFixed(8));
+    }
 
     const inexact = buildResultReport({
       ...base,
-      backtest: { ...base.backtest, secondary2Exact: false, secondary2InexactReasons: ["no usable open on 2026-03-09"] },
+      backtest: { ...base.backtest, secondary2Withheld: true, secondary2InexactReasons: ["no usable open on 2026-03-09"] },
     });
     expect(inexact.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT");
     expect(inexact.benchmarks.map((b) => b.arm)).not.toContain("SECONDARY_2_VOL_TARGET_PRIMARY");

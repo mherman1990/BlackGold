@@ -31,7 +31,31 @@ import type { LeakageAuditor } from "./leakage.ts";
  * result carries `registrable` and the labels that bar promotion evidence.
  */
 
-export const BACKTEST_VERSION = 2;
+export const BACKTEST_VERSION = 3;
+
+/**
+ * An unconditional withhold on section 16.1's second prong while a known defect in `legSplit` stands.
+ *
+ * `legSplit` puts the pre-open holder's distribution through the new allocation's intraday factor, so a
+ * rebalance out of equity on an ex-date is mispriced: with `prevClose 100, open 90, close 100, dist 10` and a
+ * weight going 1 -> 0, the index falls 1% where the truth is flat. It is not a formula slip. A two-factor
+ * multiplicative split cannot both reproduce a leg's total-return step - required so a distribution on a
+ * session the legs do not share is not dropped - and keep that distribution out of the intraday factor. The
+ * decomposition needs three parts: price to the open at the old weight, the distribution credited to the old
+ * weight as cash, and open-to-close applied only to the price portion at the new weight.
+ *
+ * **Why this is code and not a note in STATE.md.** The defect was knowingly merged (PR #91) on the reasoning
+ * that nothing could consume the prong yet - and that reasoning was wrong. It assumed the charter was DRAFT
+ * when it is APPROVED; the DRAFT string came from the synthetic charter in this package's own tests. The real
+ * remaining citability blocker is reconciled corporate actions, so curating them, which is the next task on
+ * the list, would have produced a citable per-split result carrying this number. A prose gate depends on being
+ * read AND on its stated reason being true, and that one failed the second test within the hour.
+ *
+ * Delete this constant and its use in the same commit that fixes `legSplit`, not before.
+ */
+const SECONDARY_2_KNOWN_DEFECT =
+  "Secondary 2 is withheld: legSplit scales the pre-open holder's distribution by the intraday factor, so an ex-date rebalance is mispriced (known defect, PR #91)";
+
 export const COST_MODEL_VERSION = 1;
 
 export type CostTierName = "base" | "adverse" | "stress";
@@ -147,7 +171,13 @@ export type BacktestResult = {
    * error has an unknown sign.
    */
   secondary2Exact: boolean;
-  /** Why `secondary2Exact` is false. Empty when it is true or Secondary 2 was not built at all. */
+  /**
+   * True when the prong must not be consumed. Broader than `!secondary2Exact`: a comparator can be placed
+   * perfectly and still be unusable while a known arithmetic defect stands, which is the case today
+   * (`SECONDARY_2_KNOWN_DEFECT`). `report.ts` withholds `primaryVersusSecondary2` on this.
+   */
+  secondary2Withheld: boolean;
+  /** Why the comparator is inexact or withheld. Empty only when Secondary 2 was not built at all. */
   secondary2InexactReasons: string[];
   labels: string[];
   /**
@@ -692,10 +722,19 @@ export function runBacktest(input: BacktestInput): BacktestResult {
       : [
           `the registered estimator produced no primary volatility on ${String(secondary2MissingVol.length)} decision(s) (${secondary2MissingVol.slice(0, 3).join(", ")}${secondary2MissingVol.length > 3 ? ", ..." : ""}), so the previous target stayed in force`,
         ];
+  // Placement exactness: did every rebalance land where `simulateFill` would have acquired it, over the run's
+  // own window? Kept separate from the withhold below so it stays a testable property of the construction.
   const secondary2Exact =
     built !== undefined && built.exact && (s2?.unplaced.length ?? 0) === 0 && windowMismatch.length === 0 && missingVol.length === 0;
+  // The withhold is broader than placement: a comparator can be placed perfectly and still be unusable while
+  // a known arithmetic defect stands. `report.ts` keys the prong off this, not off `secondary2Exact`.
+  // Unconditional while the known defect stands: `built !== undefined` alone. Deliberately not written as
+  // a condition on the constant, so deleting the constant is a compile error rather than a silent no-op.
+  const secondary2Withheld = built !== undefined;
   const secondary2InexactReasons =
-    built === undefined ? [] : [...built.inexactReasons, ...(s2?.unplaced ?? []), ...windowMismatch, ...missingVol];
+    built === undefined
+      ? []
+      : [...built.inexactReasons, ...(s2?.unplaced ?? []), ...windowMismatch, ...missingVol, SECONDARY_2_KNOWN_DEFECT];
   const citability: string[] = [...(input.registrabilityReasons ?? [])];
   for (const l of ["SURVIVORSHIP_BIASED", "OPTIMISTIC_DELAY"]) if (labels.has(l)) citability.push(`run carries the ${l} label`);
   if (labels.has("SYNTHETIC_MISSING_DATA")) citability.push("run injected synthetic missing data for the sensitivity grid");
@@ -722,11 +761,20 @@ export function runBacktest(input: BacktestInput): BacktestResult {
     to: input.to,
     costsTier: input.costs.tier,
     delayBars: input.costs.delayBars,
+    // The schema version belongs in the identity, not only beside it. Without it, a result written under an
+    // older shape and one written under this one hash identically from the same inputs, which is exactly the
+    // gap that let an absent `secondary2Withheld` be read as "usable" a commit ago.
+    backtestVersion: BACKTEST_VERSION,
     // Whether the decisive comparator was placed exactly is part of what this result IS, not a note about it:
     // two runs agreeing on every other field here mean different things if one's Secondary 2 was approximated
-    // and the other's was not. Leaving it out would let them share a `resultHash`, which is the same defect
-    // the tri-state verdict hash fixed one layer up.
+    // and the other's was not.
     secondary2Exact,
+    // And whether it may be CONSUMED is a further distinction: a placed-exactly result that is withheld and
+    // one that is usable differ in the only way that matters to section 16.1. This is the third time in this
+    // work that a field deciding what a result MEANS was left out of the hash that gives it an identity -
+    // after the tri-state verdict and `secondary2Exact` itself. The rule is now explicit: anything that
+    // changes whether or how a number may be used goes in the body.
+    secondary2Withheld,
     decisionSeals: decisions.map((d) => d.sealHash),
     finalNav: Object.fromEntries(Object.entries(arms).map(([k, v]) => [k, (v.nav.at(-1)?.nav ?? ZERO).toFixed()])),
     labels: [...labels].sort(),
@@ -746,6 +794,7 @@ export function runBacktest(input: BacktestInput): BacktestResult {
     secondary2Weights,
     ...(secondary2Index === undefined ? {} : { secondary2Index }),
     secondary2Exact,
+    secondary2Withheld,
     secondary2InexactReasons,
     labels: [...labels].sort(),
     executionOrderViolations,

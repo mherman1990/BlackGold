@@ -493,12 +493,48 @@ describe("runBacktest", () => {
     expect(clean.secondary2InexactReasons.join(" ")).not.toContain("no primary volatility");
   });
 
-  it("reports an exactly-placed Secondary 2 on clean data, with no approximation", () => {
+  it("places Secondary 2 exactly on clean data, and withholds it anyway", () => {
     const { input } = setup();
     const r = runBacktest(input);
+    // Placement is exact - no rebalance approximated, no warning from the index itself.
     expect(r.secondary2Exact).toBe(true);
-    expect(r.secondary2InexactReasons).toEqual([]);
     expect(r.secondary2Index?.warnings).toEqual([]);
+    // And it is still withheld, unconditionally, while the legSplit ex-date defect stands. The two are
+    // separate on purpose: placement is a property of the construction, the withhold is a decision about
+    // whether the number may be used at all.
+    expect(r.secondary2Withheld).toBe(true);
+    expect(r.secondary2InexactReasons.join(" ")).toContain("legSplit scales the pre-open holder's distribution");
+  });
+
+  it("keeps the withhold unconditional - exact and inexact alike", () => {
+    // The gate this replaces was prose, and its stated reason was wrong within the hour. This asserts the code
+    // version cannot be argued out of: every shape of run that builds Secondary 2 withholds it.
+    //
+    // The inexact fixture is the load-bearing one. An earlier version of this test used three CLEAN runs,
+    // all of which place exactly - so `secondary2Withheld = secondary2Exact` would have passed it while
+    // inverting the gate, making precisely the approximated comparators usable. Both sides of `exact` have to
+    // be present for the loop to mean "unconditional".
+    const holed = buildMarket({
+      paths: PATHS,
+      from: D("2026-01-02"),
+      to: D("2026-06-30"),
+      omitSessions: { BIL: [D("2026-03-09")] },
+    });
+    const runs = [
+      runBacktest(input0()),
+      runBacktest({ ...input0(), costs: { ...input0().costs, delayBars: 0 } }),
+      runBacktest({ ...input0(), costs: costsFromCharter(setup().charter, "adverse") }),
+      runBacktest(setup({ pit: holed.pit, calendar: holed.calendar }).input),
+    ];
+    expect(runs.some((r) => r.secondary2Exact)).toBe(true);
+    expect(runs.some((r) => !r.secondary2Exact)).toBe(true);
+    for (const r of runs) {
+      expect(r.secondary2Index).toBeDefined();
+      expect(r.secondary2Withheld).toBe(true);
+    }
+    function input0(): BacktestInput {
+      return setup().input;
+    }
   });
 
   it("holds Secondary 2 in cash until its first decision takes effect, and keeps it long-only", () => {
