@@ -186,9 +186,14 @@ export function volatilityTargetedSeries(spec: VolTargetSpec): VolTargetIndex {
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
 
+  // Sessions either leg observes, so a step that skips one can be recognised. `commonSessions` silently
+  // collapses those, and a collapsed step is not the daily-rebalanced quantity section 11 describes.
+  const unionSessions = [...new Set([...spec.equity.tr.points, ...spec.cash.tr.points].map((q) => q.session))].sort();
+
   const points: TRPoint[] = [{ session: first, trIndex: ONE, adjClose: ONE, distribution: ZERO, terminal: false }];
   let index = ONE;
   let cursor = 0;
+  let unionCursor = 0;
   // Anything acquired at or before the base session's close is simply the weight the index opens with: the
   // base session earns no return, so there is nothing for it to be placed against.
   let weight = ZERO;
@@ -229,6 +234,23 @@ export function volatilityTargetedSeries(spec: VolTargetSpec): VolTargetIndex {
       }
       running = a.weight;
       cursor++;
+    }
+
+    // A step that skips a session one leg observed collapses several daily rebalances into one. Blending the
+    // legs' COMPOUNDED endpoint returns is not the same number as compounding their daily blends: at a 50%
+    // weight, +10% then -9.09% against flat cash gives +0.23% daily and 0% collapsed. The missing leg is
+    // exactly what would be needed to reconstruct the intervening steps, so this cannot be repaired here -
+    // only reported. Weights of 0 and 1 are exempt: a single-leg blend compounds identically either way.
+    for (; unionCursor < unionSessions.length; unionCursor++) {
+      const u = unionSessions[unionCursor];
+      if (u === undefined || u >= cur) break;
+    }
+    const skipped = unionSessions.slice(0, unionCursor).filter((u) => u > prev);
+    const effectiveWeight = atOpen ?? weight;
+    if (skipped.length > 0 && !effectiveWeight.isZero() && !effectiveWeight.eq(ONE)) {
+      inexactReasons.push(
+        `the ${prev} -> ${cur} step skips ${String(skipped.length)} session(s) one leg observed, collapsing that many daily rebalances into one`,
+      );
     }
 
     if (atOpen === undefined || atOpen.eq(weight)) {

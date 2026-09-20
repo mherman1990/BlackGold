@@ -243,6 +243,34 @@ describe("volatilityTargetedSeries (ALPHA_CHARTER section 11 Secondary 2)", () =
     expect(s.inexactReasons.join(" ")).toContain("never applied");
   });
 
+  it("reports a step that collapses several daily rebalances into one", () => {
+    // `commonSessions` silently drops a session one leg lacks, and the resulting step applies the weight once
+    // to each leg's COMPOUNDED endpoint return. That is not the daily-rebalanced quantity: at 50% equity,
+    // +10% then -9.0909% against flat cash compounds to +0.227% daily and to 0% collapsed. The missing leg is
+    // precisely what would be needed to rebuild the intervening steps, so this can only be reported.
+    const swings = leg([[1, 100, 100], [2, 110, 110], [3, 100, 100]]);
+    const sparseCash = leg([[1, 10, 10], [3, 10, 10]]);
+    const half = volatilityTargetedSeries({ equity: swings, cash: sparseCash, activations: [atClose("0.5", 1)] });
+    expect(half.series.points.map((q) => q.session)).toEqual([S(1), S(3)]);
+    expect(half.exact).toBe(false);
+    expect(half.inexactReasons.join(" ")).toContain("skips 1 session(s) one leg observed");
+    expect(half.inexactReasons.join(" ")).toContain("collapsing");
+    // The number the collapse produces: 0.5 x (100/100 - 1) = 0, against +0.227% for the daily chain.
+    expect(half.series.points[1]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
+  });
+
+  it("does not flag a collapsed step at a weight of 0 or 1, where compounding is identical", () => {
+    // A single-leg blend compounds the same way whether the daily steps are blended or the endpoints are, so
+    // the collapse changes nothing and the prong should not be withheld for it. Secondary 2 sits at 1
+    // whenever the primary's volatility is below target, which is common.
+    const swings = leg([[1, 100, 100], [2, 110, 110], [3, 100, 100]]);
+    const sparseCash = leg([[1, 10, 10], [3, 10, 10]]);
+    for (const w of ["0", "1"]) {
+      const s2 = volatilityTargetedSeries({ equity: swings, cash: sparseCash, activations: [atClose(w, 1)] });
+      expect(s2.inexactReasons.join(" ")).not.toContain("collapsing");
+    }
+  });
+
   it("decomposes a session without creating or destroying return", () => {
     // With the weight unchanged across the split, the two legs must multiply back to the plain step.
     const held = volatilityTargetedSeries({ equity, cash, activations: [atOpen("1", 1)] });
@@ -288,7 +316,10 @@ describe("volatilityTargetedSeries (ALPHA_CHARTER section 11 Secondary 2)", () =
     const withDist = volatilityTargetedSeries({ equity: payer, cash: sparseCash, activations: acts });
     const without = volatilityTargetedSeries({ equity: noPayer, cash: sparseCash, activations: acts });
     expect(withDist.series.points.map((q) => q.session)).toEqual([S(1), S(3)]);
-    expect(withDist.exact).toBe(true);
+    // The same stretched interval also collapses a daily rebalance, which is reported separately - the two
+    // are different defects on one interval, and the distribution surviving does not make the step exact.
+    expect(withDist.exact).toBe(false);
+    expect(withDist.inexactReasons.join(" ")).toContain("collapsing");
 
     // The 5% payment must show up. Under the dropped-distribution formula these two are byte-identical.
     const a = withDist.series.points[1]?.trIndex;

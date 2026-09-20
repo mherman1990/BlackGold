@@ -471,6 +471,8 @@ export function runBacktest(input: BacktestInput): BacktestResult {
   // function after the loop. Recorded here rather than rebuilt later so the volatility it scales by is the
   // one `computeFeatures` produced at this decision instant, under the same leakage audit as the strategy's.
   const secondary2ByDecision: { decisionSession: IsoDate; weight: Dec }[] = [];
+  /** Decisions where the registered estimator produced no volatility for the primary. */
+  const secondary2MissingVol: IsoDate[] = [];
 
   for (const session of decisionSessions) {
     const decisionAt = decisionAtOf(session);
@@ -488,6 +490,16 @@ export function runBacktest(input: BacktestInput): BacktestResult {
     if (primaryVol !== undefined) {
       const k = primaryVol.gt(0) ? params.sizing.annualVolatilityTarget.div(primaryVol) : ONE;
       secondary2ByDecision.push({ decisionSession: session, weight: k.lt(ONE) ? k : ONE });
+    } else if (secondary2ByDecision.length > 0) {
+      // No volatility for the primary at a decision that follows a computed one - a stale or missing anchor
+      // bar, say. Skipping it silently would leave the PREVIOUS week's target in force and publish it as
+      // though it had been computed for this week. Absence of an estimate is not absence of a rebalance.
+      //
+      // The guard matters: before the FIRST computable target there is no previous target to wrongly persist.
+      // The estimator's warm-up leaves the comparator in cash, which is what section 11 describes and what
+      // the strategy itself does before its first fill - expected behaviour, not an approximation. Treating
+      // the warm-up as inexact would withhold the prong on every clean run and make the flag meaningless.
+      secondary2MissingVol.push(session);
     }
 
     // Missing-data sensitivity (protocol section 5.8): drop a deterministic share of feature rows and let
@@ -672,8 +684,16 @@ export function runBacktest(input: BacktestInput): BacktestResult {
       );
     }
   }
-  const secondary2Exact = built !== undefined && built.exact && (s2?.unplaced.length ?? 0) === 0 && windowMismatch.length === 0;
-  const secondary2InexactReasons = built === undefined ? [] : [...built.inexactReasons, ...(s2?.unplaced ?? []), ...windowMismatch];
+  const missingVol =
+    built === undefined || secondary2MissingVol.length === 0
+      ? []
+      : [
+          `the registered estimator produced no primary volatility on ${String(secondary2MissingVol.length)} decision(s) (${secondary2MissingVol.slice(0, 3).join(", ")}${secondary2MissingVol.length > 3 ? ", ..." : ""}), so the previous target stayed in force`,
+        ];
+  const secondary2Exact =
+    built !== undefined && built.exact && (s2?.unplaced.length ?? 0) === 0 && windowMismatch.length === 0 && missingVol.length === 0;
+  const secondary2InexactReasons =
+    built === undefined ? [] : [...built.inexactReasons, ...(s2?.unplaced ?? []), ...windowMismatch, ...missingVol];
   const citability: string[] = [...(input.registrabilityReasons ?? [])];
   for (const l of ["SURVIVORSHIP_BIASED", "OPTIMISTIC_DELAY"]) if (labels.has(l)) citability.push(`run carries the ${l} label`);
   if (labels.has("SYNTHETIC_MISSING_DATA")) citability.push("run injected synthetic missing data for the sensitivity grid");

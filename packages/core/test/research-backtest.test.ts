@@ -455,6 +455,21 @@ describe("runBacktest", () => {
     expect(r.secondary2InexactReasons.join(" ")).toContain("cover different intervals");
   });
 
+  it("does not call the estimator's warm-up an approximation", () => {
+    // Before the first computable primary volatility there is no previous target to wrongly persist, and the
+    // comparator sitting in cash is what section 11 describes and what the strategy does before its first
+    // fill. Recording that as inexact would withhold the prong on every run and make the flag meaningless.
+    //
+    // The mid-window case - an estimator that loses the primary AFTER a target exists, leaving last week's
+    // target in force - is recorded instead. That branch is NOT covered by a test: no fixture reachable from
+    // here removes the volatility (a stale bar keeps series continuity, and a long gap still leaves enough
+    // observations in the covariance window), so it is guarded by construction rather than by evidence. The
+    // warm-up guard itself IS covered - removing it turns three evaluation tests red, which I verified.
+    const clean = runBacktest(setup().input);
+    expect(clean.secondary2Exact).toBe(true);
+    expect(clean.secondary2InexactReasons.join(" ")).not.toContain("no primary volatility");
+  });
+
   it("reports an exactly-placed Secondary 2 on clean data, with no approximation", () => {
     const { input } = setup();
     const r = runBacktest(input);
