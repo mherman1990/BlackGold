@@ -493,12 +493,31 @@ describe("runBacktest", () => {
     expect(clean.secondary2InexactReasons.join(" ")).not.toContain("no primary volatility");
   });
 
-  it("reports an exactly-placed Secondary 2 on clean data, with no approximation", () => {
+  it("places Secondary 2 exactly on clean data, and withholds it anyway", () => {
     const { input } = setup();
     const r = runBacktest(input);
+    // Placement is exact - no rebalance approximated, no warning from the index itself.
     expect(r.secondary2Exact).toBe(true);
-    expect(r.secondary2InexactReasons).toEqual([]);
     expect(r.secondary2Index?.warnings).toEqual([]);
+    // And it is still withheld, unconditionally, while the legSplit ex-date defect stands. The two are
+    // separate on purpose: placement is a property of the construction, the withhold is a decision about
+    // whether the number may be used at all.
+    expect(r.secondary2Withheld).toBe(true);
+    expect(r.secondary2InexactReasons.join(" ")).toContain("legSplit scales the pre-open holder's distribution");
+  });
+
+  it("keeps the withhold unconditional - no clean fixture turns it off", () => {
+    // The gate this replaces was prose, and its stated reason was wrong within the hour. This asserts the
+    // code version cannot be argued out of: every shape of run that builds Secondary 2 withholds it.
+    const { input } = setup();
+    for (const r of [
+      runBacktest(input),
+      runBacktest({ ...input, costs: { ...input.costs, delayBars: 0 } }),
+      runBacktest({ ...input, costs: costsFromCharter(setup().charter, "adverse") }),
+    ]) {
+      expect(r.secondary2Index).toBeDefined();
+      expect(r.secondary2Withheld).toBe(true);
+    }
   });
 
   it("holds Secondary 2 in cash until its first decision takes effect, and keeps it long-only", () => {

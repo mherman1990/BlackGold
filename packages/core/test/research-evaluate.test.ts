@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { Dec } from "@blackgold/shared";
 import { fileURLToPath } from "node:url";
 import { loadCharterFile, registrabilityReasons, type Charter } from "../src/strategy/charter.ts";
 import { runEvaluation } from "../src/research/evaluate.ts";
@@ -144,26 +143,26 @@ describe("runEvaluation", () => {
   // ALPHA_CHARTER section 11 Secondary 2: "VTI scaled to a 10% ex-ante volatility target with the same
   // 63-day estimator, remainder in BIL". Built from the strategy's own covariance window so the estimator is
   // literally the registered one, and timed to the strategy's fills so the weight cannot be look-ahead.
-  it("builds the registered Secondary 2 as a reporting benchmark", () => {
+  it("builds the registered Secondary 2 as a reporting benchmark, under the withheld name", () => {
     const r = evaluate(evalCharter(), cleanMarket());
     const split = r.splits[0];
-    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
+    // Published as a reporting comparator with its section 13 metrics - but under `__INEXACT`, because the
+    // legSplit ex-date defect withholds it. The unqualified name is reserved for a comparator that may be used.
+    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT");
     expect(s2).toBeDefined();
-    // Its section 13 metrics are populated like any other benchmark's.
+    expect(split?.benchmarks.map((b) => b.arm)).not.toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
     expect(s2?.totalReturn).toMatch(/^-?\d+\.\d{8}$/);
     expect(s2?.maxDrawdown).toMatch(/^-?\d+\.\d{8}$/);
   });
 
-  it("reports section 16.1's second prong as excess return over the registered Secondary 2", () => {
+  it("withholds section 16.1's second prong end to end while the legSplit defect stands", () => {
+    // The whole point of making the withhold code rather than prose: no evaluation path can produce this
+    // number, so curating reconciled corporate actions cannot yield a citable split that carries it. The
+    // excess-return formula itself is pinned in research-report.test.ts against a backtest with the withhold
+    // lifted, which is the only place it can be lifted.
     const r = evaluate(evalCharter(), cleanMarket());
-    const split = r.splits[0];
-    expect(split?.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
-    expect(split?.primaryVersusSecondary2).toMatch(/^-?\d+\.\d{8}$/);
-    const b1 = split?.arms.find((a) => a.arm === "B1_DETERMINISTIC");
-    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
-    if (b1 !== undefined && s2 !== undefined && split?.primaryVersusSecondary2 !== undefined) {
-      expect(new Dec(split.primaryVersusSecondary2).toFixed(8)).toBe(new Dec(b1.totalReturn).minus(new Dec(s2.totalReturn)).toFixed(8));
-    }
+    for (const split of r.splits) expect(split.primaryVersusSecondary2).toBeUndefined();
+    expect(r.splits.length).toBeGreaterThan(0);
   });
 
   it("omits Secondary 2 rather than substituting when the primary is not a risk ETF", () => {
@@ -187,7 +186,7 @@ describe("runEvaluation", () => {
     // volatility-targeted per decision, the other is a single constant average exposure.
     const r = evaluate(evalCharter(), cleanMarket());
     const split = r.splits[0];
-    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
+    const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT");
     const approx = split?.benchmarks.find((b) => b.arm === "APPROX_AVERAGE_EXPOSURE_PRIMARY");
     expect(s2).toBeDefined();
     expect(approx).toBeDefined();

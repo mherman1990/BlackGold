@@ -265,7 +265,7 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
     // decisive prong below is withheld from it. The name rather than a warnings field, for the same reason as
     // before: a name is the only warning that survives the number being copied into a spreadsheet or a log
     // line. The registered, unqualified name is reserved for a comparator built exactly.
-    const name = bt.secondary2Exact ? "SECONDARY_2_VOL_TARGET_PRIMARY" : "SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT";
+    const name = bt.secondary2Withheld ? "SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT" : "SECONDARY_2_VOL_TARGET_PRIMARY";
     benchmarkSeries.push({ name, series: bt.secondary2Index });
   }
   if (c.benchmarks.volatility_controlled_primary) {
@@ -369,7 +369,7 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
      * `decisiveRejection: undefined` rather than deciding from a number whose error has an unknown sign.
      */
     primaryVersusSecondary2:
-      secondary2 === undefined || candidateMetrics === undefined || !bt.secondary2Exact
+      secondary2 === undefined || candidateMetrics === undefined || bt.secondary2Withheld
         ? undefined
         : candidateMetrics.totalReturn.minus(secondary2.totalReturn),
     taxScenarios: tax,
