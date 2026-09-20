@@ -246,6 +246,52 @@ describe("volatilityTargetedSeries (ALPHA_CHARTER section 11 Secondary 2)", () =
     expect(held.exact).toBe(true);
   });
 
+  it("preserves the leg's own return across a split with BOTH a distribution and an intraday move", () => {
+    // Day 2 opens at 90, closes at 100 and goes ex 10.00: full-day total return is (100 + 10) / 100 = +10%.
+    const both = leg([[1, 100, 100], [2, 90, 100, 10], [3, 100, 100]]);
+
+    // Both legs the SAME series. Then every blend of them is that series whatever the weights are, so a split
+    // must reproduce the leg's own total-return step exactly - it is a pure decomposition test, and the only
+    // way to reach `legSplit` at all, since the index takes the undivided step when the weight is unchanged.
+    // (An earlier version of this test activated on the base session and so never entered the split branch;
+    // it passed on a formula that was wrong in general. The degenerate `open == close` fixture hid it twice.)
+    const s = volatilityTargetedSeries({ equity: both, cash: both, activations: [atOpen("1", 2)] });
+    expect(s.series.points[1]?.trIndex.toFixed(10)).toBe(both.tr.points[1]?.trIndex.toFixed(10));
+    expect(s.series.points[1]?.trIndex.toFixed(10)).toBe(dec("1.1").toFixed(10));
+    expect(s.exact).toBe(true);
+
+    // And the open buyer still earns the price move alone - 100/90, not a share of the distribution - which
+    // is the round-six requirement this must not regress. Old weight 0, so the index IS the intraday leg.
+    const bought = volatilityTargetedSeries({ equity: both, cash, activations: [atOpen("1", 2)] });
+    expect(bought.series.points[1]?.trIndex.toFixed(10)).toBe(dec("100").div(dec("90")).toFixed(10));
+  });
+
+  it("keeps a distribution paid on a session only one leg observes", () => {
+    // The cash leg has no day 2, so the legs share days 1 and 3 and the equity leg's day-1-to-day-3 step
+    // spans an ex-date that the split session itself does not carry. `cur.distribution` holds only day 3's,
+    // so an explicitly written overnight leg drops the day-2 payment entirely - and `exact` stays true, so
+    // nothing downstream would know. Deriving the overnight leg from `trIndex` cannot drop it: the index
+    // already contains every distribution in the interval, whatever session it fell on.
+    const sparseCash = leg([[1, 10, 10], [3, 10, 10]]);
+    // Identical but for a 5.00 distribution on the unshared day 2.
+    const payer = leg([[1, 100, 100], [2, 100, 100, 5], [3, 95, 100]]);
+    const noPayer = leg([[1, 100, 100], [2, 100, 100], [3, 95, 100]]);
+    // Held at 1 into the split, so the equity leg's OVERNIGHT factor - the one carrying the distribution -
+    // is what the index earns across the stretched interval.
+    const acts = [atClose("1", 1), atOpen("0.5", 3)];
+
+    const withDist = volatilityTargetedSeries({ equity: payer, cash: sparseCash, activations: acts });
+    const without = volatilityTargetedSeries({ equity: noPayer, cash: sparseCash, activations: acts });
+    expect(withDist.series.points.map((q) => q.session)).toEqual([S(1), S(3)]);
+    expect(withDist.exact).toBe(true);
+
+    // The 5% payment must show up. Under the dropped-distribution formula these two are byte-identical.
+    const a = withDist.series.points[1]?.trIndex;
+    const b = without.series.points[1]?.trIndex;
+    expect(a?.toFixed(10)).not.toBe(b?.toFixed(10));
+    expect(a?.gt(b ?? dec("0"))).toBe(true);
+  });
+
   it("refuses a weight outside [0, 1], keeping the comparator long-only and unlevered", () => {
     expect(() => volatilityTargetedSeries({ equity, cash, activations: [atOpen("1.5", 2)] })).toThrow(RangeError);
     expect(() => volatilityTargetedSeries({ equity, cash, activations: [atOpen("-0.1", 2)] })).toThrow(RangeError);

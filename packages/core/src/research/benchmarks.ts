@@ -308,13 +308,30 @@ function splitAtOpen(
 }
 
 /**
- * Split one leg's session at the open.
+ * Split one leg's return interval at the open of its closing session.
  *
- *   overnight = (adjOpen + dist) / prevAdjClose - 1     the pre-open holder: price move plus the distribution
- *   intraday  =  adjClose / adjOpen - 1                 the open buyer: price only, no claim to the dividend
+ *   intraday  = adjClose / adjOpen            the open buyer: the price move, and nothing else
+ *   overnight = trStep / intraday             everything else the leg earned, by residual
  *
  * The raw open is scaled by the same factor the index applied to this session's close (`adjClose / close`),
  * so both sides of the split are in the index's share units.
+ *
+ * **Only the intraday leg is defined directly; the other is a residual.** That ordering is the whole design.
+ * A leg's return over `(prev close, cur close]` is by definition the product of its return over the two
+ * sub-periods, so deriving one from the authoritative `trIndex` step guarantees the decomposition neither
+ * creates nor destroys return - for any interval, however long, and whatever it contains. Writing both legs
+ * out explicitly does not: an earlier version used `(adjOpen + dist) / prevAdjClose` for the overnight leg,
+ * which reinvests the distribution at the OPEN where the index reinvests it at the close, and silently drops
+ * any distribution paid on a session between `prev` and `cur` that only one leg observes.
+ *
+ * The distribution still lands entirely with the pre-open holder, which is what an ex-date requires: the
+ * intraday factor is a pure price ratio, so every cent of income falls into the residual. The residual form
+ * simply also gets the reinvestment convention and the stretched-interval case right.
+ *
+ * Note that the two legs multiplying back to the leg's own step is an invariant for a SINGLE leg and is not
+ * the same claim as the blended index reproducing a static-weight blend of both legs' steps. That one is
+ * false whenever the weight changes across the split, because the portfolio changed composition mid-session.
+ * Conflating the two is what produced the explicit-overnight version.
  */
 function legSplit(
   tr: ReadonlyMap<string, TRPoint>,
@@ -326,13 +343,12 @@ function legSplit(
   const before = tr.get(prev);
   const bar = bars.get(session);
   if (cur === undefined || before === undefined || bar === undefined) return undefined;
-  if (!before.adjClose.gt(0) || !cur.adjClose.gt(0) || !bar.close.gt(0) || !bar.open.gt(0)) return undefined;
+  if (!before.trIndex.gt(0) || !cur.trIndex.gt(0) || !cur.adjClose.gt(0) || !bar.close.gt(0) || !bar.open.gt(0)) return undefined;
   const adjOpen = bar.open.times(cur.adjClose).div(bar.close);
   if (!adjOpen.gt(0)) return undefined;
-  return {
-    overnight: adjOpen.plus(cur.distribution).div(before.adjClose).minus(ONE),
-    intraday: cur.adjClose.div(adjOpen).minus(ONE),
-  };
+  const intraday = cur.adjClose.div(adjOpen);
+  const step = cur.trIndex.div(before.trIndex);
+  return { overnight: step.div(intraday).minus(ONE), intraday: intraday.minus(ONE) };
 }
 
 // ---------------------------------------------------------------------------------------------

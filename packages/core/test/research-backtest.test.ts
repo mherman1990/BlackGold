@@ -436,6 +436,25 @@ describe("runBacktest", () => {
     expect(r.secondary2InexactReasons.join(" ")).toContain("falls inside the");
   });
 
+  it("reports Secondary 2 inexact when its window does not match the run's", () => {
+    // BIL loses the run's FIRST session, so the index spans one session less than the candidate arm while
+    // every rebalance still places exactly. `buildResultReport` subtracts two independently computed total
+    // returns, so a shorter comparator window makes the prong a difference between different intervals - not
+    // an excess return over anything. Comparing unequal windows is the misplacement defect at window scale.
+    const short = buildMarket({
+      paths: PATHS,
+      from: D("2026-01-02"),
+      to: D("2026-06-30"),
+      omitSessions: { BIL: [D("2026-03-02")] },
+    });
+    const r = runBacktest(setup({ pit: short.pit, calendar: short.calendar }).input);
+    expect(r.secondary2Index).toBeDefined();
+    expect(r.sessions[0]).toBe(D("2026-03-02"));
+    expect(r.secondary2Index?.points[0]?.session).not.toBe(D("2026-03-02"));
+    expect(r.secondary2Exact).toBe(false);
+    expect(r.secondary2InexactReasons.join(" ")).toContain("cover different intervals");
+  });
+
   it("reports an exactly-placed Secondary 2 on clean data, with no approximation", () => {
     const { input } = setup();
     const r = runBacktest(input);

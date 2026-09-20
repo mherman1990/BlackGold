@@ -653,8 +653,27 @@ export function runBacktest(input: BacktestInput): BacktestResult {
   const secondary2Index = built?.series;
   // A comparator that could not be placed exactly is reported as such, never quietly consumed: section 16.1's
   // second prong has no safe direction to approximate in. `report.ts` withholds the prong on this.
-  const secondary2Exact = built !== undefined && built.exact && (s2?.unplaced.length ?? 0) === 0;
-  const secondary2InexactReasons = built === undefined ? [] : [...built.inexactReasons, ...(s2?.unplaced ?? [])];
+  //
+  // Endpoints are part of "exactly". The index spans the sessions the two legs SHARE, while the candidate arm
+  // spans the run's sessions, and the prong subtracts two independently computed total returns. If a leg is
+  // missing the window's first or last session the two returns cover different intervals, and the difference
+  // is not an excess return over anything - with no activation near the edge, every other check would still
+  // pass. Comparing unequal windows is the same defect as misplacing a rebalance, at the scale of the window.
+  const s2Points = built?.series.points;
+  const windowMismatch: string[] = [];
+  if (s2Points !== undefined && s2Points.length > 0) {
+    const runFrom = allSessions[0];
+    const runTo = allSessions[allSessions.length - 1];
+    const s2From = s2Points[0]?.session;
+    const s2To = s2Points[s2Points.length - 1]?.session;
+    if (s2From !== runFrom || s2To !== runTo) {
+      windowMismatch.push(
+        `Secondary 2 spans ${String(s2From)}..${String(s2To)} but the run spans ${String(runFrom)}..${String(runTo)}; the two total returns cover different intervals`,
+      );
+    }
+  }
+  const secondary2Exact = built !== undefined && built.exact && (s2?.unplaced.length ?? 0) === 0 && windowMismatch.length === 0;
+  const secondary2InexactReasons = built === undefined ? [] : [...built.inexactReasons, ...(s2?.unplaced ?? []), ...windowMismatch];
   const citability: string[] = [...(input.registrabilityReasons ?? [])];
   for (const l of ["SURVIVORSHIP_BIASED", "OPTIMISTIC_DELAY"]) if (labels.has(l)) citability.push(`run carries the ${l} label`);
   if (labels.has("SYNTHETIC_MISSING_DATA")) citability.push("run injected synthetic missing data for the sensitivity grid");
