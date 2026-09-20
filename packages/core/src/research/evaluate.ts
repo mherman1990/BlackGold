@@ -11,9 +11,10 @@ import {
   runBacktest,
   type BacktestInput,
 } from "./backtest.ts";
-import { buildResultReport, type ArmMetrics, type ResultReport } from "./report.ts";
+import { buildResultReport, pairedExcessSeries, type ArmMetrics, type ResultReport } from "./report.ts";
 import { splitPlan, type SplitKind } from "./walkforward.ts";
 import { enumerateGrid } from "./robustness.ts";
+import { aggregateWalkForward, type AggregateSplitInput, type AggregateWalkForward } from "./aggregate.ts";
 
 /**
  * Operator entry point for a deterministic evaluation run (PLAN.md Phase 2).
@@ -33,7 +34,10 @@ import { enumerateGrid } from "./robustness.ts";
  *     are clean.
  */
 
-export const EVALUATION_VERSION = 3;
+// 4: the report carries `aggregate`, ALPHA_CHARTER section 16.1 evaluated once over the pooled walk-forward
+// out-of-sample set (D-51 step 2). An added output field with its own hash inside the evaluation's hashed
+// body, so the version moves with it.
+export const EVALUATION_VERSION = 4;
 
 /**
  * Nominal research notional. Every reported metric is a ratio (Sharpe, total return, drawdown), so the level
@@ -193,6 +197,19 @@ export type EvaluationReport = {
   /** Union of promotion-blocking data-quality codes seen across all splits. */
   promotionBlockingCodes: string[];
   splits: SplitEvaluation[];
+  /**
+   * ALPHA_CHARTER section 16.1 at the scope the charter defines it: one verdict over the walk-forward
+   * out-of-sample splits pooled (`research/aggregate.ts`).
+   *
+   * `undefined` when no walk-forward split ran - not "no verdict yet" hidden inside a verdict. A run
+   * narrowed to `--split design` produces no aggregate at all, because the design window is in-sample and
+   * contributes nothing to the set section 16.1 names.
+   *
+   * There is deliberately no per-split counterpart. Sections 13 and 16.1 are both scoped to the aggregate
+   * set, so a per-split verdict would state several contradictory answers where the charter registers one,
+   * and would state one of them over in-sample data.
+   */
+  aggregate: AggregateWalkForward | undefined;
   reportHash: string;
 };
 
@@ -240,6 +257,12 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
   const notify = input.onProgress ?? (() => undefined);
 
   const splits: SplitEvaluation[] = [];
+  // What the aggregate reading of sections 13 and 16.1 pools. Collected inside the loop, where the backtest
+  // and its report are both in hand, rather than reconstructed afterwards from `SplitEvaluation`: the paired
+  // excess series and the arm/benchmark total returns are inputs to one statistic at a wider scope, and
+  // rebuilding them from the rounded strings the operator surface carries would make the aggregate a second
+  // statistic that merely resembles the per-split one.
+  const aggregateInputs: AggregateSplitInput[] = [];
   const promotionBlocking = new Set<string>();
   let allCitable = true;
 
@@ -298,9 +321,51 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
       falsifiersNotEvaluated: ["F1", "F3", "F4", "F5", "F6"],
     });
 
+    if (split.kind === "WALK_FORWARD") {
+      const candidateArm = bt.arms["B1_DETERMINISTIC"];
+      const candidate = report.arms.find((a) => a.arm === "B1_DETERMINISTIC");
+      // `buildResultReport` throws without this arm, so reaching here without it is impossible. The check is
+      // written as a throw rather than as a `?? ZERO` fallback because the fallback would pool a fabricated
+      // zero return into a decisive comparison instead of failing.
+      if (candidateArm === undefined || candidate === undefined) {
+        throw new RangeError(`walk-forward split ${split.id} produced no B1_DETERMINISTIC arm`);
+      }
+      // By the unqualified name, the same lookup `buildResultReport` uses for the per-split prong. An index
+      // published as `SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT` deliberately does not match, so a withheld or
+      // inexact comparator leaves the aggregate prong unmeasured rather than quietly entering the chain-link.
+      const secondary2 = report.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
+      const unusable =
+        secondary2 !== undefined
+          ? undefined
+          : bt.secondary2InexactReasons.length > 0
+            ? bt.secondary2InexactReasons.join("; ")
+            : "the registered Secondary 2 was not built for this window";
+      aggregateInputs.push({
+        splitId: split.id,
+        kind: split.kind,
+        sessions: bt.sessions,
+        pairedExcess: pairedExcessSeries(candidateArm.index.points, primary.points),
+        candidateTotalReturn: candidate.totalReturn,
+        secondary2TotalReturn: secondary2?.totalReturn,
+        secondary2UnusableReason: unusable,
+        citableAsEvidence: splitCitable,
+        citabilityReasons: report.citabilityReasons,
+        promotionBlockingCodes: [...splitBlocking],
+      });
+    }
+
     notify({ phase: "split-done", total: selected.length, index, splitId: split.id, kind: split.kind });
   }
   notify({ phase: "done", total: selected.length });
+
+  // Every walk-forward split the charter's schedule declares, whether or not this run was narrowed to a
+  // subset. Read from `plan`, not from `selected`, because completeness is exactly what a `--split` filter
+  // destroys and what the aggregate has to notice.
+  const plannedWalkForwardSplitIds = plan.splits.filter((s) => s.kind === "WALK_FORWARD").map((s) => s.id);
+  const aggregate =
+    aggregateInputs.length === 0
+      ? undefined
+      : aggregateWalkForward({ charter: c, splits: aggregateInputs, plannedSplitIds: plannedWalkForwardSplitIds });
 
   const barsSourceId = input.barsSourceId ?? DEFAULT_BARS_SOURCE_ID;
   const promotionBlockingCodes = [...promotionBlocking].sort();
@@ -315,6 +380,7 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
     splitKinds,
     splits: splits.map((s) => [s.splitId, s.reportHash, s.resultHash]),
     promotionBlockingCodes,
+    aggregate: aggregate?.aggregateHash ?? "none",
   };
   return {
     evaluationVersion: EVALUATION_VERSION,
@@ -329,6 +395,7 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
     citableAsEvidence: allCitable && splits.length > 0,
     promotionBlockingCodes,
     splits,
+    aggregate,
     reportHash: `sha256:${hashJson(body)}`,
   };
 }

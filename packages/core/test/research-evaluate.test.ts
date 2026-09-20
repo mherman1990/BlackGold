@@ -3,7 +3,7 @@ import { Dec } from "@blackgold/shared";
 import { fileURLToPath } from "node:url";
 import { loadCharterFile, registrabilityReasons, type Charter } from "../src/strategy/charter.ts";
 import { runEvaluation } from "../src/research/evaluate.ts";
-import { SplitRangeError } from "../src/research/walkforward.ts";
+import { splitPlan, SplitRangeError, type SplitKind } from "../src/research/walkforward.ts";
 import { UNVERIFIED_SINGLE_SOURCE } from "../src/data/adapters/corporate-actions.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
 
@@ -61,6 +61,29 @@ function cleanMarket(): ReturnType<typeof buildMarket> {
   return sharedMarket;
 }
 
+/**
+ * A charter whose design window is long enough for the walk-forward schedule to roll: three one-month
+ * evaluation windows inside a 1-year design window, with the charter's own purge and embargo. The shared
+ * fixture above deliberately produces none, which is why the aggregate reading of section 16.1 needs its own.
+ */
+function walkForwardCharter(): Charter {
+  return evalCharter((c) => {
+    c.boundaries = {
+      registered_history_start: "2026-01-02",
+      design: { start: "2026-01-02", end: "2027-03-31" },
+      holdout: { start: "2027-04-01", end: "2027-06-30" },
+      recent: { start: "2027-07-01", end: "2027-09-30" },
+      walk_forward: { window_years: 1, step_months: 1, purge_days: 5, embargo_days: 2 },
+    };
+  });
+}
+
+let walkForwardMarket: ReturnType<typeof buildMarket> | undefined;
+function rollingMarket(): ReturnType<typeof buildMarket> {
+  walkForwardMarket ??= buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2027-09-30") });
+  return walkForwardMarket;
+}
+
 function evaluate(c: Charter, market: ReturnType<typeof buildMarket>) {
   return runEvaluation({
     charter: c,
@@ -71,10 +94,21 @@ function evaluate(c: Charter, market: ReturnType<typeof buildMarket>) {
   });
 }
 
+function evaluateKinds(c: Charter, market: ReturnType<typeof buildMarket>, splitKinds: SplitKind[]) {
+  return runEvaluation({
+    charter: c,
+    charterHash: "sha256:" + "0".repeat(64),
+    registrabilityReasons: registrabilityReasons(c),
+    pit: market.pit,
+    calendar: market.calendar,
+    splitKinds,
+  });
+}
+
 describe("runEvaluation", () => {
   it("evaluates the design and recent splits and never the sealed holdout", () => {
     const r = evaluate(evalCharter(), cleanMarket());
-    expect(r.evaluationVersion).toBe(3);
+    expect(r.evaluationVersion).toBe(4);
     // Design and recent are in-window; the 1-year walk-forward window yields no rolling split here.
     const kinds = r.splits.map((s) => s.kind);
     expect(kinds).toContain("DESIGN");
@@ -335,4 +369,64 @@ describe("runEvaluation", () => {
     expect(events.filter((p) => p === "split-start").length).toBe(n);
     expect(events.filter((p) => p === "split-done").length).toBe(n);
   });
+
+  // ALPHA_CHARTER sections 13 and 16.1 are both scoped to the "aggregate walk-forward out-of-sample set".
+  // This surface used to emit no verdict at that scope at all, which is why the charter's decisive falsifier
+  // had never been evaluated (D-51 step 2, docs/analysis/2026-09-20-d51-primary-metric.md).
+  it("evaluates section 16.1 once, over the walk-forward splits pooled", () => {
+    const c = walkForwardCharter();
+    const r = evaluateKinds(c, rollingMarket(), ["WALK_FORWARD"]);
+    const planned = splitPlan(c).splits.filter((s) => s.kind === "WALK_FORWARD").map((s) => s.id);
+    expect(planned.length).toBeGreaterThan(1);
+
+    const agg = r.aggregate;
+    expect(agg).toBeDefined();
+    if (agg === undefined) return;
+    expect(agg.splitIds).toEqual(planned);
+    expect(agg.plannedSplitIds).toEqual(planned);
+    expect(agg.complete).toBe(true);
+    expect(agg.splitBoundaries).toBe(planned.length - 1);
+    // One verdict, not one per split: no SplitEvaluation carries a section 16.1 outcome of any kind.
+    for (const s of r.splits) expect(Object.keys(s)).not.toContain("verdict");
+    expect(["REJECT", "OWNER_REVIEW", "UNMEASURED"]).toContain(agg.verdict);
+    expect(agg.verdictReasons.length).toBeGreaterThan(0);
+    expect(agg.aggregateHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+
+    // The pooled window lies inside the schedule's own bounds and double-counts nothing: the aggregate
+    // throws on an overlapping session, so reaching here proves splitPlan's schedule tiles. The bounds are
+    // inequalities, not equalities, because a window edge is a calendar date and these are sessions.
+    const firstSplit = r.splits[0];
+    const lastSplit = r.splits[r.splits.length - 1];
+    expect(agg.sessions).toBeGreaterThan(0);
+    expect(agg.independentDecisions).toBe(Math.floor(agg.sessions / 21));
+    expect(agg.window?.start).toBeDefined();
+    expect(agg.window?.start ?? "").not.toBe("");
+    // ISO dates compare lexicographically, which is why the store orders sessions by string everywhere.
+    if (firstSplit !== undefined) expect((agg.window?.start ?? "") >= firstSplit.evaluation.start).toBe(true);
+    if (lastSplit !== undefined) expect((agg.window?.end ?? "") <= lastSplit.evaluation.end).toBe(true);
+
+    // Nothing pooled here is citable as promotion evidence, and the reasons say why rather than leaving the
+    // verdict to be read as one. (Claude Code may not cite any run as promotion evidence in any case.)
+    expect(typeof agg.citableAsEvidence).toBe("boolean");
+    if (!agg.citableAsEvidence) expect(agg.citabilityReasons.length).toBeGreaterThan(0);
+  });
+
+  it("produces no aggregate when no walk-forward split ran", () => {
+    // Narrowed to the design window, which is in-sample: there is no aggregate out-of-sample set to pool,
+    // and saying so with `undefined` is different from reporting a verdict computed from one window.
+    const r = evaluateKinds(walkForwardCharter(), rollingMarket(), ["DESIGN"]);
+    expect(r.splits.every((s) => s.kind === "DESIGN")).toBe(true);
+    expect(r.aggregate).toBeUndefined();
+  });
+
+  it("reproduces the same aggregate and evaluation hash from the same charter and store", () => {
+    // Determinism, which is what a hash in a PR body is worth. That a CHANGED verdict moves the aggregate
+    // hash is pinned in research-aggregate.test.ts, where the verdict can be varied directly.
+    const c = walkForwardCharter();
+    const a = evaluateKinds(c, rollingMarket(), ["WALK_FORWARD"]);
+    const b = evaluateKinds(c, rollingMarket(), ["WALK_FORWARD"]);
+    expect(a.reportHash).toBe(b.reportHash);
+    expect(a.aggregate?.aggregateHash).toBe(b.aggregate?.aggregateHash);
+  });
+
 });

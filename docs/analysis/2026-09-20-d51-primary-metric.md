@@ -19,6 +19,10 @@ changes the question. The short version:
    (§2a). (Both this and the point above were found by Codex review of earlier drafts of this note, not by
    the drafts themselves.) **Secondary 2 is now built — see §2d — so the prong is computable; it has still
    not been run on real data.**
+6. **And the verdict now exists at the scope the charter defines it (§2e).** `research evaluate` emits one
+   §16.1 outcome over the walk-forward splits pooled, with the prongs withheld rather than guessed whenever
+   the pool or either comparator is incomplete. The title of this note still stands: the falsifier has
+   machinery and has **not** been evaluated on real data.
 
 Changing the primary metric now, having seen that it failed, would be metric-shopping. Computing a number the
 charter preregistered and nobody looked at is not. That ordering is the whole recommendation.
@@ -175,6 +179,78 @@ literal alternative — re-scaling every session — is defensible and would giv
 same shape as D-32: Claude Code implemented a reading, and the owner should confirm or overrule it before the
 number is treated as decisive. It is not a code question.
 
+## 2e. Step 2: §16.1 is now evaluated once, at the scope the charter defines (2026-09-20)
+
+`packages/core/src/research/aggregate.ts` supplies the missing scope. `runEvaluation` collects each
+walk-forward split's paired daily excess series and its arm/benchmark total returns while the backtest and its
+report are both in hand, and `aggregateWalkForward` returns one verdict under `EvaluationReport.aggregate`:
+`REJECT`, `OWNER_REVIEW`, or `UNMEASURED`. §2b still holds — there is no per-split §16.1 outcome and none was
+added.
+
+**How the two prongs are pooled.**
+
+| Prong | Pooled how |
+|---|---|
+| §16.1 first / §13 primary metric | The per-split **paired daily excess series are concatenated in session order** and the charter's stationary block bootstrap (21 sessions, 90%) runs once on the result. Pooling the *input* rather than averaging per-split *results* is what makes this the same statistic at a wider scope instead of a second statistic that resembles it, so `pairedExcessSeries` is exported from `report.ts` and both scopes call it. |
+| §16.1 second / §13 excess return vs Secondary 2 | Each window is backtested **from cash**, so the per-split total returns are **chain-linked** — `Π(1 + r) - 1` — for the candidate and for Secondary 2 independently, and the excess is the difference of the two linked returns. Summing instead of linking is wrong by more than rounding over nine windows, and the error does not cancel between the strategy and its comparator. |
+
+**Four fail-closed rules, each there to stop a rejection being manufactured rather than measured.**
+
+1. **Walk-forward splits only.** A DESIGN or RECENT split passed to the aggregate throws. DESIGN is in-sample
+   (§14.1); pooling it would state an out-of-sample verdict over data that is not out of sample.
+2. **The pool must be the whole schedule.** A run narrowed with `--split` yields `UNMEASURED`, never a
+   verdict. Otherwise the same charter would reject or not depending on which windows the operator chose to
+   run — window-shopping with extra steps. **Both** outcomes are withheld from a partial pool, not just the
+   rejection, because "goes to owner review" is equally a claim about a set that was not measured.
+3. **Both prongs must be measured.** One split without a usable Secondary 2 (not built, or built inexactly and
+   therefore withheld) leaves the aggregate prong `undefined`. Nothing is substituted, and absence is not
+   failure — §16.1 rejects "if both fail". The lookup is by the unqualified benchmark name, so an index
+   published as `SECONDARY_2_VOL_TARGET_PRIMARY__INEXACT` cannot enter the chain-link.
+4. **A short series is not padded.** `buildResultReport` pads a two-observation series with `[0, 0]` to keep
+   the per-split *diagnostic* shaped correctly. A decisive verdict may not rest on a fabricated interval, so
+   the aggregate reports `primaryMetric: undefined` instead.
+
+**The §16.1 / §17 contradiction is detected and surfaced, not resolved.** When the primary metric fails and
+Secondary 2 passes, the verdict is `OWNER_REVIEW` per §16.1 and `charterConflict` states §17's competing rule
+("REJECTED, never to ACTIVE") in full. §6 below has been dormant since it was written; this is the code that
+makes it fire the moment the case occurs.
+
+**Three limits the verdict carries in `evidenceCaveats`.** All are stated rather than corrected, and the first
+two bias in a direction worth naming.
+
+1. **The registered deflated-Sharpe adjustment is not applied.** §13 registers one "for the registered trial
+   count (§15)". `deflatedSharpe` exists in `stats.ts` but needs the cross-trial Sharpe dispersion of the full
+   72-member grid, which one evaluation run does not produce. Deflation can only lower a Sharpe, so the prong
+   as computed is **easier** to pass than the registered statistic — the omission biases §16.1 toward owner
+   review and away from rejection. That is the safe direction for a falsifier, and it is still not the
+   registered statistic. Wiring it is F5's grid sweep.
+2. **Each window restarts from cash.** At each boundary the strategy sits flat until its first fill while the
+   benchmark is fully invested, so the pooled excess carries a warm-up drag and a round of re-entry cost a
+   continuously-held portfolio would not pay. Bootstrap blocks drawn from the concatenation can also straddle
+   a boundary. Concatenation is §13's literal reading; a within-split bootstrap would be an unregistered
+   estimator.
+3. **The schedule cannot reach the charter's own minimum independent-decision count.** §14.3 requires **150**
+   monthly-equivalent out-of-sample blocks. `splitPlan` on charter 0.2.0 produces **9** walk-forward splits
+   tiling **2010-06-28 → 2018-12-31** — about 2,150 sessions, so roughly **102** blocks. §14.3's "155 in
+   design, 72 in holdout" counts the design window and the sealed holdout, neither of which is the
+   walk-forward out-of-sample set, and nothing in §14 reconciles the two. §16.1 states no such precondition,
+   so the verdict is computed and `minimumIndependentDecisionsMet` reports the shortfall. **Either the
+   schedule or the minimum is wrong for this charter; both are charter values and therefore the owner's.**
+
+Both of Secondary 2's open owner readings — the weekly re-scaling cadence (§2d) and the ex-date reinvestment
+convention — are attached to any verdict resting on the second prong. **Until the owner confirms or overrules
+them, a §16.1 rejection from this code is provisional.**
+
+**On the tests.** Nine vacuous tests across PRs #91-#93 shared one shape: fixtures uniform in the dimension
+the code branches on. Every guard above was checked by deleting or inverting it and confirming a test fails —
+sixteen mutations, no survivors. The chain-link fixture is the clearest case: candidate +50%/+50% against
+Secondary 2 +100%/+10% gives excess **+0.05 linked** and **−0.10 summed**, so a summing implementation rejects
+the hypothesis exactly where a linking one routes it to owner review.
+
+**What is still not done.** None of this has been run on real data — that needs the Pi's store, and the runs
+there remain `UNVERIFIED_SINGLE_SOURCE` until reconciled corporate actions are curated. Step 3, the metric
+question itself, is unchanged and is the owner's.
+
 ## 2b. §16.1 is an aggregate verdict, not a per-split one
 
 Also caught on review. §16.1 applies "on the **aggregate walk-forward out-of-sample set**". A per-split verdict
@@ -232,8 +308,8 @@ recovers information the charter already committed to; the second spends the cha
 **Step 1 — implement the registered Secondary 2.** ~~Outstanding.~~ **Done** — see §2d for how, and for the
 one charter ambiguity it forced into the open.
 
-**Step 2 — evaluate §16.1 over the aggregate walk-forward set**, not per split, and only once Step 1 lands.
-This needs the walk-forward splits pooled into the one out-of-sample set the charter registers.
+**Step 2 — evaluate §16.1 over the aggregate walk-forward set**, not per split. ~~Outstanding.~~ **Done —
+see §2e.**
 
 **Step 3 — read the numbers this PR does surface**, which are correct and per-split by nature:
 

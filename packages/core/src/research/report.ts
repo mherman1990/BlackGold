@@ -138,15 +138,28 @@ function dailyNumbers(points: readonly TRPoint[]): number[] {
   return simpleReturns(points).map((r) => r.value.toNumber());
 }
 
-/** Paired daily excess of `a` over `b` on their common sessions. */
-function pairedExcess(a: readonly TRPoint[], b: readonly TRPoint[]): number[] {
+/**
+ * Paired daily excess of `a` over `b` on their common sessions, each value tagged with its session.
+ *
+ * Exported because the aggregate walk-forward reading of sections 13 and 16.1 pools these series across
+ * splits and bootstraps the concatenation (`research/aggregate.ts`). Pooling the per-split INPUT rather than
+ * averaging per-split RESULTS is what makes the aggregate the same statistic at a wider scope instead of a
+ * second statistic that happens to resemble it; exporting the one function both scopes read is what keeps
+ * them from drifting.
+ */
+export function pairedExcessSeries(a: readonly TRPoint[], b: readonly TRPoint[]): { session: IsoDate; value: number }[] {
   const bySession = new Map(simpleReturns(b).map((r) => [r.session, r.value.toNumber()]));
-  const out: number[] = [];
+  const out: { session: IsoDate; value: number }[] = [];
   for (const r of simpleReturns(a)) {
     const other = bySession.get(r.session);
-    if (other !== undefined) out.push(r.value.toNumber() - other);
+    if (other !== undefined) out.push({ session: r.session, value: r.value.toNumber() - other });
   }
   return out;
+}
+
+/** The same paired excess as bare numbers, for the statistic. */
+function pairedExcess(a: readonly TRPoint[], b: readonly TRPoint[]): number[] {
+  return pairedExcessSeries(a, b).map((p) => p.value);
 }
 
 export type MetricsInput = {

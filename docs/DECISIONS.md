@@ -947,6 +947,58 @@ treating absence as failure made rejection the *only* outcome for any run whose 
 tri-state value also enters the hashed `verdictHash`, so a withheld verdict and a measured rejection cannot
 share an identity; `ROBUSTNESS_VERSION` 1 → 2.
 
+**STEP 2 DONE (2026-09-20): §16.1 is now evaluated once, over the walk-forward splits pooled.**
+`packages/core/src/research/aggregate.ts` is the missing scope. `runEvaluation` collects each walk-forward
+split's paired daily excess series and its arm/benchmark total returns, and `aggregateWalkForward` returns one
+`REJECT | OWNER_REVIEW | UNMEASURED` verdict under `EvaluationReport.aggregate`. There is still **no** per-split
+§16.1 outcome, and none is added: §13 scopes the primary metric's pass rule and §16.1 scopes the falsifier to
+the same aggregate set.
+
+Four rules decide the verdict, and each exists to stop a rejection being manufactured rather than measured:
+
+- **Walk-forward splits only.** DESIGN is in-sample, RECENT is reported separately, HOLDOUT is sealed. Any
+  other kind throws rather than being pooled.
+- **The pool must be the whole schedule.** A run narrowed with `--split` produces `UNMEASURED`, not a verdict
+  from the windows that happened to run. Both outcomes are withheld from a partial pool, not just the
+  rejection: "goes to owner review" is equally a claim about a set that was not measured.
+- **Both prongs must be measured.** One split without a usable Secondary 2 leaves the aggregate prong
+  `undefined` — a comparator covering part of the window is not the registered comparator — and §16.1 rejects
+  only "if both fail".
+- **Returns link, they do not add.** Each window is backtested from cash, so the aggregate is the chained
+  product of the per-split total returns. A test pins a fixture where summing and linking disagree in *sign*,
+  so a summing implementation would reject where a linking one routes to owner review.
+
+**Three limits the verdict carries in `evidenceCaveats`, all stated rather than corrected:**
+
+1. **The registered deflated-Sharpe adjustment is not applied.** §13 registers "a deflated-Sharpe adjustment
+   for the registered trial count (§15)". `deflatedSharpe` (`stats.ts`) exists but needs the cross-trial
+   Sharpe dispersion of the full 72-member grid, which one evaluation run does not produce. Deflation can only
+   lower a Sharpe, so the first prong here is **easier** to pass than the registered statistic: the omission
+   biases §16.1 toward owner review and away from rejection. Wiring it needs the grid sweep (F5's work) and is
+   not done here.
+2. **Each window restarts from cash.** At every boundary the strategy sits flat until its first fill while the
+   benchmark is fully invested, so the pooled paired excess carries a warm-up drag and a round of re-entry
+   cost that a continuously-held portfolio would not pay. Bootstrap blocks drawn from the concatenation can
+   also straddle a boundary. Concatenation is §13's literal reading ("a stationary block-bootstrap … on the
+   aggregate set"); a within-split bootstrap would be a different, unregistered estimator.
+3. **The registered walk-forward schedule cannot reach the charter's own minimum.** §14.3 sets a minimum of
+   **150** monthly-equivalent independent out-of-sample blocks. `splitPlan` on charter 0.2.0 yields **9**
+   walk-forward splits tiling **2010-06-28 → 2018-12-31** (3-year window, 12-month step, 21-day purge, 5-day
+   embargo over the 2007-06-01→2018-12-31 design range) — 3,108 calendar days, roughly **2,150 sessions, so
+   about 102 blocks**. The §14.3 figures of "about 155 in design and 72 in holdout" count the design window
+   itself and the sealed holdout, neither of which is the walk-forward out-of-sample set; nothing in §14
+   reconciles them with the schedule §14.1 actually registers. §16.1 states no such precondition, so the
+   verdict is computed anyway and `minimumIndependentDecisionsMet` reports the shortfall. **This is an owner
+   question, not a code one:** either the walk-forward schedule or the §14.3 minimum is wrong for this
+   charter, and both are charter values. (The 9 windows tile without gaps — 2011-06-27 is followed by
+   2011-06-28 — which is what lets them be pooled at all; the aggregate throws on an overlapping session
+   rather than double-counting it.)
+
+Both open Secondary 2 readings — the weekly re-scaling cadence and the ex-date reinvestment convention — are
+carried onto any verdict that rests on the second prong (`SECONDARY_2_OPEN_READINGS`). **Until the owner
+confirms or overrules them, a §16.1 rejection from this code is provisional.** Claude Code computes the
+verdict; it does not act on it, and may not treat its own research output as investment evidence.
+
 **Correction history.** This entry's first version (2026-09-20) said the second prong was computed on every
 run and merely needed surfacing, and recommended running it. That was wrong on both counts and is corrected
 above; the errors were found by Codex review, not by the sessions that wrote them.
