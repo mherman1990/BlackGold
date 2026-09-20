@@ -80,11 +80,53 @@ This is the real cost, and it is data work, not engineering:
   few hundred dividend entries plus a handful of structural actions (e.g. the
   2015 XLF→XLRE spin-off already used as a fixture).
 
-Once ingested, a run that reads reconciled actions instead of the Tiingo
-automated actions drops `UNVERIFIED_SINGLE_SOURCE`. The Tiingo actions can
-remain in the store — the read path collapses to the reconciled rows per the
-usual vintage/latest rules — but the clean citable path is to rely on the
-reconciled file for the entities and dates under evaluation.
+**Correction (2026-09-20).** This section originally said the Tiingo actions
+could remain in the store because "the read path collapses to the reconciled
+rows per the usual vintage/latest rules". **That is wrong**, and was already
+wrong when the 0.1.11 read-layer dedupe landed on 2026-09-13, after this note
+was written.
+
+Dedupe picks a winning action per (entity, kind, effective date), preferring the
+reconciled row. But the promotion-blocking label is accumulated over **every**
+returned row *before* that choice is made
+(`packages/core/src/research/backtest.ts`, in `loadExecutionSeries`):
+
+```
+// Labeling stays conservative: any single-source action present taints the run even when a reconciled
+// action supersedes it below, so the dedupe can never make a run look more citable than its store does.
+for (const code of blocksPromotionEvidence(row.qualityFlags)) qualityLabels.add(code);
+```
+
+That is deliberate, and it is the right default: the dedupe must never make a
+run look more citable than the store it read. The consequence is that **merely
+ingesting reconciled actions alongside the Tiingo rows does not clear the
+label.** Both paths write under the same `corporate_action.<KIND>` source id, so
+a run cannot select one and ignore the other, and a snapshot taken after
+reconciling still includes the older single-source rows (snapshots bound by
+`max(observations.id)`, so they are inclusive of everything earlier).
+
+The Pi store is already in this state: the 2026-09-13 runs came back
+`UNVERIFIED_SINGLE_SOURCE`, which requires those rows to be present.
+
+**So the remedy is an open question for the owner, not a documented procedure.**
+Three candidates, none of them free:
+
+1. **A store without those rows for the evaluated entities** — a separate data
+   directory for the citable run, honouring D-49's "use one path or the other
+   per universe, never both". Cheapest, and needs no code change; the cost is a
+   second ingest of bars for the evaluation universe.
+2. **Change the taint rule** so a single-source row superseded by a reconciled
+   row for the same date does not label the run. Defensible on the merits, but
+   it loosens an evidential guarantee that was written deliberately, so it is an
+   evidence-standards decision rather than a refactor — **and it is larger than
+   it sounds**: it needs a shared reconciled-winner rule across the feature,
+   execution and coverage reads, because `computeFeatures` does not dedupe at
+   all today. See the Recommendation below.
+3. **A quarantine or exclusion mechanism** for superseded observations. None
+   exists today; observations are append-only by design.
+
+Until one is chosen, treat "curate reconciled actions" as **necessary but not
+sufficient** on the existing store.
 
 ## What still gates a citable, promotable result after that
 
@@ -115,10 +157,53 @@ blocker:
   a separate, reviewed change — worth doing for data-integrity confidence, but
   not the path to clearing the current label.
 
-## Recommendation
+## Recommendation (rewritten 2026-09-20)
 
-To make a citable run possible, the next concrete step is **owner-side
-corporate-action curation** for the universe over the evaluation window, ingested
-via `ingest corporate-actions --file`. No code change is required for that path.
+The original recommendation here said the next concrete step was owner-side
+corporate-action curation, and that **no code change is required**. Both halves
+are now known to be wrong on the existing store, for the reasons in the
+correction above. It is replaced.
+
+**Do not commission the curation yet.** In order:
+
+1. **Choose the store remedy** (owner). Option 1 — a separate store for the
+   evaluation universe — is the only one that is purely operational. Options 2
+   and 3 both need code, and option 2 needs more of it than first described
+   (next item).
+2. **If option 2 is chosen, scope it properly.** Relaxing the taint rule in
+   `loadExecutionSeries` alone is *not* sufficient and would be actively unsafe,
+   because the two read paths do not agree:
+   - `loadExecutionSeries` (`research/backtest.ts`) dedupes actions per
+     (entity, kind, effective date), preferring the reconciled row.
+   - `computeFeatures` (`strategy/features.ts`) does **not**. It pushes every
+     returned row into `TotalReturnSeries.build`, so the same dividend present
+     from both the reconciled file and the Tiingo feed is **counted twice** in
+     the feature path's total-return series — and therefore in momentum, trend
+     and volatility — while the execution path counts it once.
+   - `coverage.ts` accumulates blocking flags from every row, which is correct
+     and conservative, but means it too sees both rows.
+
+   So option 2 is really "a shared reconciled-winner rule across the feature,
+   execution and coverage reads", not a one-line relaxation.
+3. **Then** curate and ingest via `ingest corporate-actions --file`.
+
+### Known bug this uncovered (not yet fixed)
+
+The 0.1.11 read-layer dedupe was **incomplete**. Its changelog entry describes
+fixing a total-return double-count when the same action exists from two sources,
+and it fixed `loadExecutionSeries` — but `computeFeatures` builds its own
+`TotalReturnSeries` from an undeduped action list and was not touched. The
+`dedupes a corporate action present from both a reconciled and a single-source
+feed` test covers the backtest path only.
+
+The bug is **dormant today** purely because no reconciled vendored file has been
+ingested, so there are no duplicate pairs. It arms itself the moment anyone does
+the curation this note recommends — which would silently change the features
+that drive entry and exit decisions, in a direction nothing would flag.
+
+Fixing it is a bounded code PR with its own tests (positive, negative, and the
+both-sources-present boundary), not a docs change, and it should land **before**
+any reconciled actions are ingested.
+
 Everything downstream (charter signature, holdout, evidence citation) remains an
 owner act by design.

@@ -13,14 +13,14 @@ merged roughly thirty commits since, through PR #86. Where the two disagree,
 
 ## 1. Where the build is (verified)
 
-**Merged to `main` at `d6acc2c`.** 829 tests, `npm run check` green.
+**Merged to `main`**, at `4f5d005` when this note was written and `765fde8` after the note itself merged (PR #88). 829 tests, `npm run check` green.
 
 | Layer | State |
 |---|---|
 | Phases 0–3 | Merged. Foundation, point-in-time research kernel, first deterministic charter, bounded runtime-LLM analyst overlay + Anthropic adapter |
 | Phase 4 engines | Factor classifier, halt-state machine, risk-limit/caps engine, compliance engine — all merged, all pure, all fail-closed |
 | Phase 5 gate | `decision/gate.ts` merged (PR #35): halt ∧ limits ∧ new-risk-compliance composed into one go/no-go |
-| Phase 5 shadow track (D-53) | Slice 1 (sealed prospective decision record + migration `0008`), 2a (per-arm target book), 2b (gate-and-seal), 3a-1 (look-through engine), 3a-2 decoder (SSGA `.xlsx`) — **all merged** |
+| Phase 5 shadow track (D-53) | Slice 1 (sealed prospective decision record + migration `0008`), 2a (per-arm target book), 2b (gate-and-seal), 3a-1 (look-through engine), 3a-2 decoder (SSGA `.xlsx`) and 3a-2 fetch (PIT ingest, PR #87) — **all merged**. Remaining: 3a-3, 2c, 3b, 4 |
 | Release | **0.1.12 published and running on the Pi.** GHCR public, image digest-pinned in the compose. Releases now cut by `release.yml` dispatch (D-38) |
 | Data | Tiingo EOD bars ingested on the Pi (96,288 bars, 2000–2026) + Tiingo corporate actions (D-49, `UNVERIFIED_SINGLE_SOURCE`). FRED / SEC / CFTC / Alpaca adapters live-verified. Opt-in nightly auto-ingest shipped (0.1.11/0.1.12) |
 | Evaluation engine | `research evaluate` shipped (0.1.9/0.1.10) and **run end to end on real data** on 2026-09-13 — see `2026-09-13-etf-trend-vol-machinery-check.md` |
@@ -28,10 +28,10 @@ merged roughly thirty commits since, through PR #86. Where the two disagree,
 | Live trading | Absent by construction. No broker credential exists anywhere |
 | Registered experiments | **Still none.** No result is citable, no holdout opened |
 
-**Open PR: #87** — SSGA holdings fetch adapter (D-53 slice 3a-2 fetch). CI green
-since 2026-09-15, one Codex P1 already fixed (point-in-time correction ordering),
-no conflicts. It has been sitting five days. Merging it is the first action of
-the next session unless Matt wants to read it first.
+**PR #87 is merged** — SSGA holdings fetch adapter (D-53 slice 3a-2 fetch), in
+`main` as of 2026-09-20 at `4f5d005`. It had sat green and idle for five days
+with one Codex P1 already fixed (point-in-time correction ordering). Merging it
+unblocked slice 3a-3.
 
 ### The thing to understand about the 2026-09-13 run
 
@@ -84,6 +84,28 @@ sources (`ingest corporate-actions --file`). Scope: the 12-ETF universe + BIL +
 VTI, DESIGN window 2007-06-01 → 2018-12-31, on the order of a few hundred
 quarterly dividend entries plus a handful of structural actions. Details in
 `2026-09-13-path-to-citable-evidence.md`.
+
+**A second decision, found 2026-09-20 and larger than it looks: curating the
+file clears nothing on its own.** The Tiingo action rows are already in the Pi
+store. A snapshot is bound by `max(observations.id)` so it includes them; both
+paths write under the same `corporate_action.<KIND>` source id so a run cannot
+select one and ignore the other; and `loadExecutionSeries`
+(`research/backtest.ts`) accumulates promotion-blocking codes over **every**
+returned row *before* the dedupe picks the reconciled winner — deliberately, so
+the dedupe can never flatter the store. Curating into the current store
+therefore leaves the label in place. **Decide the remedy before commissioning
+the curation**, or the data work buys nothing: a separate store for the
+evaluation universe (cheapest, no code change), a change to the taint rule (an
+evidence-standards decision, not a refactor), or a quarantine mechanism that
+does not exist. Costs are in `2026-09-13-path-to-citable-evidence.md`.
+
+**And a latent bug must be fixed before the curation, whichever remedy you
+pick.** `computeFeatures` (`strategy/features.ts`) does not dedupe corporate
+actions, while `loadExecutionSeries` does — so a dividend present from both the
+reconciled file and the Tiingo feed is counted twice in momentum, trend and
+volatility, and once in execution. The 0.1.11 dedupe fixed the execution path
+only. It is dormant solely because no reconciled file exists yet; the curation
+is what arms it. Bounded code PR, own tests, lands first.
 
 **The decision Matt owes, and it is not just "do the data work":** may Claude
 Code build a *second automated* public corporate-actions adapter (issuer
@@ -207,6 +229,9 @@ So a day is never lost waiting on an answer. Each is a bounded, reviewed PR.
 7. **Deferred Phase 4 limit engines** that need only price/ADV data already in
    the store: liquidity and order-level limits. Per-position risk budget and
    factor concentration wait on B-7.
+8. **Fix the `computeFeatures` corporate-action double-count** (see B-2). Small,
+   well-understood, financial-critical, and a prerequisite to B-2's curation
+   under every remedy. This is the one item here that should jump the queue.
 
 ## 5. Two things the refresh turned up
 
