@@ -909,9 +909,14 @@ are listed in `STATE.md` → *Secondary 2* and in full on PR #91. One is a gate:
 >
 > The defect: it put the pre-open holder's distribution through the new allocation's intraday factor, so a
 > rebalance out of equity on an ex-date was mispriced. The fix is a **three-part** decomposition - each leg's
-> price move to the open, the interval's distributions credited to the pre-open holder as cash, and
-> open-to-close at the new weight - with income taken as a difference of cumulative distributions so an
-> ex-date on an unshared session still counts. Three earlier versions each tried to make the split two
+> price move to the open, the CLOSING session's distribution credited to the pre-open holder as cash, and
+> open-to-close at the new weight. Earlier ex-dates in a stretched interval are not cash: the leg's index
+> reinvested them at their own closes and they have been compounding since, so the overnight factor takes
+> that carry straight from `trIndex` - `trIndex(leg's own last point) / trIndex(previous shared session)` -
+> and applies `(adjOpen + closingSession.distribution) / thatClose` on top. Adjacent sessions need no special
+> case, because the carry is then exactly 1. Summing every distribution in the interval and carrying it to
+> the open instead loses that growth: a 10 on a 100 close with the next open at 200 gives 2.1 as cash against
+> the reinvested 2.2. Three earlier versions each tried to make the split two
 > factors multiplying back to the leg's own total-return step; that is impossible, because the leg's index
 > reinvests its distribution at the CLOSE while a portfolio rebalanced at the open allocates that cash at the
 > OPEN.

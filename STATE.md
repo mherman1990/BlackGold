@@ -50,7 +50,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 
 ### The ex-date defect is fixed; the gate is lifted
 
-`legSplit` decomposes a rebalance session into **three** parts, not two: each leg's price move to the open, the distributions that went ex in the interval credited to the **pre-open** holder as cash, and the open-to-close price move at the new weight. Income is a difference of cumulative distributions, so an ex-date on a session the legs do not share is still counted.
+`legSplit` decomposes a rebalance session into **three** parts, not two: each leg's price move to the open, the **closing session's** distribution credited to the pre-open holder as cash, and the open-to-close price move at the new weight. An ex-date *earlier* in a stretched interval is not cash — the leg's index reinvested it at its own close and it has been compounding since — so the overnight factor carries that growth straight from `trIndex` and applies only the closing session's distribution on top. Adjacent sessions need no special case: the carry is then exactly 1.
 
 Three earlier versions failed in three different ways, all from trying to make the split two factors that multiply back to the leg's own total-return step. They cannot: **the leg's index reinvests its distribution at the close, while a portfolio rebalanced at the open allocates that cash at the open.** Codex's counterexample is the clearest statement — `prevClose 100, open 90, close 100, dist 10`, rebalancing from weight 1 to 0: the holder sells at 90 and keeps the 10, so the portfolio is flat, and the residual form said −1%.
 
