@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { Dec, ONE, ZERO } from "@blackgold/shared";
 import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
 import { backtestParamsFromCharter, costModelFor, costsFromCharter, reportBenchmarkSeries, runBacktest, weeklyDecisionSessions, type BacktestInput } from "../src/research/backtest.ts";
+import { blendSeries } from "../src/research/benchmarks.ts";
 import { auditReads } from "../src/research/leakage.ts";
 import { defaultProcessingDelayMs } from "../src/data/pit/repository.ts";
 import { UNVERIFIED_SINGLE_SOURCE } from "../src/data/adapters/corporate-actions.ts";
@@ -287,8 +288,8 @@ describe("runBacktest", () => {
 
   // ALPHA_CHARTER section 11 Secondary 2. The reads are already covered by the leakage audit above, because
   // the volatility comes from computeFeatures. What that audit cannot catch is the weight-to-session mapping:
-  // blendSeries multiplies the weight by session t's OWN return, so applying a weight at the decision session
-  // would let a volatility estimated through that session's close earn that session's return.
+  // a weight applied at the decision session would let a volatility estimated through that session's close
+  // earn the return ending at it.
   it("applies the Secondary 2 weight only where the strategy's own fills land", () => {
     const { input } = setup();
     const r = runBacktest(input);
@@ -341,8 +342,8 @@ describe("runBacktest", () => {
 
   it("never activates a Secondary 2 weight on the decision session, even at zero delay", () => {
     // delayBarsOverride: 0 fills at the decision close, so the position exists only from that close. If the
-    // weight activated on the decision session, blendSeries would apply it to the previous-close-to-decision-
-    // close return - a volatility estimated AT that close earning the return ending at it.
+    // weight activated on the decision session, it would earn the previous-close-to-decision-close return -
+    // a volatility estimated AT that close earning the return ending at it.
     const { input } = setup();
     const r = runBacktest({ ...input, costs: { ...input.costs, delayBars: 0 } });
     const decisionSessions = new Set(r.decisions.map((d) => d.decisionSession));
@@ -358,6 +359,37 @@ describe("runBacktest", () => {
     }
     // Without this the assertion above is vacuous: a run that never changes weight would pass trivially.
     expect(changes).toBeGreaterThan(0);
+  });
+
+  // The split has to be driven by the RUN's delay, not hardcoded. `blendSeries` is the independent oracle:
+  // it applies one weight to each whole close-to-close return, which is exactly right at zero delay (the fill
+  // lands at the prior close, so the new weight holds the whole session) and exactly wrong at delay >= 1.
+  it("splits only when the run's own fills land at an open, not at the prior close", () => {
+    const { input } = setup();
+    const legs = reportBenchmarkSeries(input);
+
+    const asBlend = (r: ReturnType<typeof runBacktest>): string[] => {
+      const bySession = new Map(r.secondary2Weights.map((w) => [w.session, w.weight]));
+      return blendSeries({
+        equity: legs.primary,
+        cash: legs.cash,
+        equityWeight: (session) => bySession.get(session) ?? ZERO,
+      }).points.map((p) => p.trIndex.toFixed(12));
+    };
+    const levels = (r: ReturnType<typeof runBacktest>): string[] => (r.secondary2Index?.points ?? []).map((p) => p.trIndex.toFixed(12));
+
+    // Zero delay: every activation is acquired at the prior close, so no session is split and the index is
+    // the plain daily-rebalanced blend.
+    const zero = runBacktest({ ...input, costs: { ...input.costs, delayBars: 0 } });
+    expect(levels(zero).length).toBeGreaterThan(1);
+    expect(levels(zero)).toEqual(asBlend(zero));
+
+    // Delayed: the fill lands at the open, so at least one rebalance session is decomposed and the index
+    // parts company with the blend. Without this the assertion above could pass on a no-op split.
+    const delayed = runBacktest(input);
+    expect(input.costs.delayBars).toBeGreaterThanOrEqual(1);
+    expect(levels(delayed).length).toBeGreaterThan(1);
+    expect(levels(delayed)).not.toEqual(asBlend(delayed));
   });
 
   it("holds Secondary 2 in cash until its first decision takes effect, and keeps it long-only", () => {

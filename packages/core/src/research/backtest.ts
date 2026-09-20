@@ -8,7 +8,7 @@ import { admittedRiskEtfs, type Charter } from "../strategy/charter.ts";
 import { candidateParamsFromCharter, selectCandidates, type CandidateParams, type CandidateSet } from "../strategy/candidates.ts";
 import { computeFeatures, featureParamsFromCharter, type FeatureParams } from "../strategy/features.ts";
 import { constructTargets, rebalanceOrders, shareTargets, sizingParamsFromCharter, type SizingParams, type TargetWeights } from "../strategy/construct.ts";
-import { volatilityTargetedSeries } from "./benchmarks.ts";
+import { volatilityTargetedSeries, type VolTargetActivation } from "./benchmarks.ts";
 import { dailyNavSeries, type PortfolioEvent } from "./nav.ts";
 import { simulateFill, type CostModel } from "./simulator.ts";
 import type { LeakageAuditor } from "./leakage.ts";
@@ -298,44 +298,52 @@ export function reportBenchmarkSeries(input: BacktestInput): { primary: TRSeries
   };
 }
 
-/** Sessions at which the Secondary 2 weight changes, mapped to the new weight: the rebalance instants. */
-function secondary2Activations(perSession: readonly { session: IsoDate; weight: Dec }[]): Map<IsoDate, Dec> {
-  const out = new Map<IsoDate, Dec>();
+/**
+ * Sessions at which the Secondary 2 weight changes, mapped to the new weight and to where the strategy's
+ * own fill would have acquired it: the rebalance instants.
+ *
+ * `acquireAt` mirrors `simulateFill` exactly, because the comparator is only decisive if it is bought the
+ * way the strategy is bought:
+ *
+ *   - `delayBars >= 1`: the fill lands at the OPEN of the activation session, so that session is split and
+ *     the new weight earns only `open -> close`.
+ *   - `delayBars === 0`: the fill lands at the DECISION CLOSE. `secondary2WeightSeries` still shifts the
+ *     activation one session forward (activating on the decision session itself would be look-ahead), and
+ *     the decision close is that session's PRIOR close - so the new weight holds the whole session,
+ *     overnight leg included, with nothing to split.
+ */
+function secondary2Activations(
+  perSession: readonly { session: IsoDate; weight: Dec }[],
+  delayBars: number,
+): Map<IsoDate, VolTargetActivation> {
+  const acquireAt = delayBars === 0 ? "priorClose" : "open";
+  const out = new Map<IsoDate, VolTargetActivation>();
   let prev: Dec | undefined;
   for (const { session, weight } of perSession) {
-    if (prev === undefined || !weight.eq(prev)) out.set(session, weight);
+    if (prev === undefined || !weight.eq(prev)) out.set(session, { weight, acquireAt });
     prev = weight;
   }
   return out;
 }
 
 /**
- * Turn per-decision Secondary 2 scale factors into the per-session equity weight the blend consumes.
+ * Turn per-decision Secondary 2 scale factors into the per-session equity weight path.
  *
  * A decision taken after the close of session `d` cannot change a holding until its orders fill, which the
  * simulator does `execution_delay_bars` sessions later. The weight therefore takes effect at
  * `sessions[index(d) + delayBars]` and holds until the next decision's effective session - the same timing
  * the strategy's own fills obey.
  *
- * Applying the weight at `d` itself would be look-ahead: `blendSeries` multiplies the weight by session `d`'s
- * own return, and the volatility that set the weight was estimated through `d`'s close. The shift is therefore
- * `max(delayBars, 1)`, never `delayBars`, so a zero-delay run cannot activate on the decision session. Sessions before the
- * first effective decision carry zero, matching a strategy that holds no equity before its first fill.
+ * Applying the weight at `d` itself would be look-ahead: the weight would earn the return ending at the very
+ * close whose data set it. The shift is therefore `max(delayBars, 1)`, never `delayBars`, so a zero-delay run
+ * cannot activate on the decision session; `secondary2Activations` marks that case `priorClose`, because a
+ * zero-delay fill lands at the decision close, which is the activation session's PRIOR close. Sessions before
+ * the first effective decision carry zero, matching a strategy that holds no equity before its first fill.
  *
- * **Known approximation, one session wide.** `simulateFill` fills at the OPEN of the fill session, so the
- * strategy's new position earns only that session's open-to-close move. `blendSeries` works on close-to-close
- * total-return indices, so activating here gives the new weight the whole previous-close-to-close move,
- * including the overnight or weekend gap the strategy's position did not exist for. The error is one gap per
- * rebalance, signed by whichever way gaps run.
- *
- * `EXPOSURE_MATCHED` shares the mechanics, but that does NOT make this an established convention: §11 defines
- * Secondary 1 as the realized average equity weight in each CALENDAR MONTH applied EX POST, while the code
- * uses a per-session post-fill weight. So Secondary 1 as implemented is itself not the registered benchmark,
- * and cannot be cited as precedent for Secondary 2's timing.
- *
- * This remains unresolved and is the owner's call, recorded in
- * `docs/analysis/2026-09-20-d51-primary-metric.md`: §16.1's second prong is a decisive input, and an exact
- * treatment needs open-aware fill-session returns, which the close-to-close total-return blend cannot express.
+ * This yields the weight PATH only. The index is built by `volatilityTargetedSeries`, which splits each
+ * rebalance session at the open instead of applying one weight to a whole close-to-close return - so the new
+ * weight never earns the overnight gap that preceded the fill that acquired it. That gap was the
+ * approximation D-51 could not live with, and it is now gone rather than documented.
  */
 function secondary2WeightSeries(
   perDecision: readonly { decisionSession: IsoDate; weight: Dec }[],
@@ -349,10 +357,10 @@ function secondary2WeightSeries(
     const at = indexOf.get(decisionSession);
     if (at === undefined) continue;
     // `max(delayBars, 1)`: with `delayBarsOverride: 0` the simulator fills at the DECISION CLOSE, so the
-    // position exists only from that close onward. Activating on the decision session itself would let
-    // `blendSeries` apply the weight to the previous-close-to-decision-close return - a volatility estimated
-    // AT that close earning the return ending at it. That is look-ahead, and the delay-sensitivity tier (F3)
-    // is exactly where a zero delay shows up.
+    // position exists only from that close onward. Activating on the decision session itself would apply the
+    // weight to the previous-close-to-decision-close return - a volatility estimated AT that close earning
+    // the return ending at it. That is look-ahead, and the delay-sensitivity tier (F3) is exactly where a
+    // zero delay shows up.
     const target = at + Math.max(delayBars, 1);
     if (target >= allSessions.length) continue; // decided too late in the window to ever take effect
     // Later decisions win when two map to the same session, matching the order they were taken.
@@ -606,7 +614,7 @@ export function runBacktest(input: BacktestInput): BacktestResult {
       : volatilityTargetedSeries({
           equity: { bars: s2Equity.bars, tr: s2Equity.tr },
           cash: { bars: s2Cash.bars, tr: s2Cash.tr },
-          activations: secondary2Activations(secondary2Weights),
+          activations: secondary2Activations(secondary2Weights, input.costs.delayBars),
         });
   const citability: string[] = [...(input.registrabilityReasons ?? [])];
   for (const l of ["SURVIVORSHIP_BIASED", "OPTIMISTIC_DELAY"]) if (labels.has(l)) citability.push(`run carries the ${l} label`);
