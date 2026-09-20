@@ -70,17 +70,32 @@ function walkForwardCharter(): Charter {
   return evalCharter((c) => {
     c.boundaries = {
       registered_history_start: "2026-01-02",
-      design: { start: "2026-01-02", end: "2027-03-31" },
-      holdout: { start: "2027-04-01", end: "2027-06-30" },
-      recent: { start: "2027-07-01", end: "2027-09-30" },
+      // Ends just after the second walk-forward window closes. The schedule needs a full year of design
+      // before its first evaluation window (`window_years` cannot go below 1), so the design segment is
+      // irreducible - but two rolling windows prove the pooling as well as three do, and the third cost a
+      // backtest on every run. Holdout and recent are kept to a fortnight each: neither is ever evaluated
+      // here, and every month of them is a month of synthetic market this suite has to build.
+      design: { start: "2026-01-02", end: "2027-03-09" },
+      holdout: { start: "2027-03-10", end: "2027-03-20" },
+      recent: { start: "2027-03-21", end: "2027-03-31" },
       walk_forward: { window_years: 1, step_months: 1, purge_days: 5, embargo_days: 2 },
     };
   });
 }
 
+/**
+ * The walk-forward evaluation, run once and shared.
+ *
+ * `runEvaluation` only reads the store, so a shared result cannot couple tests - and each run is several
+ * backtests. This suite is the slowest in the repository and its per-test timeout has no headroom, so a
+ * needless second evaluation is not free: it lands as contention on whatever else CI is running in
+ * parallel. The determinism test below deliberately takes its own second run.
+ */
+let sharedWalkForward: ReturnType<typeof runEvaluation> | undefined;
+
 let walkForwardMarket: ReturnType<typeof buildMarket> | undefined;
 function rollingMarket(): ReturnType<typeof buildMarket> {
-  walkForwardMarket ??= buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2027-09-30") });
+  walkForwardMarket ??= buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2027-03-31") });
   return walkForwardMarket;
 }
 
@@ -375,7 +390,8 @@ describe("runEvaluation", () => {
   // had never been evaluated (D-51 step 2, docs/analysis/2026-09-20-d51-primary-metric.md).
   it("evaluates section 16.1 once, over the walk-forward splits pooled", () => {
     const c = walkForwardCharter();
-    const r = evaluateKinds(c, rollingMarket(), ["WALK_FORWARD"]);
+    sharedWalkForward ??= evaluateKinds(c, rollingMarket(), ["WALK_FORWARD"]);
+    const r = sharedWalkForward;
     const planned = splitPlan(c).splits.filter((s) => s.kind === "WALK_FORWARD").map((s) => s.id);
     expect(planned.length).toBeGreaterThan(1);
 
@@ -412,10 +428,13 @@ describe("runEvaluation", () => {
   });
 
   it("produces no aggregate when no walk-forward split ran", () => {
-    // Narrowed to the design window, which is in-sample: there is no aggregate out-of-sample set to pool,
-    // and saying so with `undefined` is different from reporting a verdict computed from one window.
-    const r = evaluateKinds(walkForwardCharter(), rollingMarket(), ["DESIGN"]);
-    expect(r.splits.every((s) => s.kind === "DESIGN")).toBe(true);
+    // No walk-forward split means no aggregate out-of-sample set to pool, and saying so with `undefined` is
+    // different from reporting a verdict computed from one window. RECENT rather than DESIGN purely for
+    // cost: the design window here is fifteen months and the recent one is two weeks, and the code path is
+    // the same - `aggregateInputs` only ever collects WALK_FORWARD splits.
+    const r = evaluateKinds(walkForwardCharter(), rollingMarket(), ["RECENT"]);
+    expect(r.splits.length).toBeGreaterThan(0);
+    expect(r.splits.every((s) => s.kind === "RECENT")).toBe(true);
     expect(r.aggregate).toBeUndefined();
   });
 
@@ -423,7 +442,8 @@ describe("runEvaluation", () => {
     // Determinism, which is what a hash in a PR body is worth. That a CHANGED verdict moves the aggregate
     // hash is pinned in research-aggregate.test.ts, where the verdict can be varied directly.
     const c = walkForwardCharter();
-    const a = evaluateKinds(c, rollingMarket(), ["WALK_FORWARD"]);
+    sharedWalkForward ??= evaluateKinds(c, rollingMarket(), ["WALK_FORWARD"]);
+    const a = sharedWalkForward;
     const b = evaluateKinds(c, rollingMarket(), ["WALK_FORWARD"]);
     expect(a.reportHash).toBe(b.reportHash);
     expect(a.aggregate?.aggregateHash).toBe(b.aggregate?.aggregateHash);
