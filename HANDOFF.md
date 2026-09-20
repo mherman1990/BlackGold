@@ -7,13 +7,27 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 732 tests, identity check, and secret scan must pass before you change anything.
+4. `npm ci && npm run check`. All of lint, typecheck, 829 tests (unit 762, policy 41, temporal 26), identity check, and secret scan must pass before you change anything.
 
 ## 2. Repository guard
 
 If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not create Black Gold files anywhere else.
 
-## 3. Current position (2026-09-08)
+## 3. Current position
+
+**Read this first (2026-09-20).** The bullets below were written on 2026-09-08 and were not maintained since. They are kept because their detail about *how each piece works* is still accurate and useful, but several of their **status claims are superseded**. Where they disagree with this box, this box wins:
+
+- `main` is at `4f5d005`, not `03bf580`/`9238e94`. Releases through **0.1.12** are published; the app is installed and running on the Pi.
+- The charter is signed at **0.2.0** (owner, 2026-09-12, `code_commit 115dae4`, D-50), not awaiting signature. Its default bar source is Tiingo, not Alpaca. 0.2.0 inherits **none** of 0.1.0's evidence.
+- **Market data is ingested** and refreshed nightly. "No data has been ingested" appears below and in `STATE.md`'s older rows; it is no longer true.
+- Phase 4's four engines, Phase 5's decision gate, and **D-53 slices 1, 2a, 2b, 3a-1, 3a-2 decoder and 3a-2 fetch** (PRs #81, #82, #83, #85, #86, #87) are merged. Remaining D-53 slices: 3a-3, 2c, 3b, 4.
+- Two `research evaluate` runs (2026-09-13) exercised the machinery end to end. Both are **non-evidential** (`citableAsEvidence: false`, `UNVERIFIED_SINGLE_SOURCE`). No experiment is registered; the holdout has never been opened. Neither may be cited.
+- **The blocker to a citable result is reconciled ≥2-source corporate actions**, not bars, not code. See `docs/analysis/2026-09-13-path-to-citable-evidence.md`.
+- **Stranded work is a recurring failure mode here, so check for it.** Two instances so far: `199e25e` (D-53 slice 2a), since merged as PR #82; and `7e30599` on `claude/busy-meitner-as415q`, a whole docs-reconciliation pass that sat six days with no PR while the charter banner it corrected stayed misleading on `main`. Both were committed and pushed but never given a PR, which makes them invisible to every later session. Before rebuilding anything, look for a branch that already has it.
+- **79 `claude/*` branches** are still on the remote; 39 are verified strict ancestors of `main` and safe to delete, the rest need a per-branch content check. This session's credential cannot delete refs.
+- `docs/analysis/2026-09-20-blocker-queue.md` is the fastest way to see what is blocked on Matt and what is not.
+
+### Position as recorded 2026-09-08 (detail still useful, status claims superseded above)
 
 - Everything through Phase 2, plus release prep (PR #8) and the Phase 0 seal completion (PR #9), is merged to `main` at `03bf580`.
 - Phase 2 machinery took two PRs to land: PR #5 merged into `claude/phase-01-research-kernel` twelve seconds after PR #4 had merged that branch forward, so it never reached `main`, and PR #6 carried the same tree there (D-36). When resuming, verify rather than assume: `git merge-base --is-ancestor <branch> origin/main`, and check `git diff origin/main <branch>` is empty.
@@ -39,6 +53,8 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 ## 4. What Matt does next
 
+**Superseded list follows (2026-09-20).** Items 2, 6, 7 and 8 below are **done**: images through 0.1.12 are published and the app runs on the Pi, from which it follows the GHCR package was made public (an inference from the app working, not a checked setting); the data credentials are supplied and ingesting nightly; D-32 is confirmed; the charter is signed (twice — 0.1.0 and 0.2.0). The live list is now `STATE.md` → "Next authorized action", whose head item is **reconciled ≥2-source corporate-action curation** — the one thing standing between this repository and a citable result, and data work rather than engineering. Item 1 (default branch + protection + the `v*` tag contradiction) and item 5 (the open facts D-12, D-16, D-04) are still open exactly as written. Item 3 understates the branch cleanup: it is 79 branches, not three (39 verified safe to delete).
+
 1. GitHub -> Settings -> Branches: set `main` as default; add a ruleset for `main` requiring a PR, one approval, status checks (`checks`, `image` from `ci.yml`), no force pushes.
 
    **Decide about `v*` tags rather than inheriting the current accident.** This item used to say "restrict `v*` tags to the owner", which directly contradicts D-37's grant of tag creation to Claude Code - and today the effect is already in force, not by a ruleset but because the session credential is refused tag refs at all. Two coherent options, and the tension should be resolved on purpose:
@@ -55,6 +71,8 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 8. ~~Resolve the charter's four open decisions, decide XLE, and sign the approval block.~~ **Done** — resolved 2026-09-07 (D-39) and signed 2026-09-08 (D-48). `node packages/core/dist/main.js charter show --path strategies/etf-trend-vol/charter.yaml` now reports `registrable: true`; a registered result still needs ingested data (step 6).
 
 ## 5. When the charter is approved and data is ingested
+
+**Both preconditions in this heading are now met** (charter signed at 0.2.0 on 2026-09-12; Tiingo bars ingested and refreshed nightly), so this procedure is live rather than hypothetical. One addition it predates: a run reading Tiingo's automated corporate actions is stamped `UNVERIFIED_SINGLE_SOURCE` and can never be promotion evidence, so curate reconciled ≥2-source actions **before** step 5 if the result is meant to be citable. Registering on single-source actions is not wrong — it is simply not citable, and registration is one-way.
 
 Do these in order. Steps 1 to 4 are reversible; step 5 is not.
 

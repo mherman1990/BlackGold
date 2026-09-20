@@ -76,8 +76,12 @@ describe("charter.yaml", () => {
 describe("registrability gate", () => {
   it("now accepts the tracked charter: the owner signed the approval block", () => {
     // The owner resolved all four open decisions and settled the XLE condition on 2026-09-07 (D-39), then signed
-    // the approval block on 2026-09-08 (state APPROVED, charter_version 0.1.0, code_commit 474d0dc, ref
-    // docs/DECISIONS.md#D-39). This was the tripwire that forced signing to be a visible, reviewed change; now
+    // the approval block on 2026-09-08 (charter_version 0.1.0, code_commit 474d0dc, ref docs/DECISIONS.md#D-39).
+    // The tracked charter has since been re-cut to 0.2.0 to adopt Tiingo bars, and the owner signed that version
+    // too on 2026-09-12 (code_commit 115dae4, ref docs/DECISIONS.md#D-50). The assertions below are deliberately
+    // version-agnostic: they pin the signed, registrable *state*, not one version's signature, so a future
+    // charter version starting at DRAFT fails this test until the owner signs it. This was the tripwire that
+    // forced signing to be a visible, reviewed change; now
     // that the signature exists it asserts the signed, registrable state, and it still guards the other
     // direction - unsigning the charter must fail closed again. Signing is the owner's act, beyond any grant of
     // autonomy in CLAUDE.md; reconciling this test to a signature the owner already made is not.
