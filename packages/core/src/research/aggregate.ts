@@ -205,14 +205,14 @@ export type AggregateInput = {
 export function aggregateWalkForward(input: AggregateInput): AggregateWalkForward {
   const c = input.charter;
 
-  for (const s of input.splits) {
-    if (s.kind !== "WALK_FORWARD") {
+  for (const split of input.splits) {
+    if (split.kind !== "WALK_FORWARD") {
       throw new AggregateScopeError(
-        `split ${s.splitId} is ${s.kind}; section 16.1 is defined on the walk-forward out-of-sample set only`,
+        `split ${split.splitId} is ${split.kind}; section 16.1 is defined on the walk-forward out-of-sample set only`,
       );
     }
-    if (!input.plannedSplitIds.includes(s.splitId)) {
-      throw new AggregateScopeError(`split ${s.splitId} is not in the charter's walk-forward schedule`);
+    if (!input.plannedSplitIds.includes(split.splitId)) {
+      throw new AggregateScopeError(`split ${split.splitId} is not in the charter's walk-forward schedule`);
     }
   }
 
@@ -226,21 +226,21 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
   });
 
   const seen = new Map<IsoDate, string>();
-  for (const s of ordered) {
-    for (const session of s.sessions) {
+  for (const split of ordered) {
+    for (const session of split.sessions) {
       const owner = seen.get(session);
       if (owner !== undefined) {
-        throw new AggregateScopeError(`splits ${owner} and ${s.splitId} both score ${session}; the pool would double-count it`);
+        throw new AggregateScopeError(`splits ${owner} and ${split.splitId} both score ${session}; the pool would double-count it`);
       }
-      seen.set(session, s.splitId);
+      seen.set(session, split.splitId);
     }
   }
 
   const pooledSessions = [...seen.keys()].sort();
   const pooledExcess: number[] = [];
-  for (const s of ordered) for (const p of s.pairedExcess) pooledExcess.push(p.value);
+  for (const split of ordered) for (const p of split.pairedExcess) pooledExcess.push(p.value);
 
-  const splitIds = ordered.map((s) => s.splitId);
+  const splitIds = ordered.map((split) => split.splitId);
   const plannedSplitIds = [...input.plannedSplitIds];
   const missing = plannedSplitIds.filter((id) => !splitIds.includes(id));
   const complete = missing.length === 0 && plannedSplitIds.length > 0;
@@ -277,22 +277,28 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
   // Collected, not defaulted. A `?? ZERO` here would turn a split with no comparator into a split whose
   // comparator returned nothing - a flat leg the strategy would beat for free - which is exactly the
   // substitution the whole Secondary 2 work exists to prevent.
+  //
+  // The loop variable is spelled out rather than abbreviated to a single letter, and must stay that way.
+  // gitleaks' `vault-service-token` rule matches the legacy Vault shape - one letter, a dot, then exactly
+  // 24 alphanumerics before whitespace - and the field read just below is exactly 24 characters long, so a
+  // one-letter receiver here spells a credential to the scanner and fails CI. (Writing the offending pair
+  // out in this comment would trip it just as readily; an earlier version of this note did.)
   const secondary2UnmeasuredReasons: string[] = [];
   const secondary2Returns: Dec[] = [];
-  for (const s of ordered) {
-    if (s.secondary2TotalReturn === undefined) {
+  for (const split of ordered) {
+    if (split.secondary2TotalReturn === undefined) {
       secondary2UnmeasuredReasons.push(
-        `${s.splitId}: ${s.secondary2UnusableReason ?? "the registered Secondary 2 was not available for this split"}`,
+        `${split.splitId}: ${split.secondary2UnusableReason ?? "the registered Secondary 2 was not available for this split"}`,
       );
     } else {
-      secondary2Returns.push(s.secondary2TotalReturn);
+      secondary2Returns.push(split.secondary2TotalReturn);
     }
   }
   if (ordered.length === 0) secondary2UnmeasuredReasons.push("no walk-forward split was pooled");
 
   let secondary2: AggregateSecondary2 | undefined;
   if (secondary2UnmeasuredReasons.length === 0) {
-    const candidateTotalReturn = linkTotalReturns(ordered.map((s) => s.candidateTotalReturn));
+    const candidateTotalReturn = linkTotalReturns(ordered.map((split) => split.candidateTotalReturn));
     const secondary2TotalReturn = linkTotalReturns(secondary2Returns);
     const excessReturn = candidateTotalReturn.minus(secondary2TotalReturn);
     secondary2 = {
@@ -358,11 +364,11 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
   // ---- Citability and caveats ---------------------------------------------------------------------
   const citabilityReasons: string[] = [];
   const promotionBlocking = new Set<string>();
-  for (const s of ordered) {
-    for (const code of s.promotionBlockingCodes) promotionBlocking.add(code);
-    if (!s.citableAsEvidence) {
-      for (const reason of s.citabilityReasons) citabilityReasons.push(`${s.splitId}: ${reason}`);
-      if (s.citabilityReasons.length === 0) citabilityReasons.push(`${s.splitId}: not citable as promotion evidence`);
+  for (const split of ordered) {
+    for (const code of split.promotionBlockingCodes) promotionBlocking.add(code);
+    if (!split.citableAsEvidence) {
+      for (const reason of split.citabilityReasons) citabilityReasons.push(`${split.splitId}: ${reason}`);
+      if (split.citabilityReasons.length === 0) citabilityReasons.push(`${split.splitId}: not citable as promotion evidence`);
     }
   }
   if (!complete) {
