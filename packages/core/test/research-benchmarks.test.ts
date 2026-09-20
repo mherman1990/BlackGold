@@ -185,7 +185,12 @@ describe("volatilityTargetedSeries (ALPHA_CHARTER section 11 Secondary 2)", () =
   it("earns NONE of the step ending at the close it was acquired on", () => {
     // The look-ahead invariant, now structural rather than clamped: a weight acquired at day 2's close was set
     // by data through that close, so it must earn nothing of the day-1-to-day-2 move and everything after.
-    const rising = leg([[1, 100, 100], [2, 110, 110], [3, 110, 121]]);
+    //
+    // Day 2 deliberately has BOTH an overnight gap (100 -> 105) and an intraday move (105 -> 110). Without
+    // both, a close instant that wrongly split day 2 would still leave the index at 1 - the old weight would
+    // take an all-overnight move and the new weight an empty intraday leg - and this assertion would pass on
+    // exactly the look-ahead it exists to catch. A fixture where `open == close` cannot test this at all.
+    const rising = leg([[1, 100, 100], [2, 105, 110], [3, 110, 121]]);
     const s = volatilityTargetedSeries({ equity: rising, cash, activations: [atClose("1", 2)] });
     expect(s.series.points[1]?.trIndex.toFixed(8)).toBe(dec("1").toFixed(8));
     expect(s.series.points[2]?.trIndex.toFixed(8)).toBe(dec("1.1").toFixed(8));
