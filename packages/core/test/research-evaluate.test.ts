@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { Dec } from "@blackgold/shared";
 import { fileURLToPath } from "node:url";
 import { loadCharterFile, registrabilityReasons, type Charter } from "../src/strategy/charter.ts";
 import { runEvaluation } from "../src/research/evaluate.ts";
@@ -144,19 +143,27 @@ describe("runEvaluation", () => {
   // ALPHA_CHARTER section 11 Secondary 2: "VTI scaled to a 10% ex-ante volatility target with the same
   // 63-day estimator, remainder in BIL". Built from the strategy's own covariance window so the estimator is
   // literally the registered one, and timed to the strategy's fills so the weight cannot be look-ahead.
-  it("builds the registered Secondary 2 and reports section 16.1's second prong", () => {
+  it("builds the registered Secondary 2 as a reporting benchmark", () => {
     const r = evaluate(evalCharter(), cleanMarket());
     const split = r.splits[0];
-    expect(split?.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
-    // Excess return (section 13's registered metric), not a Sharpe difference: a decimal string, and it
-    // must equal the strategy's total return less Secondary 2's, exactly.
-    expect(split?.primaryVersusSecondary2).toMatch(/^-?\d+\.\d{8}$/);
-    const b1 = split?.arms.find((a) => a.arm === "B1_DETERMINISTIC");
     const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
-    expect(b1).toBeDefined();
     expect(s2).toBeDefined();
-    if (b1 !== undefined && s2 !== undefined && split?.primaryVersusSecondary2 !== undefined) {
-      expect(new Dec(split.primaryVersusSecondary2).toFixed(8)).toBe(new Dec(b1.totalReturn).minus(new Dec(s2.totalReturn)).toFixed(8));
+    // Its section 13 metrics are populated like any other benchmark's.
+    expect(s2?.totalReturn).toMatch(/^-?\d+\.\d{8}$/);
+    expect(s2?.maxDrawdown).toMatch(/^-?\d+\.\d{8}$/);
+  });
+
+  it("withholds section 16.1's second prong while the comparator's fill timing is biased", () => {
+    // Owner decision 2026-09-20, and fail-closed rather than a gap: blendSeries activates the weight on the
+    // fill session and applies it to that session's whole previous-close-to-close return, while simulateFill
+    // acquires at the OPEN - so Secondary 2 earns a pre-fill gap once per rebalance. It also restricts to
+    // sessions common to both legs, so a missing session can stretch an interval back across the decision.
+    // Neither belongs in a number that can reject a hypothesis, so the prong stays undefined until the
+    // timing is exact. Publishing the series for reporting is fine; feeding the falsifier is not.
+    const r = evaluate(evalCharter(), cleanMarket());
+    for (const split of r.splits) {
+      expect(split.benchmarks.map((b) => b.arm)).toContain("SECONDARY_2_VOL_TARGET_PRIMARY");
+      expect(split.primaryVersusSecondary2).toBeUndefined();
     }
   });
 

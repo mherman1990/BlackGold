@@ -864,7 +864,16 @@ that did not exist when this entry was first written:
 2. **Evaluate §16.1 over the aggregate walk-forward out-of-sample set**, with the splits pooled - not per
    split.
 
-   **Resolved along the way (Matt, 2026-09-20): the second prong is measured as EXCESS RETURN**, not as a
+   **Resolved along the way (Matt, 2026-09-20): the benchmark ships, the prong is WITHHELD.** Secondary 2 is
+   published as a reporting comparator with its §13 metrics, but `primaryVersusSecondary2` stays `undefined`
+   until its fill-session timing is exact, so nothing decisive consumes a biased number. Two leaks make it
+   biased today: `blendSeries` activates the weight on the fill session and applies it to that session's whole
+   previous-close-to-close return while `simulateFill` acquires at the OPEN; and it restricts to sessions
+   common to both legs, so a session missing from either can stretch a return interval back across the
+   decision. Both are fixable from raw opens `runBacktest` already loads - that is the work that restores the
+   prong.
+
+   **Also resolved (Matt, 2026-09-20): when restored, the prong is measured as EXCESS RETURN**, not as a
    Sharpe difference. §13 registers "excess return versus Secondary 1 and Secondary 2"; §16.1 says only
    "fails to beat Secondary 2" without naming a measure, and the first implementation used the Sharpe
    difference by parallel with the first prong. The two can disagree - higher return with lower Sharpe - and

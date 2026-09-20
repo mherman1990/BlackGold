@@ -144,16 +144,33 @@ That leaves a second, larger finding: **two of the charter's registered comparat
 Secondary 2 did not exist until this PR, and Secondary 1 is a per-session approximation of a monthly ex-post
 definition. Both feed §13's registered metrics.
 
-On the gap timing itself, two defensible positions remain:
+**Resolved by the owner, 2026-09-20: publish the benchmark, withhold the prong.** Secondary 2 ships as a
+reporting comparator with its §13 metrics, and `primaryVersusSecondary2` stays `undefined` until the timing is
+exact, so **nothing decisive consumes a biased number**. That is fail-closed in the project's usual sense:
+unknown state does not get to authorise anything.
+
+Two further points closed the argument for deferring a *fix* rather than the prong:
+
+- **The data is already there.** `runBacktest` loads both VTI and BIL as `EntitySeries` carrying raw opens and
+  corporate actions, so the fill-session return can be split at the open without new market data. My claim
+  that a close-to-close blend "cannot express" it was wrong.
+- **A second, related leak.** `blendSeries` restricts to sessions common to both legs, so a session missing
+  from either (including a `STALE_BAR` dropped from its total-return series) can stretch a return interval
+  back across the decision — a calendar-session clamp does not prevent it. `GAP` and `STALE_BAR` do not bar
+  promotion evidence, so labelling does not contain it either.
+
+Both are fixed by building Secondary 2 as its own index from the raw bars rather than feeding a
+calendar-indexed weight into `blendSeries`. That is the work that restores the prong, and it is not done here.
+
+The two positions weighed before that decision:
 
 - **Accept it.** Both secondaries share the bias, so comparisons between them are consistent, and a
   frictionless index blend is an approximation by construction anyway.
 - **Fix it.** §16.1's second prong is a *decisive* input, and a systematic few-hundred-gap bias in a decisive
   comparator is a different thing from a cosmetic one in a reporting benchmark.
 
-Recorded rather than chosen, because it is a scope-and-standards judgement and an exact treatment needs
-open-aware fill-session returns that a close-to-close total-return blend cannot express. Found by Codex review
-of this PR.
+Found by Codex review of this PR — across three rounds, each of which refuted the reason given for deferring
+in the round before.
 
 **A related charter ambiguity — resolved by the owner, 2026-09-20: excess return.** §13 lists "**excess
 return** versus Secondary 1 and Secondary 2" among the registered metrics, while §16.1 says only that the
