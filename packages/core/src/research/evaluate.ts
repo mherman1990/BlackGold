@@ -71,7 +71,7 @@ export type SplitEvaluation = {
   /** ALPHA_CHARTER F2: strategy max drawdown against `max_drawdown_ratio` x the primary benchmark's. */
   drawdown: DrawdownCheck | undefined;
   /**
-   * Sharpe difference against the benchmark the code labels `VOLATILITY_CONTROLLED_PRIMARY`.
+   * Sharpe difference against the benchmark the code builds as `APPROX_AVERAGE_EXPOSURE_PRIMARY`.
    *
    * **This is NOT the charter's registered Secondary 2, and must not be read as section 16.1's second
    * prong.** Section 11 defines Secondary 2 as "VTI scaled to a 10% ex-ante volatility target with the
@@ -86,15 +86,22 @@ export type SplitEvaluation = {
    */
   approximateVersusAverageExposureBenchmark: number | undefined;
   /**
-   * Which of the charter's falsifiers this split actually evaluated. F3, F4 and F5 need the adverse-cost
-   * and extra-delay tiers, the drop-best-year refit, and the full sensitivity grid - none of which a
-   * single evaluation run produces - so they are named here as not evaluated rather than assumed to pass.
+   * Which of the charter's falsifiers this split actually evaluated - which is **F2 only**.
    *
-   * Section 16.1's decisive falsifier is deliberately absent from this surface. It is defined "on the
-   * aggregate walk-forward out-of-sample set", so it is not a per-split verdict: emitting one for the
-   * DESIGN split would state a rejection verdict over in-sample data, and several walk-forward splits
-   * would produce contradictory verdicts where the charter registers exactly one. Evaluating it needs
-   * the walk-forward splits pooled AND the registered Secondary 2 implemented.
+   * **F1 is not evaluable per split.** Section 13 defines the primary-metric pass rule "on the aggregate
+   * walk-forward out-of-sample set". DESIGN is in-sample and a single walk-forward window is not the
+   * aggregate, so the adjacent `primaryMetric.passes` is a per-window **diagnostic**, not an F1 verdict.
+   * Saying a split "fails F1" is a category error.
+   *
+   * F3, F4 and F5 need the adverse-cost and extra-delay tiers, the drop-best-year refit, and the full
+   * sensitivity grid; F6 is prospective. None is produced by a single evaluation run.
+   *
+   * Section 16.1's decisive falsifier is absent for the same aggregate-scope reason, and additionally
+   * because the registered Secondary 2 it names is not implemented - see
+   * `docs/analysis/2026-09-20-d51-primary-metric.md`.
+   *
+   * F2 is listed as evaluated because section 16.2 states it without an aggregate qualifier, so a
+   * per-window drawdown ratio is a faithful reading. If that is wrong it belongs in the same bucket.
    */
   falsifiersEvaluated: string[];
   falsifiersNotEvaluated: string[];
@@ -269,8 +276,8 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
       benchmarks: report.benchmarks.map(armSummary),
       drawdown: drawdownCheck(c, report),
       approximateVersusAverageExposureBenchmark: report.primaryVersusVolatilityControlled,
-      falsifiersEvaluated: ["F1", "F2"],
-      falsifiersNotEvaluated: ["F3", "F4", "F5", "F6"],
+      falsifiersEvaluated: ["F2"],
+      falsifiersNotEvaluated: ["F1", "F3", "F4", "F5", "F6"],
     });
 
     notify({ phase: "split-done", total: selected.length, index, splitId: split.id, kind: split.kind });

@@ -12,10 +12,12 @@ changes the question. The short version:
 2. The charter's **decisive** falsifier is a conjunction, and only one half of it has ever been computed.
 3. `research evaluate` — the command that produced the evidence — **dropped every number except the primary
    metric**, which is why nobody noticed either fact.
-4. So "the strategy fails its own gate" is imprecise. It fails **F1**. Whether §16.1 rejects it is **unknown**.
-5. **And it cannot be computed today**, because the benchmark §16.1 names — Secondary 2 — is not
-   implemented. What the code labels `VOLATILITY_CONTROLLED_PRIMARY` is a different series. (Found by
-   Codex review of the first draft of this note; see §2a.)
+4. So "the strategy fails its own gate" is wrong twice over. The DESIGN primary-metric number is a
+   **per-window diagnostic, not an F1 verdict** — §13 defines the pass rule "on the aggregate walk-forward
+   out-of-sample set", and DESIGN is in-sample (§2c). And §16.1's status is not merely unknown.
+5. **§16.1 cannot be computed today at all**, because the benchmark it names — Secondary 2 — is not
+   implemented (§2a). (Both this and the point above were found by Codex review of earlier drafts of this
+   note, not by the drafts themselves.)
 
 Changing the primary metric now, having seen that it failed, would be metric-shopping. Computing a number the
 charter preregistered and nobody looked at is not. That ordering is the whole recommendation.
@@ -111,16 +113,29 @@ exactly that, and the recommendation below told the owner to read it from `--spl
 Both mistakes are removed: `research evaluate` now emits **no** §16.1 verdict at any level, and the
 approximate benchmark is labelled as a diagnostic rather than the prong.
 
+## 2c. F1 is aggregate-scoped too, so "DESIGN fails F1" is a category error
+
+§13: "Pass threshold: point estimate at least +0.10 and the bootstrap interval excludes zero **on the
+aggregate walk-forward out-of-sample set**."
+
+DESIGN is in-sample. A single walk-forward window is not the aggregate. So the −0.19 on DESIGN is a
+**per-window diagnostic**, not an F1 verdict — and every earlier statement in this session that the strategy
+"fails F1", including in earlier drafts of this note, overstated what was measured. `research evaluate` now
+lists F1 under `falsifiersNotEvaluated` with that reason, and `primaryMetric.passes` stays what it always
+was: a diagnostic.
+
 ## 3. What this means for the claim "it fails its own gate"
 
-It fails **F1**: primary −0.19 against a +0.10 threshold, CI straddling zero, on DESIGN. That is real and it is
-in-sample, which makes it worse rather than better.
+Almost nothing it was taken to mean.
 
-It does **not** establish §16.1 rejection. Under §16.1 the strategy is rejected only if it *also* fails to beat
-Secondary 2. If it beats Secondary 2, the charter says **owner review**, not rejection. Nobody has that number.
+- The DESIGN primary-metric number (−0.19, CI straddling zero) is real, and in-sample, which makes it
+  unflattering. But it is **not** an F1 verdict, because F1 is defined on the aggregate walk-forward set.
+- §16.1 rejection is not established and **cannot currently be computed**, because Secondary 2 does not
+  exist in code.
 
-There is therefore a cheap, uncontaminated, preregistered measurement standing between the current state and
-any decision about metrics.
+So the honest statement is: on the in-sample design window the strategy's Sharpe difference against VTI was
+negative, and none of the charter's registered promotion or rejection tests has yet been run at the scope the
+charter defines them at.
 
 ## 4. Why not to change the primary metric first
 
@@ -202,12 +217,23 @@ average-exposure benchmark as a diagnostic and explicitly not as §16.1's second
 **Does not:** change any metric, threshold, falsifier, or charter value; implement Secondary 2; emit any §16.1
 verdict at any level; compute the real numbers (that needs the Pi's store); or decide D-51.
 
-**Two errors this note made in its first draft, both caught by Codex review and both corrected above:** it
-claimed the second prong merely needed surfacing (it needs Secondary 2 built first — §2a), and the PR emitted
-a per-split §16.1 verdict that would have stated a rejection over in-sample data (§2b). Both are worth
-recording rather than quietly fixing: each was an attempt to *increase* rigour that would instead have put a
-falsely authoritative verdict in front of the owner. That is the failure mode this project's review
-requirements exist for, and it has now happened three times in one session on three different documents.
+**A known defect this surfaced, not fixed here:** `evaluateFalsifiers` (`robustness.ts`) computes
+`decisiveRejection` from the same unregistered approximation, and treats a missing second prong as "does not
+beat". Nothing calls it from the CLI today, so it is latent — but as written it would reject a hypothesis
+against a comparator the charter never registered. It belongs with the Secondary 2 work.
+
+**Errors this note made across three drafts, all caught by Codex review and all corrected above:**
+
+1. Claimed the second prong merely needed surfacing. It needs Secondary 2 built first (§2a).
+2. Emitted a per-split §16.1 verdict that would have stated a rejection over in-sample data (§2b).
+3. Kept calling the DESIGN result "fails F1" after removing the §16.1 verdict, when F1 is aggregate-scoped
+   by the same reasoning (§2c) — the error was fixed at one level and left at the one below it.
+4. Corrected this analysis but left the D-51 register entry asserting the original, wrong version — and
+   `docs/DECISIONS.md` is the more authoritative document of the two.
+
+Each was an attempt to *increase* rigour that would instead have put a falsely authoritative number in front
+of the owner, and each was found by an independent reviewer rather than by the pass that wrote it. That is
+the concrete case for the review coverage `STATE.md` has been asking for since PR #9.
 
 Worth stating plainly: the underlying situation is unchanged and may still be bad. The strategy failed F1
 in-sample, and RECENT looks poor on both F1 and F2. Nothing here is an argument that the strategy works. It is

@@ -132,12 +132,16 @@ describe("runEvaluation", () => {
     const r = evaluate(evalCharter(), cleanMarket());
     const split = r.splits[0];
     // F3/F4/F5 need the cost and delay tiers, the drop-best-year refit and the full grid; F6 is prospective.
-    expect(split?.falsifiersEvaluated).toEqual(["F1", "F2"]);
-    expect(split?.falsifiersNotEvaluated).toEqual(["F3", "F4", "F5", "F6"]);
+    // F1 is NOT per-split: section 13 defines the primary-metric pass rule on the aggregate walk-forward
+    // out-of-sample set, so primaryMetric.passes on DESIGN (in-sample) or one walk-forward window is a
+    // diagnostic, never an F1 verdict.
+    expect(split?.falsifiersEvaluated).toEqual(["F2"]);
+    expect(split?.falsifiersNotEvaluated).toContain("F1");
+    expect(split?.falsifiersNotEvaluated).toEqual(["F1", "F3", "F4", "F5", "F6"]);
   });
 
   it("labels the average-exposure benchmark as a diagnostic, not section 16.1's second prong", () => {
-    // buildResultReport builds VOLATILITY_CONTROLLED_PRIMARY by holding VTI at the strategy's CONSTANT
+    // buildResultReport builds this arm by holding VTI at the strategy's CONSTANT
     // average realized equity weight, and its own comment says "Approximated here". The charter's section 11
     // Secondary 2 is "VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator" - a
     // dynamically re-scaled series. The approximation is a coarser Secondary 1, so this surface must not
@@ -157,6 +161,7 @@ describe("runEvaluation", () => {
     for (const split of r.splits) {
       expect(split).not.toHaveProperty("decisiveRejection");
       expect(split).not.toHaveProperty("decisiveRejectionDetail");
+      expect(split.falsifiersEvaluated).not.toContain("F1");
       expect(split.falsifiersEvaluated).not.toContain("F6");
     }
   });
@@ -167,7 +172,7 @@ describe("runEvaluation", () => {
     });
     const r = evaluate(noSecondary, cleanMarket());
     const split = r.splits[0];
-    expect(split?.benchmarks.map((b) => b.arm)).not.toContain("VOLATILITY_CONTROLLED_PRIMARY");
+    expect(split?.benchmarks.map((b) => b.arm)).not.toContain("APPROX_AVERAGE_EXPOSURE_PRIMARY");
     expect(split?.approximateVersusAverageExposureBenchmark).toBeUndefined();
   });
 

@@ -834,19 +834,40 @@ analysis in `docs/analysis/2026-09-20-d51-primary-metric.md`. Three findings:
 1. **The charter already values drawdown.** §4's hypothesis claims the strategy raises "Sharpe **and
    Calmar**"; §13 lists Calmar and the drawdown ratio among the secondary risk metrics; and **F2** already
    caps max drawdown at 0.75x the benchmark's. What is missing is a falsifier on Calmar, not the intent.
-2. **The decisive falsifier (§16.1) is a conjunction, and half of it has never been computed.** The
-   hypothesis is rejected only if the strategy fails the primary metric against VTI **and** fails to beat
-   Secondary 2 (volatility-controlled VTI). If either passes, §16.1 sends the charter to owner review. The
-   code implements this (`robustness.ts`, `decisiveRejection`), and `buildResultReport` computes the second
-   prong on every run - but `runEvaluation` discarded it, so `research evaluate` could only ever report the
-   primary metric. The 2026-09-13 note therefore reports F1 and nothing else.
-3. **So "the strategy fails its own gate" is imprecise.** It fails F1. Whether §16.1 rejects it is unknown.
+2. **The decisive falsifier (§16.1) is a conjunction, and its second prong cannot be computed at all
+   today.** The hypothesis is rejected only if the strategy fails the primary metric against VTI **and**
+   fails to beat Secondary 2. If either passes, §16.1 sends the charter to owner review. But §11 registers
+   Secondary 2 as "VTI scaled to a **10% ex-ante volatility target with the same 63-day estimator**,
+   remainder in BIL", and **nothing in the codebase implements that**. What `buildResultReport` builds is
+   VTI held at the strategy's single *constant average* equity weight - a coarser Secondary 1, not a
+   volatility-targeted series - and its own comment said "Approximated here". So §16.1's second prong has
+   never been computed because the benchmark it names does not exist in code.
+3. **§16.1 is also an aggregate verdict, not a per-split one** ("on the aggregate walk-forward out-of-sample
+   set"), and by §13 **so is the primary-metric pass rule**. DESIGN is in-sample and one walk-forward window
+   is not the aggregate, so a per-split `passes` is a diagnostic and "DESIGN fails F1" is a category error.
+4. **So "the strategy fails its own gate" is wrong twice over.** The DESIGN primary-metric number is a
+   diagnostic, not an F1 verdict, and whether §16.1 rejects is not merely unknown - it is currently
+   uncomputable.
 
-**Recommended ordering, which changes no charter value:** run the preregistered second prong first (the
-reporting fix ships with this update), then decide. Selecting a new primary metric after seeing that the
-current one failed is metric-shopping; reporting a secondary the charter already committed to is not. If the
-strategy trails Secondary 2, §16.1 rejects and redefining success would be rescuing a rejected hypothesis. If
-it beats Secondary 2, the charter already routes to owner review and D-51 becomes a cleaner question.
+**Recommended ordering, which changes no charter value.** Three steps, and the first two are prerequisites
+that did not exist when this entry was first written:
+
+1. **Implement the registered Secondary 2.** Purely mechanical: §11 freezes the estimator (63-day), the
+   target (10% ex-ante) and the cash leg (BIL), so nothing is chosen after the fact and nothing is
+   contaminated.
+2. **Evaluate §16.1 over the aggregate walk-forward out-of-sample set**, with the splits pooled - not per
+   split.
+3. **Then** decide the metric question. Selecting a new primary metric after seeing that the current one
+   failed is metric-shopping; reporting a secondary the charter already committed to is not.
+
+**Known defect this surfaced:** `evaluateFalsifiers` (`robustness.ts`) computes `decisiveRejection` from that
+same unregistered approximation, and treats a missing prong as "does not beat". Nothing calls it from the CLI
+today, so it is latent - but it would reject a hypothesis against a comparator the charter never registered.
+Fixing it belongs with the Secondary 2 work.
+
+**Correction history.** This entry's first version (2026-09-20) said the second prong was computed on every
+run and merely needed surfacing, and recommended running it. That was wrong on both counts and is corrected
+above; the errors were found by Codex review, not by the sessions that wrote them.
 
 **Also surfaced: §16.1 and §17 contradict each other** when the primary fails but Secondary 2 passes (§16.1
 says owner review; §17 says "REJECTED, never to ACTIVE"). Dormant only while the second prong is unmeasured.
