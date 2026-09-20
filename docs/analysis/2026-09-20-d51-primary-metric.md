@@ -186,16 +186,18 @@ number is treated as decisive. It is not a code question.
 ## 2e. Step 2: §16.1 is now evaluated once, at the scope the charter defines (2026-09-20)
 
 `packages/core/src/research/aggregate.ts` supplies the missing scope. `runEvaluation` collects each
-walk-forward split's paired daily excess series and its arm/benchmark total returns while the backtest and its
-report are both in hand, and `aggregateWalkForward` returns one verdict under `EvaluationReport.aggregate`:
+walk-forward split's Sharpe input legs and its arm/benchmark total returns while the backtest and its report
+are both in hand, and `aggregateWalkForward` returns one verdict under `EvaluationReport.aggregate`:
 `REJECT`, `OWNER_REVIEW`, or `UNMEASURED`. §2b still holds — there is no per-split §16.1 outcome and none was
 added.
 
-**How the two prongs are pooled.**
+**How the two prongs are pooled.** *(This table described the superseded statistic until Codex caught it on
+review; §2f corrected the code and left the section that documents the code saying the old thing — which is
+exactly how a future reconstruction gets steered back to it.)*
 
 | Prong | Pooled how |
 |---|---|
-| §16.1 first / §13 primary metric | The per-split **paired daily excess series are concatenated in session order** and the charter's stationary block bootstrap (21 sessions, 90%) runs once on the result. Pooling the *input* rather than averaging per-split *results* is what makes this the same statistic at a wider scope instead of a second statistic that resembles it, so `pairedExcessSeries` is exported from `report.ts` and both scopes call it. |
+| §16.1 first / §13 primary metric | `sharpeInputSeries` (exported from `report.ts`, called by both scopes) yields **two** legs per session — the candidate's and the primary benchmark's daily excess return over the **cash** leg, on the sessions all three share. The aggregate concatenates **both** legs across splits in session order and runs `stationaryBootstrapPaired` once, with `annualizedSharpeDifference` as the statistic: one draw of block indices applied to both legs, so the strategy stays paired with the benchmark session by session. It is a **difference of Sharpe ratios**, not the Sharpe of a difference — see §2f. Pooling the *input* rather than averaging per-split *results* is what makes this the same statistic at a wider scope instead of a second statistic that resembles it. |
 | §16.1 second / §13 excess return vs Secondary 2 | Each window is backtested **from cash**, so the per-split total returns are **chain-linked** — `Π(1 + r) - 1` — for the candidate and for Secondary 2 independently, and the excess is the difference of the two linked returns. Summing instead of linking is wrong by more than rounding over nine windows, and the error does not cancel between the strategy and its comparator. |
 
 **Four fail-closed rules, each there to stop a rejection being manufactured rather than measured.**

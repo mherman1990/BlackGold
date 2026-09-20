@@ -950,7 +950,7 @@ share an identity; `ROBUSTNESS_VERSION` 1 → 2.
 
 **STEP 2 DONE (2026-09-20): §16.1 is now evaluated once, over the walk-forward splits pooled.**
 `packages/core/src/research/aggregate.ts` is the missing scope. `runEvaluation` collects each walk-forward
-split's paired daily excess series and its arm/benchmark total returns, and `aggregateWalkForward` returns one
+split's Sharpe input legs and its arm/benchmark total returns, and `aggregateWalkForward` returns one
 `REJECT | OWNER_REVIEW | UNMEASURED` verdict under `EvaluationReport.aggregate`. There is still **no** per-split
 §16.1 outcome, and none is added: §13 scopes the primary metric's pass rule and §16.1 scopes the falsifier to
 the same aggregate set.
