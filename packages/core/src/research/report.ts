@@ -171,10 +171,21 @@ export function sharpeInputSeries(
   primary: readonly TRPoint[],
   cash: readonly TRPoint[],
 ): SharpeInputPoint[] {
-  const cashBySession = new Map(simpleReturns(cash).map((r) => [r.session, r.value.toNumber()]));
-  const primaryBySession = new Map(simpleReturns(primary).map((r) => [r.session, r.value.toNumber()]));
+  // Restrict the LEVEL series to the sessions all three share BEFORE differencing, which is what
+  // `excessReturns` in benchmarks.ts has always done. Differencing first and intersecting afterwards pairs
+  // intervals of different lengths: with a session missing from one leg, that leg's return keyed to `t`
+  // spans `t-2..t` while the others span `t-1..t`, so the "paired" observation sets a two-session move
+  // against a one-session move and silently discards the move over the gap on the other legs. Found by
+  // Codex on PR #94; it was wrong in the first version of this function.
+  const inPrimary = new Set(primary.map((p) => p.session));
+  const inCash = new Set(cash.map((p) => p.session));
+  const shared = new Set(candidate.filter((p) => inPrimary.has(p.session) && inCash.has(p.session)).map((p) => p.session));
+  const on = (points: readonly TRPoint[]): TRPoint[] => points.filter((p) => shared.has(p.session));
+
+  const cashBySession = new Map(simpleReturns(on(cash)).map((r) => [r.session, r.value.toNumber()]));
+  const primaryBySession = new Map(simpleReturns(on(primary)).map((r) => [r.session, r.value.toNumber()]));
   const out: SharpeInputPoint[] = [];
-  for (const r of simpleReturns(candidate)) {
+  for (const r of simpleReturns(on(candidate))) {
     const rf = cashBySession.get(r.session);
     const bench = primaryBySession.get(r.session);
     if (rf === undefined || bench === undefined) continue;

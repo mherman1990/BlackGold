@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { Dec, ONE, ZERO, isoDate, type IsoDate } from "@blackgold/shared";
 import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
 import { TR_ADJUSTMENT_VERSION, type TRPoint, type TRSeries } from "../src/market/series.ts";
-import { armMetrics, buildResultReport, REPORT_VERSION, taxScenarios } from "../src/research/report.ts";
+import { armMetrics, buildResultReport, REPORT_VERSION, sharpeInputSeries, taxScenarios } from "../src/research/report.ts";
 import { backtestParamsFromCharter, costsFromCharter, runBacktest } from "../src/research/backtest.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
 
@@ -93,6 +93,66 @@ describe("armMetrics", () => {
     expect(m.cagr.isZero()).toBe(true);
     expect(m.sharpeVsCash).toBe(0);
     expect(m.sessions).toBe(0);
+  });
+});
+
+describe("sharpeInputSeries", () => {
+  /**
+   * `to/from - 1` on one leg minus `to/from - 1` on another, in decimal: the excess return this function
+   * is expected to produce. The two `- 1` terms cancel, so it is just a difference of gross ratios.
+   * Computed with `Dec` because the repository forbids float-literal arithmetic even in an expectation.
+   */
+  function excess(fromA: string, toA: string, fromB: string, toB: string): number {
+    return new Dec(toA).div(fromA).minus(new Dec(toB).div(fromB)).toNumber();
+  }
+
+  function levels(pairs: readonly (readonly [string, string])[]): TRPoint[] {
+    return pairs.map(([session, level]) => ({
+      session: isoDate(session),
+      trIndex: new Dec(level),
+      adjClose: new Dec(level),
+      distribution: ZERO,
+      terminal: false,
+    }));
+  }
+
+  // Codex P1 on PR #94. The first version of this function differenced each leg independently and
+  // intersected the RETURNS afterwards, so a session missing from one leg paired a two-session move against
+  // a one-session move - and silently threw away the other legs' move over the gap.
+  it("aligns the level series before differencing, so a gap cannot pair unequal intervals", () => {
+    // The primary has no bar on 2026-01-07. Every leg's return at 2026-01-08 must therefore span
+    // 2026-01-06 -> 2026-01-08, on all three legs alike.
+    const candidate = levels([["2026-01-05", "100"], ["2026-01-06", "101"], ["2026-01-07", "102"], ["2026-01-08", "103"]]);
+    const primary = levels([["2026-01-05", "200"], ["2026-01-06", "202"], ["2026-01-08", "206"]]);
+    const cash = levels([["2026-01-05", "50"], ["2026-01-06", "50.01"], ["2026-01-07", "50.02"], ["2026-01-08", "50.03"]]);
+
+    const out = sharpeInputSeries(candidate, primary, cash);
+    expect(out.map((p) => p.session)).toEqual(["2026-01-06", "2026-01-08"]);
+
+    const spanning = out[1];
+    expect(spanning).toBeDefined();
+    if (spanning === undefined) return;
+    // Correct: the candidate spans 101 -> 103 and the cash leg 50.01 -> 50.03, matching the primary's gap.
+    expect(spanning.strategy).toBeCloseTo(excess("101", "103", "50.01", "50.03"), 12);
+    expect(spanning.benchmark).toBeCloseTo(excess("202", "206", "50.01", "50.03"), 12);
+
+    // The defect this pins: differencing first would have keyed the candidate's 2026-01-08 return to
+    // 102 -> 103 and the cash leg's to 50.02 -> 50.03, losing the move across the missing session while the
+    // primary kept its full 202 -> 206. That is a materially different, and smaller, strategy return.
+    const unaligned = excess("102", "103", "50.02", "50.03");
+    expect(spanning.strategy).not.toBeCloseTo(unaligned, 6);
+    expect(spanning.strategy).toBeGreaterThan(unaligned);
+  });
+
+  it("drops a session missing from any leg rather than pairing across it", () => {
+    const candidate = levels([["2026-01-05", "100"], ["2026-01-06", "101"], ["2026-01-07", "102"]]);
+    const primary = levels([["2026-01-05", "200"], ["2026-01-06", "202"], ["2026-01-07", "204"]]);
+    const cash = levels([["2026-01-05", "50"], ["2026-01-07", "50.02"]]);
+    const out = sharpeInputSeries(candidate, primary, cash);
+    // 2026-01-06 is absent from the cash leg, so no observation is keyed to it and the 2026-01-07
+    // observation spans the whole two-session interval on every leg.
+    expect(out.map((p) => p.session)).toEqual(["2026-01-07"]);
+    expect(out[0]?.benchmark).toBeCloseTo(excess("200", "204", "50", "50.02"), 12);
   });
 });
 

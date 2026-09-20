@@ -819,7 +819,8 @@ evidence for or against the strategy. The full write-up is
 `docs/analysis/2026-09-13-etf-trend-vol-machinery-check.md`. What surfaced is a metric-design observation, not a
 result claim.
 
-**The observation.** On the in-sample DESIGN window (2007–2018, which contains 2008) the strategy captured
+**The observation.** *(The −0.19 below is superseded: it is an information ratio, not the primary metric —
+see "TWO P1 DEFECTS FOUND BY CODEX ON PR #94" further down this entry. Kept as written for the record.)* On the in-sample DESIGN window (2007–2018, which contains 2008) the strategy captured
 ~83% of passive total return while cutting maximum drawdown by roughly four-fifths (−13% vs −54%), yet the
 primary promotion metric `net_sharpe_difference_vs_primary_benchmark` still read −0.19 (CI straddling zero) and
 `passes: false`. The metric rewards full-period risk-adjusted return and is nearly blind to the tail: a
