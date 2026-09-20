@@ -16,7 +16,9 @@ import type { Charter } from "../strategy/charter.ts";
  * without a backtest.
  */
 
-export const ROBUSTNESS_VERSION = 1;
+// 2: `decisiveRejection` became tri-state (unknown / false / true) and entered the hashed verdict body. An
+// output-semantic change, so the version moves with it rather than leaving v1 to mean two different shapes.
+export const ROBUSTNESS_VERSION = 2;
 
 // ---------------------------------------------------------------------------------------------
 // Sensitivity grid
@@ -340,11 +342,19 @@ export function evaluateFalsifiers(c: Charter, m: FalsifierMetrics): RobustnessV
   const failedIds = outcomes.filter((o) => o.triggered).map((o) => o.id);
   const beatsPrimary = m.primaryPointEstimate >= threshold && !outcomes.some((o) => o.id === "F1" && o.triggered);
   const beatsSecondary2 = m.primaryVersusSecondary2?.gt(0) === true;
+  // `decisiveRejection` is derived from the second prong, which is NOT one of the F1-F6 outcomes, so it can
+  // differ between two runs that agree on everything else hashed here. Left out, a WITHHELD verdict and a
+  // measured rejection would share a verdictHash, and persisted evidence could not tell them apart. Encoded
+  // as a string because a JSON `undefined` key would simply vanish, collapsing unknown into absent.
+  // Unknown second prong => no verdict. Treating absence as failure would turn an unmeasured number into an
+  // automatic rejection; section 16.1 rejects only "if both fail".
+  const decisiveRejection = m.primaryVersusSecondary2 === undefined ? undefined : !beatsPrimary && !beatsSecondary2;
   const body = {
     strategyId: c.strategy_id,
     charterVersion: c.charter_version,
     outcomes: outcomes.map((o) => [o.id, o.triggered]),
     gridSignAgreement: agreement.toFixed(6),
+    decisiveRejection: decisiveRejection === undefined ? "unknown" : decisiveRejection ? "true" : "false",
   };
 
   return {
@@ -353,9 +363,7 @@ export function evaluateFalsifiers(c: Charter, m: FalsifierMetrics): RobustnessV
     outcomes,
     gridSignAgreement: agreement,
     passes: failedIds.length === 0,
-    // Unknown second prong => no verdict. See the field's doc comment: treating absence as failure would
-    // turn a deliberately withheld number into an automatic rejection.
-    decisiveRejection: m.primaryVersusSecondary2 === undefined ? undefined : !beatsPrimary && !beatsSecondary2,
+    decisiveRejection,
     failedIds,
     robustnessVersion: ROBUSTNESS_VERSION,
     verdictHash: `sha256:${hashJson(body)}`,

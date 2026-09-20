@@ -199,6 +199,28 @@ describe("evaluateFalsifiers", () => {
     expect(v.passes).toBe(false);
   });
 
+  it("gives a withheld verdict a different hash from a measured rejection", () => {
+    // decisiveRejection is derived from the second prong, which is not an F1-F6 outcome, so two runs can
+    // agree on every hashed falsifier and still differ here. If it is not in the hashed body, a verdict that
+    // says "unknown" and one that says "rejected" share an identity, and persisted evidence cannot tell them
+    // apart - the specific failure the verdict hash exists to prevent.
+    const base = { ...passingMetrics(), primaryPointEstimate: 0.02 };
+    const withheld = evaluateFalsifiers(charter(), { ...base, primaryVersusSecondary2: undefined });
+    const rejected = evaluateFalsifiers(charter(), { ...base, primaryVersusSecondary2: new Dec("-0.03") });
+    const beaten = evaluateFalsifiers(charter(), { ...base, primaryVersusSecondary2: new Dec("0.05") });
+
+    expect(withheld.decisiveRejection).toBeUndefined();
+    expect(rejected.decisiveRejection).toBe(true);
+    expect(beaten.decisiveRejection).toBe(false);
+
+    // All three agree on every F1-F6 outcome, so only the tri-state field distinguishes them.
+    expect(withheld.failedIds).toEqual(rejected.failedIds);
+    expect(withheld.failedIds).toEqual(beaten.failedIds);
+
+    const hashes = new Set([withheld.verdictHash, rejected.verdictHash, beaten.verdictHash]);
+    expect(hashes.size).toBe(3);
+  });
+
   it("rejects decisively only when both the primary metric and the registered Secondary 2 are missed", () => {
     const onlyPrimaryFails = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusSecondary2: new Dec("0.05") });
     expect(onlyPrimaryFails.passes).toBe(false);
