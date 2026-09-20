@@ -366,8 +366,36 @@ describe("volatilityTargetedSeries (ALPHA_CHARTER section 11 Secondary 2)", () =
     const a = withDist.series.points[1]?.trIndex;
     const b = without.series.points[1]?.trIndex;
     expect(a?.toFixed(10)).not.toBe(b?.toFixed(10));
-    // Held at weight 1 into the split, the 5.00 is earned in full: (95 + 5) / 100 at the open, then 100/95.
-    expect(a?.toFixed(10)).toBe(dec("100").div(dec("100")).times(dec("100").div(dec("95")).times(dec("0.5")).plus(dec("0.5"))).toFixed(10));
+    // Held at weight 1 into the split, the 5.00 is earned in full - but as a REINVESTMENT at its own day-2
+    // close, not as cash carried to day 3's open. Overnight = (1.05 / 1) x (95 / 100) = 0.9975; then the
+    // half-equity intraday leg. Treating it as cash would give 1.0 x the same leg, which is a different
+    // number and the defect the carry term exists to prevent.
+    const overnight = dec("1.05").div(dec("1")).times(dec("95").div(dec("100")));
+    const toClose = dec("0.5").times(dec("100").div(dec("95"))).plus(dec("0.5"));
+    expect(a?.toFixed(10)).toBe(overnight.times(toClose).toFixed(10));
+  });
+
+  it("compounds an earlier ex-date through its own close, rather than carrying it as cash", () => {
+    // The counterexample in its own right, with the numbers chosen so the two treatments are far apart.
+    // Equity closes 100 on day 1; day 2 goes ex 10.00 and closes 100; day 3 opens at 200. The index
+    // reinvested the 10 at day 2's close, so the position grew 1.1x and then doubled: 2.2. Carrying the 10
+    // as cash to day 3's open gives (200 + 10) / 100 = 2.1 - the distribution never participates in the move
+    // it was reinvested ahead of.
+    const equityLeg = leg([[1, 100, 100], [2, 100, 100, 10], [3, 200, 200]]);
+    const sparseCash = leg([[1, 10, 10], [3, 10, 10]]);
+    // Weight 1 into the stretch, dropping to 0 at day 3's open. The change is what forces the SPLIT branch -
+    // an activation equal to the weight already in force takes the undivided step through `plainStep`, which
+    // reads `trIndex` directly and would pass this assertion without ever calling `legSplit`. (The first
+    // draft of this test did exactly that.) With the change, the index is the equity leg's overnight factor
+    // alone, since the new weight puts the whole intraday leg in flat cash.
+    const s = volatilityTargetedSeries({
+      equity: equityLeg,
+      cash: sparseCash,
+      activations: [atClose("1", 1), atOpen("0", 3)],
+    });
+    expect(s.series.points.map((q) => q.session)).toEqual([S(1), S(3)]);
+    expect(s.series.points[1]?.trIndex.toFixed(10)).toBe(dec("2.2").toFixed(10));
+    expect(s.series.points[1]?.trIndex.toFixed(10)).not.toBe(dec("2.1").toFixed(10));
   });
 
   it("refuses a weight outside [0, 1], keeping the comparator long-only and unlevered", () => {

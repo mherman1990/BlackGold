@@ -546,61 +546,67 @@ describe("runBacktest", () => {
   });
 
   it("scales Secondary 2 by min(1, target / primary volatility), as section 9.5 does", () => {
-    // This asserts the FORMULA against the estimator's own output, recomputed here from `computeFeatures`.
-    // The previous version checked only that weights lay in (0, 1] plus a conditional that rechecked the
-    // fixture's own target - every assertion of which survived replacing `min(1, target / sigma)` with any
-    // arbitrary positive fraction. It was named for a formula it did not constrain.
+    // Asserts the FORMULA against the estimator's own output, recomputed here through `computeFeatures` at
+    // the same decision instant rather than read back out of the run - a test that consumed the run's own
+    // scale factor would only be restating it.
     //
-    // A volatile primary is needed for the cap to bind on some decisions and not others; the default fixture
-    // runs under the 10% target throughout, so k pins at 1 and the `min` is never exercised.
-    const volatile: PricePath[] = PATHS.map((x) => (x.entityId === "VTI" ? { ...x, wobble: N("0.012") } : x));
-    const m = buildMarket({ paths: volatile, from: D("2026-01-02"), to: D("2026-06-30") });
-    const { charter, input } = setup({ pit: m.pit, calendar: m.calendar });
-    const r = runBacktest(input);
-    const params = backtestParamsFromCharter(charter);
-    const target = params.sizing.annualVolatilityTarget;
+    // TWO fixtures, because the `min` has two branches and one fixture cannot exercise both: the wobble is
+    // constant within a run, so the primary's volatility sits either side of the 10% target for the whole
+    // window. A calm primary pins k at 1 (the cap), a volatile one keeps k below it (the scale). The previous
+    // version used one fixture and asserted only `capped + scaled === checked`, which is true by
+    // construction and passes at `capped === 0`; before that it asserted only that weights lay in (0, 1],
+    // every part of which survived replacing the formula with an arbitrary positive fraction.
+    const branch = (wobble: Dec): { checked: number; capped: number; scaled: number } => {
+      const paths: PricePath[] = PATHS.map((x) => (x.entityId === "VTI" ? { ...x, wobble } : x));
+      const m = buildMarket({ paths, from: D("2026-01-02"), to: D("2026-06-30") });
+      const { charter, input } = setup({ pit: m.pit, calendar: m.calendar });
+      const r = runBacktest(input);
+      const params = backtestParamsFromCharter(charter);
+      const target = params.sizing.annualVolatilityTarget;
+      const volAt = (session: ReturnType<typeof D>): Dec | undefined =>
+        computeFeatures(
+          { pit: m.pit, calendar: m.calendar },
+          {
+            riskEntities: [...charter.universe.risk_etfs],
+            cashEntityId: charter.universe.cash_etf,
+            decisionAt: m.decisionAt(session),
+            params: params.features,
+          },
+        ).features.get(charter.benchmarks.primary)?.vol;
 
-    // Recomputed independently here, through `computeFeatures` at the same decision instant, rather than read
-    // back out of the run. That is the point: a formula test that consumed the run's own scale factor would
-    // only be restating it.
-    const decisionAt = (session: ReturnType<typeof D>): ReturnType<typeof m.decisionAt> => m.decisionAt(session);
-    const volAt = (session: ReturnType<typeof D>): Dec | undefined =>
-      computeFeatures(
-        { pit: m.pit, calendar: m.calendar },
-        {
-          riskEntities: [...charter.universe.risk_etfs],
-          cashEntityId: charter.universe.cash_etf,
-          decisionAt: decisionAt(session),
-          params: params.features,
-        },
-      ).features.get(charter.benchmarks.primary)?.vol;
+      const decisionSessions = new Set(r.decisions.map((d) => d.decisionSession));
+      const indexOf = new Map(r.sessions.map((x, i) => [x, i]));
+      let checked = 0;
+      let capped = 0;
+      let scaled = 0;
+      for (let i = 1; i < r.secondary2Weights.length; i++) {
+        const cur = r.secondary2Weights[i];
+        const prev = r.secondary2Weights[i - 1];
+        if (cur === undefined || prev === undefined || cur.weight.eq(prev.weight)) continue;
+        const at = indexOf.get(cur.session);
+        const decisionSession = at === undefined ? undefined : r.sessions[at - Math.max(input.costs.delayBars, 1)];
+        if (decisionSession === undefined || !decisionSessions.has(decisionSession)) continue;
+        const vol = volAt(decisionSession);
+        if (vol === undefined) continue;
+        const k = vol.gt(0) ? target.div(vol) : ONE;
+        const expected = k.lt(ONE) ? k : ONE;
+        expect(cur.weight.toFixed(12)).toBe(expected.toFixed(12));
+        checked++;
+        if (expected.eq(ONE)) capped++;
+        else scaled++;
+      }
+      return { checked, capped, scaled };
+    };
 
-    const decisionSessions = new Set(r.decisions.map((d) => d.decisionSession));
-    const indexOf = new Map(r.sessions.map((s2, i) => [s2, i]));
-    let checked = 0;
-    let capped = 0;
-    let scaled = 0;
-    for (let i = 1; i < r.secondary2Weights.length; i++) {
-      const cur = r.secondary2Weights[i];
-      const prev = r.secondary2Weights[i - 1];
-      if (cur === undefined || prev === undefined || cur.weight.eq(prev.weight)) continue;
-      // The decision whose fill lands here: one bar back at the run's delay, on the calendar the weights use.
-      const at = indexOf.get(cur.session);
-      const decisionSession = at === undefined ? undefined : r.sessions[at - Math.max(input.costs.delayBars, 1)];
-      if (decisionSession === undefined || !decisionSessions.has(decisionSession)) continue;
-      const vol = volAt(decisionSession);
-      if (vol === undefined) continue;
-      const k = vol.gt(0) ? target.div(vol) : ONE;
-      const expected = k.lt(ONE) ? k : ONE;
-      expect(cur.weight.toFixed(12)).toBe(expected.toFixed(12));
-      checked++;
-      if (expected.eq(ONE)) capped++;
-      else scaled++;
-    }
-    // Both branches of the `min` must be exercised, or the assertion above is only testing one of them.
-    expect(checked).toBeGreaterThan(0);
-    expect(scaled).toBeGreaterThan(0);
-    expect(capped + scaled).toBe(checked);
+    // Calm primary: volatility under the 10% target, so `min` returns 1 and the cap branch is exercised.
+    const calm = branch(N("0.001"));
+    expect(calm.checked).toBeGreaterThan(0);
+    expect(calm.capped).toBeGreaterThan(0);
+
+    // Volatile primary: volatility above the target, so `min` returns target / sigma.
+    const volatile = branch(N("0.012"));
+    expect(volatile.checked).toBeGreaterThan(0);
+    expect(volatile.scaled).toBeGreaterThan(0);
   });
 
   it("refuses to be cited as evidence while the charter is a draft", () => {

@@ -338,38 +338,42 @@ function closeToClose(tr: ReadonlyMap<string, TRPoint>, session: IsoDate, prev: 
   return cur.trIndex.div(before.trIndex).minus(ONE);
 }
 
-/** One leg's lookups, plus the cumulative distribution needed to value an interval that spans several. */
+/** One leg's lookups, plus its own ordering, so an interval spanning several of its sessions can be valued. */
 type LegView = {
   tr: ReadonlyMap<string, TRPoint>;
   bars: ReadonlyMap<string, RawBar | LoadedBar>;
-  /** Sum of every distribution at or before this session, in the index's adjusted share units. */
-  cumulativeDistribution: ReadonlyMap<string, Dec>;
+  points: readonly TRPoint[];
+  /** Position of a session within this leg's own points, which the legs' shared calendar does not give. */
+  positionOf: ReadonlyMap<string, number>;
 };
 
 function legView(leg: VolTargetLeg): LegView {
-  let running = ZERO;
-  const cumulative = new Map<string, Dec>();
-  for (const p of leg.tr.points) {
-    running = running.plus(p.distribution);
-    cumulative.set(p.session, running);
-  }
   return {
     tr: new Map(leg.tr.points.map((p) => [p.session, p])),
     bars: new Map(leg.bars.map((b) => [b.session, b])),
-    cumulativeDistribution: cumulative,
+    points: leg.tr.points,
+    positionOf: new Map(leg.tr.points.map((p, i) => [p.session, i])),
   };
 }
 
 /**
  * Value one leg over the two halves of a rebalance session, as VALUE FACTORS rather than returns.
  *
- *   overnight = (adjOpen + income) / prevAdjClose   the pre-open holder: price to the open, plus every
- *                                                   distribution that went ex in the interval, as CASH
- *   intraday  =  adjClose / adjOpen                 the open buyer: the price move, and nothing else
+ *   overnight = trIndex(last) / trIndex(prev)      everything the leg's own index already compounded, which
+ *                 x (adjOpen + d) / adjClose(last)   is every distribution before the closing session; then
+ *                                                    price to the open plus THIS session's distribution, cash
+ *   intraday  =  adjClose / adjOpen                  the open buyer: the price move, and nothing else
  *
- * The raw open is scaled by the factor the index applied to this session's close (`adjClose / close`), so both
- * halves are in the index's share units, and `income` is a difference of cumulative distributions so an
- * ex-date on a session the legs do not share is still counted.
+ * `last` is the leg's OWN point before the closing session, which is the previous shared session only when
+ * the two are adjacent. The raw open is scaled by the factor the index applied to this session's close
+ * (`adjClose / close`), so both halves are in the index's share units.
+ *
+ * **Only the closing session's distribution is cash.** An ex-date earlier in a stretched interval was
+ * reinvested at its own close by the leg's index, and has been compounding since; treating it as cash held
+ * to the open loses that growth. With a 10 distribution on a 100 close and the next open at 200, cash-to-the-
+ * open gives `(200 + 10) / 100 = 2.1` where the reinvested value is `1.1 x 200 / 100 = 2.2`. Taking the carry
+ * from `trIndex` gets this right by construction, and needs no special case for the adjacent sessions, where
+ * the carry is exactly 1.
  *
  * **A distribution is cash, not a scaled position.** That is the whole content of this function, and three
  * earlier versions got it wrong in three different ways. Reinvesting it at the open - `(adjClose + d) /
@@ -387,14 +391,19 @@ function legView(leg: VolTargetLeg): LegView {
  */
 function legSplit(leg: LegView, session: IsoDate, prev: IsoDate): { overnight: Dec; intraday: Dec } | undefined {
   const cur = leg.tr.get(session);
-  const before = leg.tr.get(prev);
+  const atPrev = leg.tr.get(prev);
   const bar = leg.bars.get(session);
-  if (cur === undefined || before === undefined || bar === undefined) return undefined;
-  if (!before.adjClose.gt(0) || !cur.adjClose.gt(0) || !bar.close.gt(0) || !bar.open.gt(0)) return undefined;
+  const position = leg.positionOf.get(session);
+  if (cur === undefined || atPrev === undefined || bar === undefined || position === undefined || position < 1) return undefined;
+  const last = leg.points[position - 1];
+  if (last === undefined) return undefined;
+  if (!atPrev.trIndex.gt(0) || !last.trIndex.gt(0) || !last.adjClose.gt(0)) return undefined;
+  if (!cur.adjClose.gt(0) || !bar.close.gt(0) || !bar.open.gt(0)) return undefined;
   const adjOpen = bar.open.times(cur.adjClose).div(bar.close);
   if (!adjOpen.gt(0)) return undefined;
-  const income = (leg.cumulativeDistribution.get(session) ?? ZERO).minus(leg.cumulativeDistribution.get(prev) ?? ZERO);
-  return { overnight: adjOpen.plus(income).div(before.adjClose), intraday: cur.adjClose.div(adjOpen) };
+  const carry = last.trIndex.div(atPrev.trIndex);
+  const toOpen = adjOpen.plus(cur.distribution).div(last.adjClose);
+  return { overnight: carry.times(toOpen), intraday: cur.adjClose.div(adjOpen) };
 }
 
 /** Decompose both legs at the open. `undefined` when either leg cannot be split. */
