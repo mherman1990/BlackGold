@@ -271,10 +271,16 @@ export function buildResultReport(input: BuildReportInput): ResultReport {
   // ALPHA_CHARTER section 11 Secondary 2, built by `runBacktest` from the strategy's own covariance window.
   // Empty when the primary is not a risk ETF, in which case the registered comparator simply is not available
   // and no stand-in is offered in its place.
+  //
+  // The arm name carries `__TIMING_BIASED` deliberately. Its section 13 metrics are published for reporting,
+  // but two fill-timing defects remain (the pre-fill gap and the common-session interval stretch), so an
+  // operator subtracting this total return from B1's would reconstruct exactly the prong that is withheld -
+  // and that difference can be reversed by the bias. The name is the warning that travels with the number
+  // into any JSON, log or spreadsheet it is copied into. It loses the suffix when the timing is exact.
   if (c.benchmarks.volatility_controlled_primary && bt.secondary2Weights.length > 0) {
     const byS2Session = new Map(bt.secondary2Weights.map((w) => [w.session, w.weight]));
     benchmarkSeries.push({
-      name: "SECONDARY_2_VOL_TARGET_PRIMARY",
+      name: "SECONDARY_2_VOL_TARGET_PRIMARY__TIMING_BIASED",
       series: blendSeries({ equity: input.primary, cash: input.cash, equityWeight: (session) => byS2Session.get(session) ?? ZERO }),
     });
   }

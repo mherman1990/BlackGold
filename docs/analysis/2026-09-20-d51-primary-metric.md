@@ -169,8 +169,24 @@ The two positions weighed before that decision:
 - **Fix it.** §16.1's second prong is a *decisive* input, and a systematic few-hundred-gap bias in a decisive
   comparator is a different thing from a cosmetic one in a reporting benchmark.
 
-Found by Codex review of this PR — across three rounds, each of which refuted the reason given for deferring
-in the round before.
+Found by Codex review of this PR — across four rounds, each of which refuted the reason given in the round
+before.
+
+**Round four found that withholding, as first implemented, was itself incomplete in two ways:**
+
+1. **`evaluateFalsifiers` turned the withheld value into a rejection.** It treated an absent second prong as
+   "does not beat", so `decisiveRejection` came back `true` whenever the primary metric failed. Combined with
+   deliberately withholding the prong, that meant the function would emit a §16.1 rejection on *every* such
+   run — manufacturing precisely the verdict withholding exists to prevent. It now returns `undefined` when
+   the prong is unmeasured: §16.1 rejects "if both fail", and absence is not failure. (I had earlier called
+   changing this an owner reading rather than a bug fix. That was right until the prong became deliberately
+   absent; after that, treating absence as failure stopped being conservative and started being wrong.)
+2. **The published series could be used to rebuild the prong.** `runEvaluation` serialises Secondary 2's total
+   return alongside `B1_DETERMINISTIC`'s, so an operator could subtract the two and recover exactly the
+   withheld number — which the bias can reverse. The arm is therefore published as
+   **`SECONDARY_2_VOL_TARGET_PRIMARY__TIMING_BIASED`**: the warning travels with the number into any JSON, log
+   or spreadsheet it is copied into, and a test asserts the unqualified registered-sounding name never appears
+   while the bias is present. The suffix comes off when the timing is exact.
 
 **A related charter ambiguity — resolved by the owner, 2026-09-20: excess return.** §13 lists "**excess
 return** versus Secondary 1 and Secondary 2" among the registered metrics, while §16.1 says only that the

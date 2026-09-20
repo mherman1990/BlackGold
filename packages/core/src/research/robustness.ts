@@ -230,7 +230,17 @@ export type RobustnessVerdict = {
    * beats neither the primary benchmark nor the volatility-controlled variant. A single failure elsewhere
    * sends the charter to owner review; both failures reject it.
    */
-  decisiveRejection: boolean;
+  /**
+   * ALPHA_CHARTER section 16.1's decisive falsifier: reject only when the strategy fails the primary metric
+   * AND fails to beat Secondary 2. `undefined` when the second prong was not measured - **absence is not
+   * failure**, and section 16.1 says "if both fail".
+   *
+   * This previously returned `true` in that case, on the reasoning that rejecting is conservative for
+   * promotion. Combined with the owner's 2026-09-20 decision to withhold the prong until Secondary 2's fill
+   * timing is exact, that would have made this function emit a section 16.1 rejection on every run where the
+   * primary metric failed - manufacturing the exact verdict the withholding exists to prevent.
+   */
+  decisiveRejection: boolean | undefined;
   failedIds: string[];
   robustnessVersion: number;
   verdictHash: string;
@@ -343,7 +353,9 @@ export function evaluateFalsifiers(c: Charter, m: FalsifierMetrics): RobustnessV
     outcomes,
     gridSignAgreement: agreement,
     passes: failedIds.length === 0,
-    decisiveRejection: !beatsPrimary && !beatsSecondary2,
+    // Unknown second prong => no verdict. See the field's doc comment: treating absence as failure would
+    // turn a deliberately withheld number into an automatic rejection.
+    decisiveRejection: m.primaryVersusSecondary2 === undefined ? undefined : !beatsPrimary && !beatsSecondary2,
     failedIds,
     robustnessVersion: ROBUSTNESS_VERSION,
     verdictHash: `sha256:${hashJson(body)}`,

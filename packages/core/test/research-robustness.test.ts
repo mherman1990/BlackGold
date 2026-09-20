@@ -207,12 +207,14 @@ describe("evaluateFalsifiers", () => {
     const both = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusSecondary2: new Dec("-0.03") });
     expect(both.decisiveRejection).toBe(true);
 
-    // An unmeasured second prong currently counts as "does not beat", so a rejection can rest on a number
-    // nobody computed. Conservative for promotion, but not what section 16.1 says ("if both fail"). Pinned
-    // here so the behaviour is deliberate and visible rather than incidental; changing it is an owner
-    // reading of the charter, not a bug fix (docs/analysis/2026-09-20-d51-primary-metric.md).
+    // An unmeasured second prong yields NO VERDICT. Section 16.1 rejects only "if both fail", and absence is
+    // not failure. This returned `true` until 2026-09-20; combined with the owner's decision to withhold the
+    // prong until Secondary 2's fill timing is exact, that would have emitted a section 16.1 rejection on
+    // every run whose primary metric failed - manufacturing the verdict the withholding exists to prevent.
     const noComparator = evaluateFalsifiers(charter(), { ...passingMetrics(), primaryPointEstimate: 0.02, primaryVersusSecondary2: undefined });
-    expect(noComparator.decisiveRejection).toBe(true);
+    expect(noComparator.decisiveRejection).toBeUndefined();
+    // The other falsifiers still evaluate: withholding one prong does not blind the rest.
+    expect(noComparator.passes).toBe(false);
   });
 
   it("treats an empty grid as zero agreement rather than as a pass", () => {
