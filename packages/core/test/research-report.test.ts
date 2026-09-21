@@ -116,43 +116,55 @@ describe("sharpeInputSeries", () => {
     }));
   }
 
-  // Codex P1 on PR #94. The first version of this function differenced each leg independently and
-  // intersected the RETURNS afterwards, so a session missing from one leg paired a two-session move against
-  // a one-session move - and silently threw away the other legs' move over the gap.
-  it("aligns the level series before differencing, so a gap cannot pair unequal intervals", () => {
-    // The primary has no bar on 2026-01-07. Every leg's return at 2026-01-08 must therefore span
-    // 2026-01-06 -> 2026-01-08, on all three legs alike.
+  // Codex P1 on PR #94, twice over. The first version differenced each leg independently and intersected
+  // the RETURNS, so a missing session paired a two-session move against a one-session move. Aligning the
+  // levels fixed the pairing and left a second defect behind: the aligned interval still spans two trading
+  // days on every leg while `annualizedSharpeDifference` annualizes by sqrt(252) as though it were one, and
+  // the 21-session bootstrap counts it as one session.
+  it("drops an interval that swallowed a session rather than treating it as a daily return", () => {
+    // The primary has no bar on 2026-01-07, so the 2026-01-08 observation would span two trading days.
     const candidate = levels([["2026-01-05", "100"], ["2026-01-06", "101"], ["2026-01-07", "102"], ["2026-01-08", "103"]]);
     const primary = levels([["2026-01-05", "200"], ["2026-01-06", "202"], ["2026-01-08", "206"]]);
     const cash = levels([["2026-01-05", "50"], ["2026-01-06", "50.01"], ["2026-01-07", "50.02"], ["2026-01-08", "50.03"]]);
 
     const out = sharpeInputSeries(candidate, primary, cash);
-    expect(out.map((p) => p.session)).toEqual(["2026-01-06", "2026-01-08"]);
+    // 2026-01-06 is a clean daily observation and survives; 2026-01-08 is not and does not.
+    expect(out.map((p) => p.session)).toEqual(["2026-01-06"]);
+    expect(out[0]?.strategy).toBeCloseTo(excess("100", "101", "50", "50.01"), 12);
 
-    const spanning = out[1];
-    expect(spanning).toBeDefined();
-    if (spanning === undefined) return;
-    // Correct: the candidate spans 101 -> 103 and the cash leg 50.01 -> 50.03, matching the primary's gap.
-    expect(spanning.strategy).toBeCloseTo(excess("101", "103", "50.01", "50.03"), 12);
-    expect(spanning.benchmark).toBeCloseTo(excess("202", "206", "50.01", "50.03"), 12);
-
-    // The defect this pins: differencing first would have keyed the candidate's 2026-01-08 return to
-    // 102 -> 103 and the cash leg's to 50.02 -> 50.03, losing the move across the missing session while the
-    // primary kept its full 202 -> 206. That is a materially different, and smaller, strategy return.
-    const unaligned = excess("102", "103", "50.02", "50.03");
-    expect(spanning.strategy).not.toBeCloseTo(unaligned, 6);
-    expect(spanning.strategy).toBeGreaterThan(unaligned);
+    // The fixture is only meaningful if the dropped observation would otherwise have been a two-day move:
+    // 101 -> 103 on the candidate, against the single day 102 -> 103 it is being kept out of.
+    expect(excess("101", "103", "50.01", "50.03")).not.toBeCloseTo(excess("102", "103", "50.02", "50.03"), 6);
   });
 
-  it("drops a session missing from any leg rather than pairing across it", () => {
+  it("keeps every observation when no leg is missing a session", () => {
+    // The control for the test above: same shape, no gap, nothing dropped. Without this, a function that
+    // dropped everything would satisfy the gap assertion.
+    const candidate = levels([["2026-01-05", "100"], ["2026-01-06", "101"], ["2026-01-07", "102"]]);
+    const primary = levels([["2026-01-05", "200"], ["2026-01-06", "202"], ["2026-01-07", "204"]]);
+    const cash = levels([["2026-01-05", "50"], ["2026-01-06", "50.01"], ["2026-01-07", "50.02"]]);
+    const out = sharpeInputSeries(candidate, primary, cash);
+    expect(out.map((p) => p.session)).toEqual(["2026-01-06", "2026-01-07"]);
+    expect(out[1]?.benchmark).toBeCloseTo(excess("202", "204", "50.01", "50.02"), 12);
+  });
+
+  it("treats a session only the OTHER legs traded as a gap the candidate's series cannot see", () => {
+    // The discriminating case: the candidate itself has no bar between 2026-01-05 and 2026-01-08, so its
+    // own sessions look contiguous. The benchmark and cash legs both traded 2026-01-06, so the interval is
+    // three days long on every leg once aligned. Keying the rule to the candidate alone would keep it.
+    const candidate = levels([["2026-01-05", "100"], ["2026-01-08", "103"]]);
+    const primary = levels([["2026-01-05", "200"], ["2026-01-06", "202"], ["2026-01-08", "206"]]);
+    const cash = levels([["2026-01-05", "50"], ["2026-01-06", "50.01"], ["2026-01-08", "50.03"]]);
+    expect(candidate.map((p) => p.session)).toEqual(["2026-01-05", "2026-01-08"]);
+    expect(sharpeInputSeries(candidate, primary, cash)).toEqual([]);
+  });
+
+  it("drops the whole interval when the cash leg is the one missing a session", () => {
+    // Any leg's gap collapses the interval on all three, so the rule cannot be keyed to the candidate.
     const candidate = levels([["2026-01-05", "100"], ["2026-01-06", "101"], ["2026-01-07", "102"]]);
     const primary = levels([["2026-01-05", "200"], ["2026-01-06", "202"], ["2026-01-07", "204"]]);
     const cash = levels([["2026-01-05", "50"], ["2026-01-07", "50.02"]]);
-    const out = sharpeInputSeries(candidate, primary, cash);
-    // 2026-01-06 is absent from the cash leg, so no observation is keyed to it and the 2026-01-07
-    // observation spans the whole two-session interval on every leg.
-    expect(out.map((p) => p.session)).toEqual(["2026-01-07"]);
-    expect(out[0]?.benchmark).toBeCloseTo(excess("200", "204", "50", "50.02"), 12);
+    expect(sharpeInputSeries(candidate, primary, cash)).toEqual([]);
   });
 });
 

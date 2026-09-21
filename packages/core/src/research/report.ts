@@ -182,15 +182,43 @@ export function sharpeInputSeries(
   const shared = new Set(candidate.filter((p) => inPrimary.has(p.session) && inCash.has(p.session)).map((p) => p.session));
   const on = (points: readonly TRPoint[]): TRPoint[] => points.filter((p) => shared.has(p.session));
 
+  // An interval that SWALLOWED a session is dropped, not merely aligned.
+  //
+  // Restricting the levels first (above) makes every leg's return span the same interval, which is
+  // necessary but not sufficient: where a leg is missing a session, the next observation spans two or more
+  // trading days on ALL legs, while `annualizedSharpeDifference` annualizes by sqrt(252) as though it were
+  // one day and the 21-session block bootstrap counts it as one session. A multi-day return carries more
+  // variance than a daily one, so feeding it in distorts both Sharpes and the interval - with a sign that
+  // depends on where the gap falls, which is the one thing a decisive comparator may not have. `GAP` is
+  // `promotionEvidenceAllowed: true` (data/quality.ts), so such a run is NOT otherwise barred and the
+  // distortion can reach a citable section 16.1 verdict. Found by Codex on PR #94, in the commit that fixed
+  // the alignment: aligning the legs was the right fix and left this behind.
+  //
+  // Dropping loses that interval's performance from the statistic; keeping it fabricates a daily
+  // observation that does not exist. Dropping is the honest side, and it is what "no clean daily
+  // observation here" actually means.
+  //
+  // The union of the three legs' sessions stands in for "sessions this run expected". The exchange calendar
+  // would be the better authority and is not available at this call site; the union is strictly safer than
+  // nothing, since a session no leg traded is not a gap at all and correctly triggers no drop.
+  //
+  // Scope: the per-arm descriptive Sharpes (`armMetrics.sharpeVsCash`, `informationRatioVsPrimary`) still
+  // use `benchmarks.ts`'s older convention and keep collapsed intervals. They are reported, not decisive.
+  const expected = [...new Set([...candidate, ...primary, ...cash].map((p) => p.session))].sort();
+  const spansAGap = (from: IsoDate, to: IsoDate): boolean => expected.some((x) => x > from && x < to);
+
   const cashBySession = new Map(simpleReturns(on(cash)).map((r) => [r.session, r.value.toNumber()]));
   const primaryBySession = new Map(simpleReturns(on(primary)).map((r) => [r.session, r.value.toNumber()]));
+  const kept = on(candidate);
   const out: SharpeInputPoint[] = [];
-  for (const r of simpleReturns(on(candidate))) {
+  simpleReturns(kept).forEach((r, i) => {
+    const previous = kept[i]?.session;
+    if (previous === undefined || spansAGap(previous, r.session)) return;
     const rf = cashBySession.get(r.session);
     const bench = primaryBySession.get(r.session);
-    if (rf === undefined || bench === undefined) continue;
+    if (rf === undefined || bench === undefined) return;
     out.push({ session: r.session, strategy: r.value.toNumber() - rf, benchmark: bench - rf });
-  }
+  });
   return out;
 }
 
