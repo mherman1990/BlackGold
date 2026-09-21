@@ -756,6 +756,14 @@ export function runBacktest(input: BacktestInput): BacktestResult {
    * also applies SPLIT and DELISTING and orders a SPLIT before a same-day fill, so a fill-only count drifts
    * the moment a holding splits, and a later gap in it would go unreported. Whatever NAV was marked on is
    * what this has to examine, so it reads the same list NAV was marked from.
+   *
+   * A bar's own `GAP` flag is deliberately NOT a trigger. `RawSeries.load` puts it on the first bar AFTER
+   * each missing session - a recovery bar, which carries a real close for its own session. A holding that
+   * spanned the gap is already reported through the missing session itself, where its bar is absent, so
+   * nothing is lost by ignoring the flag. Reading it as a trigger only added the case where the portfolio
+   * was flat through the gap and opened the position on the recovery bar: NAV used a real close on every
+   * session it held anything, yet the split was withheld, turning an earned `REJECT` into `UNMEASURED`
+   * (Codex, PR #96). `STALE_BAR` stays a trigger: that bar is present but its price is carried forward.
    */
   const barsBySession = new Map<string, Map<string, LoadedBar>>();
   for (const [entityId, entity] of series) barsBySession.set(entityId, new Map(entity.bars.map((b) => [b.session, b])));
@@ -764,7 +772,7 @@ export function runBacktest(input: BacktestInput): BacktestResult {
   for (const point of deterministic.points) {
     for (const entityId of point.held) {
       const bar = barsBySession.get(entityId)?.get(point.session);
-      if (bar === undefined || bar.flags.includes("STALE_BAR") || bar.flags.includes("GAP")) navDistorting.add(point.session);
+      if (bar === undefined || bar.flags.includes("STALE_BAR")) navDistorting.add(point.session);
     }
   }
   const navDistortingSessions = [...navDistorting].sort();
