@@ -28,7 +28,8 @@
             "type": "array",
             "items": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^\\s*[A-Za-z][A-Za-z.-]{0,9}\\s*$"
             }
           },
           "entityId": {

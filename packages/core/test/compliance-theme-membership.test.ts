@@ -219,6 +219,9 @@ describe("storedLookThroughResolver", () => {
     expect(lookThrough("VTI")).toEqual([]);
     const noThemes = RestrictedListConfigSchema.parse({ asOf: "2026-09-01", themes: [] });
     expect(storedLookThroughResolver(pit, vacuous, noThemes, base)("XLP")).toEqual([]);
+    // With no restricted theme in force there is nothing to inspect holdings FOR: an in-scope ETF with NO
+    // stored holdings is still known-empty rather than UNKNOWN_LOOK_THROUGH (Codex P2).
+    expect(storedLookThroughResolver(pit, vacuous, noThemes, base)("XLE")).toEqual([]);
   });
 
   it("fails closed while ANY restricted theme lacks membership coverage, not only when all do (Codex P1, round 3)", () => {

@@ -389,12 +389,15 @@ export const ThemeMembershipConfigSchema = z.object({
         // (`TICKER_RE` in data/adapters/ssga-holdings.ts, kept in sync here): a symbol the decoder can never
         // produce is an unreachable membership entry whose themes would still count as covered, silently
         // dropping the restricted issuer's weight (Codex P1, round 5).
+        // A .regex (not a .refine) so the constraint survives into the emitted JSON Schema as a `pattern`
+        // (Codex P2): editor/CI validation of the YAML then matches runtime validation. The pattern is the
+        // canonical form modulo case and surrounding whitespace, which themeMembershipOf normalizes away.
         symbols: z
           .array(
             z
               .string()
               .min(1)
-              .refine((v) => /^[A-Z][A-Z.-]{0,9}$/.test(v.trim().toUpperCase()), "must canonicalize to a valid ticker (letters, dots, dashes; max 10 chars)"),
+              .regex(/^\s*[A-Za-z][A-Za-z.-]{0,9}\s*$/, "must canonicalize to a valid ticker (letters, dots, dashes; max 10 chars)"),
           )
           .min(1),
         entityId: z.string().min(1).optional(),

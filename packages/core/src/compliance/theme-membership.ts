@@ -163,5 +163,12 @@ export function storedLookThroughResolver(
     lookThroughParamsOf(membership, restrictedList),
     opts.decisionAt,
   );
-  return (etf) => (scope.has(etf) ? (membershipCoversRestricted ? inScope(etf) : undefined) : []);
+  return (etf) => {
+    if (!scope.has(etf)) return [];
+    // No restricted theme in force: there is nothing to inspect holdings FOR, so exposure is known-empty even
+    // when the holdings are missing or stale - consistent with an empty theme list needing no membership
+    // content (Codex P2). The moment a theme is added to the restricted list, unknowns block again.
+    if (restrictedList.themes.length === 0) return [];
+    return membershipCoversRestricted ? inScope(etf) : undefined;
+  };
 }
