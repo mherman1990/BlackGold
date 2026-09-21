@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Dec, ONE, ZERO } from "@blackgold/shared";
+import { Dec, ONE, ZERO, type IsoDate } from "@blackgold/shared";
 import { type Charter } from "../src/strategy/charter.ts";
 import { backtestParamsFromCharter, costModelFor, costsFromCharter, reportBenchmarkSeries, runBacktest, weeklyDecisionSessions, type BacktestInput } from "../src/research/backtest.ts";
 import { blendSeries } from "../src/research/benchmarks.ts";
@@ -218,6 +218,32 @@ describe("runBacktest", () => {
       expect(r.navDistortingSessions).toContain(stale);
       // Exactly the point: the labels are no help here.
       expect(r.labels).not.toContain("STALE_BAR");
+    });
+
+    /** Net quantity of `entityId` at the close of `session`, from the run's own fills. */
+    function quantityAt(r: ReturnType<typeof runBacktest>, entityId: string, session: IsoDate): Dec {
+      let qty = ZERO;
+      for (const f of r.arms["B1_DETERMINISTIC"]?.fills ?? []) {
+        if (f.entityId !== entityId || f.session > session) continue;
+        qty = qty.plus(f.side === "BUY" ? f.quantity : f.quantity.negated());
+      }
+      return qty;
+    }
+
+    it("ignores a gap on a session when the position is flat, even in an instrument held elsewhere", () => {
+      // The discriminating case. Restricting to instruments that were FILLED at some point is not enough:
+      // a gap while the portfolio holds none of them puts no carried price into NAV, and reporting it turns
+      // a REJECT the run earned into an UNMEASURED it did not (Codex, PR #94). IWM is bought and fully sold
+      // in this fixture, so there is a long stretch where it is held at zero.
+      const flat = D("2026-04-17");
+      const m = buildMarket({ paths: PATHS, from, to, omitSessions: { IWM: [flat] } });
+      const r = runBacktest(setup({ pit: m.pit, calendar: m.calendar }).input);
+
+      // Both premises read from THIS run, so the test cannot pass vacuously if the gap shifts the decisions:
+      // IWM really was traded, and really was flat on the session whose bar is missing.
+      expect((r.arms["B1_DETERMINISTIC"]?.fills ?? []).some((f) => f.entityId === "IWM")).toBe(true);
+      expect(quantityAt(r, "IWM", flat).isZero()).toBe(true);
+      expect(r.navDistortingSessions).not.toContain(flat);
     });
 
     it("ignores a gap in a universe instrument the candidate never held", () => {

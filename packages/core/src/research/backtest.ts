@@ -743,18 +743,34 @@ export function runBacktest(input: BacktestInput): BacktestResult {
    *   - `RawSeries` derives `GAP` only between the FIRST and LAST loaded bar, so a missing session at either
    *     end of the run window produces no label.
    *
-   * Reading the bars directly closes all three. Restricted to instruments the candidate actually FILLED:
-   * a gap in an instrument it never held cannot move its NAV, and widening this to the whole universe would
-   * withhold the prong on almost any real window.
+   * Reading the bars directly closes all three. Restricted to sessions on which the instrument was actually
+   * HELD, reconstructed from the fills: a gap in an instrument the portfolio held none of cannot put a
+   * carried price into NAV. Both narrowings matter and for the same reason - this withholds a decisive
+   * prong, so every session it reports that did not really distort anything turns a `REJECT` the run earned
+   * into an `UNMEASURED` it did not. An earlier version scanned every session of any ever-filled
+   * instrument, including before its first buy and after its last sale (Codex, PR #94).
    */
-  const heldEntities = new Set(fills.map((f) => f.entityId));
+  const quantities = new Map<string, Dec>();
+  const fillsBySession = new Map<IsoDate, typeof fills>();
+  for (const f of fills) {
+    const at = fillsBySession.get(f.session) ?? [];
+    at.push(f);
+    fillsBySession.set(f.session, at);
+  }
+  const barsBySession = new Map<string, Map<string, LoadedBar>>();
+  for (const [entityId, entity] of series) barsBySession.set(entityId, new Map(entity.bars.map((b) => [b.session, b])));
+
   const navDistorting = new Set<IsoDate>();
-  for (const entityId of heldEntities) {
-    const bars = series.get(entityId)?.bars;
-    if (bars === undefined) continue;
-    const bySession = new Map(bars.map((b) => [b.session, b]));
-    for (const session of allSessions) {
-      const bar = bySession.get(session);
+  for (const session of allSessions) {
+    // Apply the session's own fills first: a position bought today is marked at today's close, so today's
+    // bar matters for it. A position sold today is likewise still marked today at the closing quantity.
+    for (const f of fillsBySession.get(session) ?? []) {
+      const signed = f.side === "BUY" ? f.quantity : f.quantity.negated();
+      quantities.set(f.entityId, (quantities.get(f.entityId) ?? ZERO).plus(signed));
+    }
+    for (const [entityId, qty] of quantities) {
+      if (qty.isZero()) continue;
+      const bar = barsBySession.get(entityId)?.get(session);
       if (bar === undefined || bar.flags.includes("STALE_BAR") || bar.flags.includes("GAP")) navDistorting.add(session);
     }
   }

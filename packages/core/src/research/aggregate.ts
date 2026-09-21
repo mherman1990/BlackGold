@@ -363,6 +363,22 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
   }
   if (ordered.length === 0) secondary2UnmeasuredReasons.push("no walk-forward split was pooled");
 
+  // The second prong eats the same NAV. `candidateTotalReturn` is the candidate arm's own index, so a
+  // carried-forward close on the split's last session distorts its endpoint exactly as it distorts the daily
+  // returns behind the first prong - and `beats` could then be true on a number with the same unknown-sign
+  // error. Withholding one prong and letting the other consume it would leave OWNER_REVIEW reachable
+  // through the back door (Codex, PR #94).
+  //
+  // Withheld on ANY distorting session rather than only on the endpoint. The owner's decision was to
+  // withhold on a gap, not to withhold on a gap in one particular place, and endpoint-only logic would be a
+  // narrower rule than he chose - defensible, but not his.
+  const gappedSplits = ordered.filter((split) => split.navDistortingSessions.length > 0);
+  for (const split of gappedSplits) {
+    secondary2UnmeasuredReasons.push(
+      `${split.splitId}: a held instrument's bar was absent or carried forward on ${split.navDistortingSessions.length} session(s), which distorts the candidate's own total return that this prong is a difference of`,
+    );
+  }
+
   let secondary2: AggregateSecondary2 | undefined;
   if (secondary2UnmeasuredReasons.length === 0) {
     const candidateTotalReturn = linkTotalReturns(ordered.map((split) => split.candidateTotalReturn));
