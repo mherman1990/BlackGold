@@ -238,6 +238,25 @@ describe("shadow_decision job: rung order and policy approval", () => {
     }
   });
 
+  it("compares approval timestamps as instants, not strings: no-millis at exactly decisionAt is approved (Codex P2, round 6)", async () => {
+    const env = setup("SHADOW");
+    // The same instant as decisionAt (close+60) but encoded without fractional seconds. Lexically
+    // "...T22:00:00Z" > "...T22:00:00.000Z", so a string compare would wrongly reject this approval.
+    const atDecisionNoMillis = afterClose("2026-03-06", 60).replace(".000Z", "Z");
+    expect(atDecisionNoMillis.endsWith(".000Z")).toBe(false); // the fixture really spans the encoding dimension
+    writeFileSync(
+      join(env.policyDir, "restricted-list.yaml"),
+      stringify({ approvedBy: "Test Owner", approvedAt: atDecisionNoMillis, asOf: "2026-03-01", themes: ["soybean_processing"] }),
+    );
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    const rows = env.db.prepare("SELECT record_json FROM decision_records").all() as { record_json: string }[];
+    expect(rows.length).toBe(2);
+    for (const row of rows) {
+      const rec = JSON.parse(row.record_json) as { gate: { blockedBy: string[] } };
+      expect(rec.gate.blockedBy.join(" ")).not.toContain("policy_unapproved:restricted-list.yaml");
+    }
+  });
+
   it("seals every arm with new risk BLOCKED while any policy file is unapproved (placeholder content is not policy)", async () => {
     const env = setup("SHADOW", true, { approveRestrictedList: false });
     await env.scheduler.tick(afterClose("2026-03-06", 150));
@@ -287,9 +306,9 @@ describe("shadow_decision job: identity and atomicity", () => {
     // observation. The job must sync the map from the store or the history silently resolves to nothing.
     const env = setup("SHADOW");
     writeFileSync(join(env.policyDir, "restricted-list.yaml"), stringify({ ...APPROVAL, asOf: "2026-03-01", names: ["OLDQQQ"] }));
-    // The initial universe seed knew the issuer under its old ticker; the RENAME arrives only as an ingested
-    // observation, which the job's sync must apply (closing OLDQQQ, registering QQQ) - nothing registers it by hand.
-    new EntityMap(env.db).register({ symbol: "OLDQQQ", entityId: "QQQ", effectiveFrom: D("2020-01-02"), source: "seed:test" });
+    // NOTHING pre-seeds the old ticker (Codex P1, round 6): on an ingestion-only database the SYMBOL_CHANGE
+    // observation is the ONLY thing that ever links OLDQQQ to the entity, so applyAction must materialize the
+    // old symbol's history from the action itself or the restricted-list entry is silently bypassed.
     const pit = new PointInTimeRepository(env.db);
     pit.append(
       corporateActionObservation(

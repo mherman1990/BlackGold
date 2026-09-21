@@ -44,6 +44,32 @@ describe("EntityMap", () => {
     expect(old?.effectiveTo).toBe("2024-06-02");
   });
 
+  it("a symbol change with NO prior range materializes the old ticker from the action itself (Codex P1, round 6)", () => {
+    const { map } = setup();
+    // Ingestion-only table: nothing ever registered OLD. The action alone must leave the old ticker knowable,
+    // or a restricted-list entry keyed by it is silently bypassed.
+    const knownAt = utc("2024-06-03T00:15:00Z");
+    map.applyAction({ kind: "SYMBOL_CHANGE", entityId: "E1", oldSymbol: "OLD", newSymbol: "NEW", effective: d("2024-06-03") }, "corporate_action.SYMBOL_CHANGE", knownAt);
+    expect(map.symbolsFor("E1")).toEqual(["NEW", "OLD"]); // restricted-list matching sees the historical ticker
+    // Only the day the action attests: the last old-symbol trading day. Earlier history is not invented.
+    expect(map.resolve("OLD", d("2024-06-02"))).toBe("E1");
+    expect(map.resolve("OLD", d("2024-06-01"))).toBeUndefined();
+    expect(map.resolve("OLD", d("2024-06-03"))).toBeUndefined();
+    expect(map.resolve("NEW", d("2024-06-03"))).toBe("E1");
+    // Bitemporal: the materialized range is knowable only from the action's own availability.
+    expect(map.symbolsFor("E1", { knownAt: utc("2024-06-03T00:00:00Z") })).toEqual([]);
+    // Idempotent: re-applying does not duplicate the materialized range.
+    map.applyAction({ kind: "SYMBOL_CHANGE", entityId: "E1", oldSymbol: "OLD", newSymbol: "NEW", effective: d("2024-06-03") }, "corporate_action.SYMBOL_CHANGE", knownAt);
+    expect(map.rangesForSymbol("OLD")).toHaveLength(1);
+    expect(map.rangesForSymbol("NEW")).toHaveLength(1);
+    // Control (the pre-seeded dimension): with a real seeded range, nothing extra is materialized.
+    const seeded = setup().map;
+    seeded.register({ symbol: "OLD", entityId: "E1", effectiveFrom: d("2020-01-02"), source: "seed:test" });
+    seeded.applyAction({ kind: "SYMBOL_CHANGE", entityId: "E1", oldSymbol: "OLD", newSymbol: "NEW", effective: d("2024-06-03") });
+    expect(seeded.rangesForSymbol("OLD")).toHaveLength(1);
+    expect(seeded.rangesForSymbol("OLD")[0]?.effectiveFrom).toBe("2020-01-02");
+  });
+
   it("a symbol reused after a delisting resolves by date range and fails closed in the dead zone", () => {
     const { map } = setup();
     map.register({ symbol: "ABC", entityId: "E1", effectiveFrom: d("2015-01-02"), source: "seed:test" });

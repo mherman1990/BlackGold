@@ -183,9 +183,12 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       // Approval means a real signature KNOWN AT THE DECISION INSTANT: a non-empty signer AND a timestamp that
       // exists and is not after decisionAt (Codex P1, rounds 4-5). Comparing against the run instant instead
       // would let an approval landing between close+offset and the delayed run count for a decision that is
-      // timestamp-locked to before it existed.
+      // timestamp-locked to before it existed. Compared as parsed instants, not strings: lexically,
+      // "T21:00:00Z" sorts AFTER the equal instant "T21:00:00.000Z", so a string compare would reject an
+      // approval signed at exactly the decision instant just for omitting fractional seconds (Codex P2, round 6).
+      const decisionAtMs = Date.parse(decisionAt);
       const approved = (v: { approvedBy: string | null; approvedAt: string | null }): boolean =>
-        v.approvedBy !== null && v.approvedBy.trim().length > 0 && v.approvedAt !== null && v.approvedAt <= decisionAt;
+        v.approvedBy !== null && v.approvedBy.trim().length > 0 && v.approvedAt !== null && Date.parse(v.approvedAt) <= decisionAtMs;
       const unapprovedPolicies: string[] = [];
       if (!approved(risk.value)) unapprovedPolicies.push("policy_unapproved:risk.yaml");
       if (!approved(restricted.value)) unapprovedPolicies.push("policy_unapproved:restricted-list.yaml");
