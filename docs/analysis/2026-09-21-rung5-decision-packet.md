@@ -103,7 +103,15 @@ into 0.3.0 text and `SECONDARY_2_OPEN_READINGS` comes off every verdict.
 review; the alternatives differ only on rebalance-coincident sessions). Cost of
 wrong: negligible if confirmed now; a post-registration overrule is a version.
 
-**(e) The §14.2-vs-§17 clock-start ambiguity** from §0. One sentence.
+**(e) `component_versions.features` → 2.** The corporate-action dedupe fix in
+this PR is a behavioral change to the feature transformation, so code-side
+`FEATURES_VERSION` is now 2 (Codex P2). The charter still declares `features: 1`
+— a signed value only you can change; fold the bump into the 0.3.0 cut. On
+every store that exists today the two versions produce byte-identical features
+(no reconciled row coexists with a Tiingo row anywhere), so no recorded number
+is invalidated; the bump is provenance hygiene, not a superseding event.
+
+**(f) The §14.2-vs-§17 clock-start ambiguity** from §0. One sentence.
 **Recommendation:** "prospective decisions count from registration" — it is
 what §14.2 already says, and the strict reading only delays evidence without
 adding safety (the decisions are sealed either way).

@@ -20,7 +20,13 @@ import type { Charter } from "./charter.ts";
  * `Math.log` are not guaranteed to be in their last bits.
  */
 
-export const FEATURES_VERSION = 1;
+/**
+ * 2: corporate-action rows are deduped per (entity, kind, effective date) before entering the total-return
+ * series (shared `dedupeCorporateActionRows`), matching the execution path. On a store where a reconciled and
+ * a single-source row coexist for the same event, version-1 features counted it twice; the algorithms must not
+ * share a declared transformation version (Codex P2, PR #99).
+ */
+export const FEATURES_VERSION = 2;
 const SESSIONS_PER_YEAR = 252;
 
 export type FeatureParams = {
