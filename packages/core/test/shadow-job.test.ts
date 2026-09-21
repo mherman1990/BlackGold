@@ -11,6 +11,7 @@ import { parseAppConfig } from "../src/config/load.ts";
 import type { AppConfig } from "../src/config/schema.ts";
 import { isWeeklyDecisionSession, registerShadowDecisionJob, SHADOW_DECISION_SEALED } from "../src/decision/shadow-job.ts";
 import { appendDecisionRecord, decisionRecordCount, DECISION_RECORD_VERSION } from "../src/decision/decision-record.ts";
+import { loadCharterFile } from "../src/strategy/charter.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
 
 const cal = new NyseCalendar();
@@ -47,20 +48,33 @@ function writeShadowCharter(dir: string, decisionOffsetMinutes?: number): string
 }
 
 /** The baked policy directory: a relaxed risk.yaml, a clean restricted list, and a covering theme membership. */
-function writePolicyDir(dir: string): void {
+const APPROVAL = { approvedBy: "Test Owner", approvedAt: "2026-03-01T00:00:00Z" };
+
+function writePolicyDir(dir: string, opts: { approveRestrictedList?: boolean } = {}): void {
   writeFileSync(
     join(dir, "risk.yaml"),
     stringify({
+      ...APPROVAL,
       positionLimits: { maxSingleEtfWeightPct: "1.00", maxOpenPositions: 50 },
       concentration: { maxSectorWeightPct: "1.00", maxThemeWeightPct: "1.00", maxFactorWeightPct: "1.00", maxCorrelatedClusterWeightPct: "1.00" },
       exposure: { minCashPct: "0.00" },
     }),
   );
-  writeFileSync(join(dir, "restricted-list.yaml"), stringify({ asOf: "2026-03-01", themes: ["soybean_processing"] }));
+  writeFileSync(
+    join(dir, "restricted-list.yaml"),
+    stringify({ ...(opts.approveRestrictedList === false ? {} : APPROVAL), asOf: "2026-03-01", themes: ["soybean_processing"] }),
+  );
   writeFileSync(
     join(dir, "theme-membership.yaml"),
-    stringify({ asOf: "2026-03-01", maxAggregateThemeWeightPct: "0.10", maxHoldingsAgeDays: 7, issuers: [{ symbols: ["PROC"], themes: ["soybean_processing"] }] }),
+    stringify({ ...APPROVAL, asOf: "2026-03-01", maxAggregateThemeWeightPct: "0.10", maxHoldingsAgeDays: 7, issuers: [{ symbols: ["PROC"], themes: ["soybean_processing"] }] }),
   );
+}
+
+/** Register a minimal rung-1 experiment for the charter hash, the precondition the job enforces (D-53). */
+function registerExperimentFor(db: Db, charterHash: string): void {
+  db.prepare(
+    "INSERT INTO experiments (experiment_id, registered_at, registered_by, definition_json, definition_hash, labels_json) VALUES (?,?,?,?,?,?)",
+  ).run(`exp-${sha256Hex(charterHash).slice(0, 8)}`, "2026-03-01T00:00:00Z", "test", JSON.stringify({ charter_hash: charterHash }), `sha256:${sha256Hex(charterHash)}`, "[]");
 }
 
 const PATHS: PricePath[] = [
@@ -78,12 +92,13 @@ const PATHS: PricePath[] = [
 
 type Env = { db: Db; scheduler: Scheduler; config: AppConfig; charterPath: string; policyDir: string };
 
-function setup(mode: "SHADOW" | "RESEARCH", withCharterPath = true): Env {
+function setup(mode: "SHADOW" | "RESEARCH", withCharterPath = true, opts: { registerExperiment?: boolean; approveRestrictedList?: boolean } = {}): Env {
   const dir = mkdtempSync(join(tmpdir(), "bg-shadowjob-"));
   const db = openCoreDb({ dbPath: join(dir, "s.sqlite") }).db;
   buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-03-13"), db });
   const charterPath = writeShadowCharter(dir);
-  writePolicyDir(dir);
+  if (opts.registerExperiment !== false) registerExperimentFor(db, loadCharterFile(charterPath).charterHash);
+  writePolicyDir(dir, opts);
   const config = parseAppConfig({ mode, shadow: { ...(withCharterPath ? { charterPath } : {}), policyDir: dir } });
   const scheduler = new Scheduler({ db, ledger: new Ledger(db), calendar: cal, dueLookbackMs: 4 * 3_600_000, missedLookbackMs: 48 * 3_600_000 });
   registerShadowDecisionJob(scheduler, { config, calendar: cal });
@@ -167,6 +182,31 @@ describe("shadow_decision job", () => {
   });
 });
 
+describe("shadow_decision job: rung order and policy approval", () => {
+  it("seals nothing while no experiment is registered for the charter hash (rung-1 precedes rung-2, D-53)", async () => {
+    const env = setup("SHADOW", true, { registerExperiment: false });
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    expect(decisionRecordCount(env.db)).toBe(0);
+    const skips = env.db.prepare("SELECT payload FROM ledger_events WHERE kind = 'shadow.decision_skipped'").all() as { payload: string }[];
+    expect(skips).toHaveLength(1);
+    expect(skips[0]?.payload).toContain("no registered experiment");
+  });
+
+  it("seals every arm with new risk BLOCKED while any policy file is unapproved (placeholder content is not policy)", async () => {
+    const env = setup("SHADOW", true, { approveRestrictedList: false });
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    expect(decisionRecordCount(env.db)).toBe(2); // the records still seal - honestly blocked, not silently absent
+    const rows = env.db.prepare("SELECT record_json FROM decision_records").all() as { record_json: string }[];
+    for (const row of rows) {
+      const rec = JSON.parse(row.record_json) as { gate: { newRiskAllowed: boolean; blockedBy: string[] } };
+      expect(rec.gate.newRiskAllowed).toBe(false);
+      expect(rec.gate.blockedBy.join(" ")).toContain("policy_unapproved:restricted-list.yaml");
+    }
+    const ev = sealedEvents(env.db)[0] as (ReturnType<typeof sealedEvents>[number] & { unapprovedPolicies: string[] }) | undefined;
+    expect(ev?.unapprovedPolicies).toEqual(["policy_unapproved:restricted-list.yaml"]);
+  });
+});
+
 describe("shadow_decision job: identity and atomicity", () => {
   const recordJson = (db: Db, arm: string): string =>
     (db.prepare("SELECT record_json FROM decision_records WHERE arm = ?").get(arm) as { record_json: string }).record_json;
@@ -175,7 +215,7 @@ describe("shadow_decision job: identity and atomicity", () => {
     // The restricted list names the historical ticker; today's holdings trade under the new one. Identity must
     // carry the entity's full known ticker history or the rename silently un-restricts the issuer.
     const withAlias = setup("SHADOW");
-    writeFileSync(join(withAlias.policyDir, "restricted-list.yaml"), stringify({ asOf: "2026-03-01", names: ["OLDQQQ"] }));
+    writeFileSync(join(withAlias.policyDir, "restricted-list.yaml"), stringify({ ...APPROVAL, asOf: "2026-03-01", names: ["OLDQQQ"] }));
     const map = new EntityMap(withAlias.db);
     map.register({ symbol: "OLDQQQ", entityId: "QQQ_TRUST", effectiveFrom: D("2020-01-02"), effectiveTo: D("2025-12-31"), source: "test" });
     map.register({ symbol: "QQQ", entityId: "QQQ_TRUST", effectiveFrom: D("2026-01-01"), source: "test" });
@@ -190,7 +230,7 @@ describe("shadow_decision job: identity and atomicity", () => {
     // Control (the fixture spans the dimension): the same restricted list WITHOUT the entity-map history does
     // not connect OLDQQQ to QQQ, so B1 is not blocked by it.
     const noAlias = setup("SHADOW");
-    writeFileSync(join(noAlias.policyDir, "restricted-list.yaml"), stringify({ asOf: "2026-03-01", names: ["OLDQQQ"] }));
+    writeFileSync(join(noAlias.policyDir, "restricted-list.yaml"), stringify({ ...APPROVAL, asOf: "2026-03-01", names: ["OLDQQQ"] }));
     await noAlias.scheduler.tick(afterClose("2026-03-06", 150));
     const clear = JSON.parse(recordJson(noAlias.db, "B1_DETERMINISTIC")) as { gate: { blockedBy: string[] } };
     expect(clear.gate.blockedBy.join(" ")).not.toContain("RESTRICTED_NAME");
@@ -200,7 +240,7 @@ describe("shadow_decision job: identity and atomicity", () => {
     // Production never calls EntityMap.register by hand: a rename arrives as a corporate_action.SYMBOL_CHANGE
     // observation. The job must sync the map from the store or the history silently resolves to nothing.
     const env = setup("SHADOW");
-    writeFileSync(join(env.policyDir, "restricted-list.yaml"), stringify({ asOf: "2026-03-01", names: ["OLDQQQ"] }));
+    writeFileSync(join(env.policyDir, "restricted-list.yaml"), stringify({ ...APPROVAL, asOf: "2026-03-01", names: ["OLDQQQ"] }));
     // The initial universe seed knew the issuer under its old ticker; the RENAME arrives only as an ingested
     // observation, which the job's sync must apply (closing OLDQQQ, registering QQQ) - nothing registers it by hand.
     new EntityMap(env.db).register({ symbol: "OLDQQQ", entityId: "QQQ", effectiveFrom: D("2020-01-02"), source: "seed:test" });
@@ -231,6 +271,7 @@ describe("shadow_decision job: identity and atomicity", () => {
     const db = openCoreDb({ dbPath: join(dir, "s.sqlite") }).db;
     buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-03-13"), db });
     const charterPath = writeShadowCharter(dir, 300);
+    registerExperimentFor(db, loadCharterFile(charterPath).charterHash);
     writePolicyDir(dir);
     const config = parseAppConfig({ mode: "SHADOW", shadow: { charterPath, policyDir: dir } });
     const scheduler = new Scheduler({ db, ledger: new Ledger(db), calendar: cal, dueLookbackMs: 8 * 3_600_000, missedLookbackMs: 48 * 3_600_000 });
@@ -251,6 +292,7 @@ describe("shadow_decision job: identity and atomicity", () => {
     const db = openCoreDb({ dbPath: join(dir, "s.sqlite") }).db;
     buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-03-13"), db });
     const charterPath = writeShadowCharter(dir);
+    registerExperimentFor(db, loadCharterFile(charterPath).charterHash);
     writePolicyDir(dir);
     const config = parseAppConfig({ mode: "SHADOW", shadow: { charterPath, policyDir: dir } });
     // A ledger whose sealed-event append throws stands in for a crash after the record inserts: without the

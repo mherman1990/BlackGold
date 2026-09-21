@@ -107,6 +107,25 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
 
       const loaded = loadCharterFile(charterPath);
       const charter = loaded.charter;
+
+      // Rung order is enforced in code, not prose (Codex P1, round 3): ALPHA_CHARTER section 14.2 dates the
+      // prospective record "from registration", and D-53 says rung-2 sealing cannot precede the rung-1
+      // experiment. No experiment registered for THIS charter hash means no sealing - the job skips, visibly.
+      // (Whether sealing should additionally wait for the owner's ACTIVE acceptance - the section 17 reading -
+      // is the open clock-start question in docs/analysis/2026-09-21-rung5-decision-packet.md; tightening this
+      // gate to that reading is one line once the owner decides. This gate only ever fails closed vs. none.)
+      const registeredExperiments = (
+        ctx.db.prepare("SELECT COUNT(*) AS n FROM experiments WHERE json_extract(definition_json, '$.charter_hash') = ?").get(loaded.charterHash) as { n: number }
+      ).n;
+      if (registeredExperiments === 0) {
+        ctx.ledger.append(
+          SHADOW_DECISION_SKIPPED,
+          { scheduledFor: ctx.scheduledFor, session, charterHash: loaded.charterHash, reason: "no registered experiment for this charter hash; rung-2 sealing cannot precede the rung-1 registration (D-53)" },
+          ctx.now,
+        );
+        return;
+      }
+
       const decisionAt = addMs(calendar.sessionClose(session), charter.rules.decision_offset_minutes * 60_000);
       if (ctx.now < decisionAt) {
         // The job fired before the charter's decision instant (offsets misconfigured). Sealing now would
@@ -150,6 +169,16 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
         resolveEntityId: entityMapResolver(entityMap, decisionAt),
       });
 
+      // Unapproved policy content is missing owner content, not an operative policy (Codex P1, round 3): the
+      // baked examples are fake, and a restricted list that restricts nothing REAL would otherwise let B1 clear
+      // the gate on placeholder compliance. Each unapproved file enters the halt machine as a stale input, so
+      // every arm seals with new risk blocked and the reason on the record - honest, and it lifts the moment
+      // the owner's signed files replace the examples (a config act, no code change).
+      const unapprovedPolicies: string[] = [];
+      if (risk.value.approvedBy === null) unapprovedPolicies.push("policy_unapproved:risk.yaml");
+      if (restricted.value.approvedBy === null) unapprovedPolicies.push("policy_unapproved:restricted-list.yaml");
+      if (membership.value.approvedBy === null) unapprovedPolicies.push("policy_unapproved:theme-membership.yaml");
+
       const records = shadowDecisionRecords(charter, {
         mode: config.mode,
         charterHash: loaded.charterHash,
@@ -160,6 +189,7 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
         sealedAt: ctx.now,
         identity,
         lookThrough,
+        ...(unapprovedPolicies.length === 0 ? {} : { staleInputs: unapprovedPolicies }),
       });
 
       // Seal all arms and the ledger event in ONE transaction (Codex P1): the scheduler claims the
@@ -194,6 +224,7 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
           charterVersion: charter.charter_version,
           charterHash: loaded.charterHash,
           policyHashes: { risk_yaml: risk.hash, restricted_list_yaml: restricted.hash, theme_membership_yaml: membership.hash },
+          unapprovedPolicies,
           policyVersions: { risk_yaml: risk.value.version },
           sealed,
           alreadySealed,
