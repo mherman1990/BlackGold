@@ -1046,6 +1046,28 @@ when the other is unknown, since §16.1 asks only whether either passed); both p
 gives rejection; anything else is undetermined. Collapsing unknown into either branch is the error this
 thread keeps rediscovering.
 
+**OWNER DECISION (Matt, 2026-09-20): the first prong is withheld on any data gap.** Codex found, on PR #94,
+that a gap in a **held risk ETF** is invisible to the level series the Sharpe legs are built from:
+`dailyNavSeries` is handed the run's whole calendar and marks a missing holding at its previous close, so the
+candidate arm has a point on every exchange session while that holding's multi-day move sits inside one later
+return. Nothing downstream can see it. `GAP` and `STALE_BAR` are both `promotionEvidenceAllowed: true`, so
+such a run is otherwise citable and the distortion can reach a §16.1 verdict.
+
+Offered: withhold the prong on the label; plumb per-session constituent gap marks through `BacktestResult`
+and exclude the affected intervals; or record it as a caveat and fix separately. **Matt chose the withhold**,
+which is the pattern this repository already used for an inexact Secondary 2 and which needs no new plumbing.
+
+**It withholds in both directions, unlike the deflated-Sharpe withhold**, and the asymmetry is the point. The
+deflation can only ever add a hurdle, so a failure survives it and only a pass is withheld. A gap distorts
+with a sign that depends on where it falls, so it can push the estimate either way: a failing threshold test
+is then no more trustworthy than a passing one, and withholding only the pass would keep `REJECT` reachable
+on a number nobody can vouch for — the outcome that is hardest to walk back.
+
+Accepted cost, stated plainly: on real data this may leave the first prong unmeasured often, and §16.1
+correspondingly `UNMEASURED`, until either the data carries no gaps or the constituent-level plumbing lands.
+That is the honest state rather than a broken one, and it is the same shape as Secondary 2's withhold, which
+was retired once the construction became exact.
+
 **Correction history.** This entry's first version (2026-09-20) said the second prong was computed on every
 run and merely needed surfacing, and recommended running it. That was wrong on both counts and is corrected
 above; the errors were found by Codex review, not by the sessions that wrote them.

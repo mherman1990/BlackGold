@@ -14,7 +14,7 @@ import {
 import { buildResultReport, sharpeInputSeries, type ArmMetrics, type ResultReport } from "./report.ts";
 import { splitPlan, type SplitKind } from "./walkforward.ts";
 import { enumerateGrid } from "./robustness.ts";
-import { aggregateWalkForward, type AggregateSplitInput, type AggregateWalkForward } from "./aggregate.ts";
+import { aggregateWalkForward, SHARPE_DISTORTING_QUALITY_CODES, type AggregateSplitInput, type AggregateWalkForward } from "./aggregate.ts";
 
 /**
  * Operator entry point for a deterministic evaluation run (PLAN.md Phase 2).
@@ -348,6 +348,9 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
         candidateTotalReturn: candidate.totalReturn,
         secondary2TotalReturn: secondary2?.totalReturn,
         secondary2UnusableReason: unusable,
+        // From the run's own labels. These codes do NOT bar the run from being cited, so the first prong has
+        // to notice them itself - see `SHARPE_DISTORTING_QUALITY_CODES`.
+        dataGapCodes: bt.labels.filter((l) => SHARPE_DISTORTING_QUALITY_CODES.includes(l)),
         citableAsEvidence: splitCitable,
         citabilityReasons: report.citabilityReasons,
         promotionBlockingCodes: [...splitBlocking],

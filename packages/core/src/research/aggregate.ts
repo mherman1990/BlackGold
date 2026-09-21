@@ -73,6 +73,12 @@ export type AggregateSplitInput = {
   secondary2TotalReturn: Dec | undefined;
   /** Why Secondary 2 was unusable on this split, when it was. */
   secondary2UnusableReason: string | undefined;
+  /**
+   * Codes from this split's run that distort a daily return series
+   * (`SHARPE_DISTORTING_QUALITY_CODES`). Not the same thing as `promotionBlockingCodes`: these do not bar
+   * the run from being cited, which is exactly why the first prong has to notice them itself.
+   */
+  dataGapCodes: readonly string[];
   citableAsEvidence: boolean;
   citabilityReasons: readonly string[];
   promotionBlockingCodes: readonly string[];
@@ -110,6 +116,8 @@ export type AggregatePrimaryMetric = {
    *    here and not a new shape.
    */
   passes: boolean | undefined;
+  /** Why `passes` is `undefined`, when it is. Empty when the prong was decided. */
+  withheldBecause: string[];
   /** Observations in the pooled series. */
   observations: number;
   /**
@@ -197,6 +205,19 @@ export class AggregateScopeError extends Error {
  * shape: Claude Code implemented a reading, and the owner confirms or overrules it before the number is
  * treated as decisive. Remove an entry when `docs/DECISIONS.md` records the owner's answer to it.
  */
+/**
+ * Data-quality codes that make a daily return series unsafe for a Sharpe statistic.
+ *
+ * `GAP` means a session's bar is absent; `STALE_BAR` means it was carried forward. Either way the candidate
+ * arm's NAV still has a point on every exchange session - `dailyNavSeries` is handed the run's whole
+ * calendar and marks a missing holding at its previous close - so the arm's series looks contiguous while
+ * the affected holding's multi-day move lands in a single later return. Nothing downstream can see that from
+ * the level series alone, which is why the first prong is withheld on the label rather than repaired here.
+ *
+ * Both are `promotionEvidenceAllowed: true` (data/quality.ts), so such a run is otherwise citable.
+ */
+export const SHARPE_DISTORTING_QUALITY_CODES: readonly string[] = ["GAP", "STALE_BAR"];
+
 export const SECONDARY_2_OPEN_READINGS: readonly string[] = [
   "Secondary 2 re-scales weekly, at the strategy's own decision instants. Section 11 states the estimator, the target and the cash leg but not the cadence; re-scaling every session is equally literal and gives a different number (docs/analysis/2026-09-20-d51-primary-metric.md, section 2d).",
   "Secondary 2 reinvests a distribution at the ex-date session's close, following the total-return index convention. Reinvesting at the open is defensible and would move the second prong.",
@@ -298,14 +319,35 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
       ...(input.bootstrapSeed === undefined ? {} : { seed: input.bootstrapSeed }),
     });
     const clearsUndeflatedThreshold = interval.pointEstimate >= threshold && interval.excludesZero;
+
+    // A gap withholds the prong in BOTH directions, unlike the missing deflation.
+    //
+    // The deflated-Sharpe adjustment can only ever add a hurdle, so a failure survives it and only a pass is
+    // withheld. A data gap is different in kind: it distorts the statistic with a sign that depends on where
+    // the gap falls, so it can push the estimate either way. A failing threshold test is then no more
+    // trustworthy than a passing one, and withholding only the pass would quietly keep REJECT reachable on
+    // a number nobody can vouch for - a rejection being the outcome that is hardest to walk back.
+    const gapped = ordered.filter((split) => split.dataGapCodes.length > 0);
+    const withheldBecause: string[] = [];
+    if (gapped.length > 0) {
+      const codes = [...new Set(gapped.flatMap((split) => split.dataGapCodes))].sort();
+      withheldBecause.push(
+        `${gapped.length} of ${ordered.length} pooled split(s) carry ${codes.join(", ")}, which leave a holding's multi-day move inside a single daily return. The distortion's sign depends on where the gap falls, so neither a pass nor a failure can be relied on: ${gapped.map((split) => split.splitId).join(", ")}.`,
+      );
+    }
+    if (clearsUndeflatedThreshold) {
+      withheldBecause.push(
+        'the threshold test clears, but section 13\'s registered "deflated-Sharpe adjustment for the registered trial count" is not applied, and that adjustment can only take a pass away',
+      );
+    }
     primaryMetric = {
       name: c.pass_fail.primary_metric,
       pointEstimate: interval.pointEstimate,
       interval,
       threshold,
       clearsUndeflatedThreshold,
-      // A failure is sound without the deflated-Sharpe adjustment; a pass is not. See `passes`.
-      passes: clearsUndeflatedThreshold ? undefined : false,
+      passes: withheldBecause.length > 0 ? undefined : false,
+      withheldBecause,
       observations: pooledStrategy.length,
       deflatedSharpeApplied: false,
     };
@@ -407,9 +449,7 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
           `the pooled series holds ${pooledStrategy.length} observation(s); a bootstrap interval needs at least two, and section 13 admits no point estimate without one`,
         );
       } else if (primaryPasses === undefined) {
-        verdictReasons.push(
-          `the primary metric clears section 13's threshold on the pooled set (${primaryMetric.pointEstimate.toFixed(4)} against ${primaryMetric.threshold}, interval excluding zero), but section 13's registered "deflated-Sharpe adjustment for the registered trial count" is not applied, and that adjustment can only take a pass away. An undeflated pass is not a registered pass, so the prong is withheld rather than acted on.`,
-        );
+        for (const why of primaryMetric.withheldBecause) verdictReasons.push(`the first prong is withheld: ${why}`);
       }
       if (secondary2 === undefined) {
         verdictReasons.push('the second prong is unmeasured, and section 16.1 rejects only "if both fail": absence is not failure');

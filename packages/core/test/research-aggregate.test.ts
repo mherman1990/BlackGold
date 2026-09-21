@@ -63,6 +63,7 @@ function split(id: string, startDay: number, count: number, legs: Legs, over: Sp
     candidateTotalReturn: new Dec("0.10"),
     secondary2TotalReturn: new Dec("0.20"),
     secondary2UnusableReason: undefined,
+    dataGapCodes: [],
     citableAsEvidence: true,
     citabilityReasons: [],
     promotionBlockingCodes: [],
@@ -235,7 +236,48 @@ describe("aggregateWalkForward: section 16.1", () => {
     expect(r.primaryMetric?.deflatedSharpeApplied).toBe(false);
     expect(r.secondary2?.beats).toBe(false);
     expect(r.verdict).toBe("UNMEASURED");
-    expect(r.verdictReasons.join(" ")).toContain("An undeflated pass is not a registered pass");
+    expect(r.verdictReasons.join(" ")).toContain("can only take a pass away");
+    expect(r.primaryMetric?.withheldBecause).toEqual([expect.stringContaining("deflated-Sharpe")]);
+  });
+
+  // Owner's call, 2026-09-20, after Codex found that a gap in a HELD RISK ETF is invisible to the level
+  // series: `dailyNavSeries` marks the missing holding at its previous close, so the candidate arm has a
+  // point on every session while the holding's multi-day move sits inside one later return. Withhold the
+  // prong on the label rather than trying to repair the series.
+  it("withholds the first prong in BOTH directions when a pooled split carries a data gap", () => {
+    // The threshold test FAILS here, so this is the direction the deflated-Sharpe withhold does not cover.
+    // A gap distorts with a sign that depends on where it falls, so a failure is no more trustworthy than a
+    // pass, and withholding only the pass would keep REJECT reachable on a number nobody can vouch for.
+    const clean = run(charter(SMALL_MINIMUM), [split("walk_forward/a", 2, 40, LOSING), split("walk_forward/b", 42, 40, LOSING)]);
+    expect(clean.primaryMetric?.passes).toBe(false);
+    expect(clean.primaryMetric?.withheldBecause).toEqual([]);
+    expect(clean.verdict).toBe("REJECT");
+
+    const gapped = run(charter(SMALL_MINIMUM), [
+      split("walk_forward/a", 2, 40, LOSING, { dataGapCodes: ["GAP"] }),
+      split("walk_forward/b", 42, 40, LOSING),
+    ]);
+    // Same numbers - the gap changes nothing the aggregate can compute, only what it may conclude.
+    expect(gapped.primaryMetric?.pointEstimate).toBe(clean.primaryMetric?.pointEstimate);
+    expect(gapped.primaryMetric?.clearsUndeflatedThreshold).toBe(false);
+    expect(gapped.primaryMetric?.passes).toBeUndefined();
+    expect(gapped.primaryMetric?.withheldBecause.join(" ")).toContain("GAP");
+    expect(gapped.primaryMetric?.withheldBecause.join(" ")).toContain("walk_forward/a");
+    expect(gapped.verdict).toBe("UNMEASURED");
+    // And it is a different result, so it cannot share an identity with the clean one.
+    expect(gapped.aggregateHash).not.toBe(clean.aggregateHash);
+  });
+
+  it("names both reasons when a gapped split's threshold test also clears", () => {
+    const r = run(charter(SMALL_MINIMUM), [
+      split("walk_forward/a", 2, 40, CLEARING, { dataGapCodes: ["STALE_BAR"] }),
+      split("walk_forward/b", 42, 40, CLEARING),
+    ]);
+    expect(r.primaryMetric?.clearsUndeflatedThreshold).toBe(true);
+    expect(r.primaryMetric?.passes).toBeUndefined();
+    expect(r.primaryMetric?.withheldBecause.length).toBe(2);
+    expect(r.primaryMetric?.withheldBecause.join(" ")).toContain("STALE_BAR");
+    expect(r.primaryMetric?.withheldBecause.join(" ")).toContain("deflated-Sharpe");
   });
 
   it("still reaches owner review when Secondary 2 is beaten, whatever the withheld first prong would say", () => {
