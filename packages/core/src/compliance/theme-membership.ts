@@ -138,14 +138,14 @@ export function storedLookThroughResolver(
   },
 ): (etf: string) => readonly string[] | undefined {
   const scope = new Set(opts.lookThroughScope);
-  // A vacuous membership against a live restricted-theme list is missing owner content, not a clean policy
-  // (Codex P1, round 2): with no issuer mapped to any restricted theme, every holding would read as
-  // unrestricted and an in-scope ETF would clear on silence. The schema already rejects an OMITTED `issuers`;
-  // an explicitly empty (or restricted-theme-disjoint) one fails closed here - in-scope ETFs resolve to
-  // `undefined` -> UNKNOWN_LOOK_THROUGH - until the owner's content actually covers the themes in force.
-  const restrictedThemes = new Set(restrictedList.themes);
-  const membershipCoversRestricted =
-    restrictedThemes.size === 0 || membership.issuers.some((i) => i.themes.some((t) => restrictedThemes.has(t)));
+  // Membership content that does not cover EVERY restricted theme in force is missing owner content, not a
+  // clean policy (Codex P1, rounds 2-3): an uncovered theme has no issuer entry capable of identifying its
+  // members, so their weight would contribute zero and an in-scope ETF would clear on silence. The schema
+  // already rejects an OMITTED `issuers`; here, any restricted theme with no membership entry at all fails
+  // closed - in-scope ETFs resolve to `undefined` -> UNKNOWN_LOOK_THROUGH - until the owner's content covers
+  // the full theme list. An empty restricted-theme list needs no content (nothing is restricted).
+  const coveredThemes = new Set(membership.issuers.flatMap((i) => i.themes));
+  const membershipCoversRestricted = restrictedList.themes.every((t) => coveredThemes.has(t));
   const inScope = lookThroughResolver(
     storedHoldingsOf(pit, opts),
     themeMembershipOf(membership),

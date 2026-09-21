@@ -199,6 +199,24 @@ describe("storedLookThroughResolver", () => {
     expect(storedLookThroughResolver(pit, vacuous, noThemes, base)("XLP")).toEqual([]);
   });
 
+  it("fails closed while ANY restricted theme lacks membership coverage, not only when all do (Codex P1, round 3)", () => {
+    const pit = seeded();
+    // Covers soybean_processing but not crop_inputs: partially missing owner content, not a policy.
+    const partial = ThemeMembershipConfigSchema.parse({
+      asOf: "2026-09-01",
+      maxAggregateThemeWeightPct: "0.10",
+      maxHoldingsAgeDays: 7,
+      issuers: [{ symbols: ["PROC"], themes: ["soybean_processing"] }],
+    });
+    const base = { decisionAt: DECISION_AT, processingDelayMs: 0, lookThroughScope: SCOPE } as const;
+    const lookThrough = storedLookThroughResolver(pit, partial, RESTRICTED, base);
+    expect(lookThrough("XLI")).toBeUndefined();
+    expect(lookThrough("XLP")).toBeUndefined();
+    // With the restricted list narrowed to the covered theme, the same membership is complete and evaluates.
+    const covered = RestrictedListConfigSchema.parse({ asOf: "2026-09-01", themes: ["soybean_processing"] });
+    expect(storedLookThroughResolver(pit, partial, covered, base)("XLP")).toEqual([]);
+  });
+
   it("matches an aliased constituent through the point-in-time entity map (Codex P1)", () => {
     const db = coreDb();
     const pit = repo(db);
