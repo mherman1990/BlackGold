@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse, stringify } from "yaml";
 import { addMs, isoDate, sha256Hex, type Db, type UtcInstant } from "@blackgold/shared";
-import { Ledger, NyseCalendar, Scheduler, openCoreDb } from "../src/index.ts";
+import { Ledger, NyseCalendar, PointInTimeRepository, Scheduler, corporateActionObservation, openCoreDb } from "../src/index.ts";
 import { EntityMap } from "../src/market/entity-map.ts";
 import { parseAppConfig } from "../src/config/load.ts";
 import type { AppConfig } from "../src/config/schema.ts";
@@ -21,7 +21,7 @@ const afterClose = (session: string, mins: number): UtcInstant => addMs(cal.sess
  * and written back to disk, because the job loads a charter FILE. The parse -> edit -> stringify round trip
  * keeps it a valid document under the real schema.
  */
-function writeShadowCharter(dir: string): string {
+function writeShadowCharter(dir: string, decisionOffsetMinutes?: number): string {
   const src = fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url));
   const doc = parse(readFileSync(src, "utf8")) as Record<string, unknown>;
   const universe = doc["universe"] as Record<string, unknown>;
@@ -36,6 +36,7 @@ function writeShadowCharter(dir: string): string {
   const factors = doc["factors"] as { assignments: Record<string, unknown> };
   const keep = new Set([...(universe["risk_etfs"] as string[]), universe["cash_etf"] as string]);
   factors.assignments = Object.fromEntries(Object.entries(factors.assignments).filter(([sym]) => keep.has(sym)));
+  if (decisionOffsetMinutes !== undefined) (doc["rules"] as Record<string, unknown>)["decision_offset_minutes"] = decisionOffsetMinutes;
   const grid = doc["sensitivity_grid"] as Record<string, unknown>;
   grid["momentum"] = [{ lookback_sessions: 20, skip_sessions: 4 }, { lookback_sessions: 40, skip_sessions: 4 }];
   grid["trend_sma_sessions"] = [10, 15];
@@ -182,6 +183,9 @@ describe("shadow_decision job: identity and atomicity", () => {
     const blocked = JSON.parse(recordJson(withAlias.db, "B1_DETERMINISTIC")) as { gate: { newRiskAllowed: boolean; blockedBy: string[] } };
     expect(blocked.gate.newRiskAllowed).toBe(false);
     expect(blocked.gate.blockedBy.join(" ")).toContain("RESTRICTED_NAME: QQQ");
+    // Key alignment (Codex P1, round 2): the stable entity id lives in `identifiers`, never in the candidate's
+    // canonical key, so a MAPPED but unrestricted holding is still covered rather than MISSING_COMPLIANCE.
+    expect(blocked.gate.blockedBy.join(" ")).not.toContain("MISSING_COMPLIANCE");
 
     // Control (the fixture spans the dimension): the same restricted list WITHOUT the entity-map history does
     // not connect OLDQQQ to QQQ, so B1 is not blocked by it.
@@ -190,6 +194,56 @@ describe("shadow_decision job: identity and atomicity", () => {
     await noAlias.scheduler.tick(afterClose("2026-03-06", 150));
     const clear = JSON.parse(recordJson(noAlias.db, "B1_DETERMINISTIC")) as { gate: { blockedBy: string[] } };
     expect(clear.gate.blockedBy.join(" ")).not.toContain("RESTRICTED_NAME");
+  });
+
+  it("resolves ticker history from INGESTED symbol-change actions via syncFromRepository (Codex P1, round 2)", async () => {
+    // Production never calls EntityMap.register by hand: a rename arrives as a corporate_action.SYMBOL_CHANGE
+    // observation. The job must sync the map from the store or the history silently resolves to nothing.
+    const env = setup("SHADOW");
+    writeFileSync(join(env.policyDir, "restricted-list.yaml"), stringify({ asOf: "2026-03-01", names: ["OLDQQQ"] }));
+    // The initial universe seed knew the issuer under its old ticker; the RENAME arrives only as an ingested
+    // observation, which the job's sync must apply (closing OLDQQQ, registering QQQ) - nothing registers it by hand.
+    new EntityMap(env.db).register({ symbol: "OLDQQQ", entityId: "QQQ", effectiveFrom: D("2020-01-02"), source: "seed:test" });
+    const pit = new PointInTimeRepository(env.db);
+    pit.append(
+      corporateActionObservation(
+        { kind: "SYMBOL_CHANGE", entityId: "QQQ", oldSymbol: "OLDQQQ", newSymbol: "QQQ", effective: D("2026-01-15") },
+        {
+          sourceLocator: "test/symbol-change/QQQ",
+          availableAt: afterClose("2026-01-15", 60),
+          ingestedAt: afterClose("2026-01-15", 60),
+          rawContentHash: `sha256:${sha256Hex("sym")}`,
+          adapterVersion: "1.0.0",
+          parserVersion: "1.0.0",
+        },
+      ),
+    );
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    const rec = JSON.parse(recordJson(env.db, "B1_DETERMINISTIC")) as { gate: { blockedBy: string[] } };
+    expect(rec.gate.blockedBy.join(" ")).toContain("RESTRICTED_NAME: QQQ");
+    expect(rec.gate.blockedBy.join(" ")).not.toContain("MISSING_COMPLIANCE");
+  });
+
+  it("derives the schedule from the charter's decision offset so the run can never fire before the instant (Codex P2)", async () => {
+    // A charter registering a 300-minute decision offset: the fixed 150-minute schedule would consume the
+    // scheduler's idempotency key on a pre-instant skip and lose that week's records for good.
+    const dir = mkdtempSync(join(tmpdir(), "bg-shadowjob-"));
+    const db = openCoreDb({ dbPath: join(dir, "s.sqlite") }).db;
+    buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-03-13"), db });
+    const charterPath = writeShadowCharter(dir, 300);
+    writePolicyDir(dir);
+    const config = parseAppConfig({ mode: "SHADOW", shadow: { charterPath, policyDir: dir } });
+    const scheduler = new Scheduler({ db, ledger: new Ledger(db), calendar: cal, dueLookbackMs: 8 * 3_600_000, missedLookbackMs: 48 * 3_600_000 });
+    registerShadowDecisionJob(scheduler, { config, calendar: cal });
+    // At close+150 nothing is due yet (the schedule is charter-derived: 300+30 minutes)...
+    await scheduler.tick(afterClose("2026-03-06", 150));
+    expect(decisionRecordCount(db)).toBe(0);
+    // ...and once it fires, the decision instant is the charter's close+300 and both arms seal.
+    await scheduler.tick(afterClose("2026-03-06", 340));
+    expect(decisionRecordCount(db)).toBe(2);
+    const ev = sealedEvents(db)[0];
+    if (!ev) throw new Error("no sealed event");
+    expect(ev.decisionAt).toBe(afterClose("2026-03-06", 300));
   });
 
   it("seals all arms and the ledger event atomically: a failure mid-run leaves no partial records (Codex P1)", async () => {

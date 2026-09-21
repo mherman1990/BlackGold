@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { addDays, addMs, sha256Hex, type IsoDate } from "@blackgold/shared";
 import { processingDelayOverridesMs, RestrictedListConfigSchema, RiskConfigSchema, ThemeMembershipConfigSchema, type AppConfig } from "../config/schema.ts";
-import { loadYamlConfig } from "../config/load.ts";
+import { parseYamlConfig } from "../config/load.ts";
 import type { ExchangeCalendar } from "../calendar/types.ts";
 import type { Scheduler } from "../scheduler/scheduler.ts";
 import { PointInTimeRepository } from "../data/pit/repository.ts";
@@ -56,11 +56,15 @@ export function isWeeklyDecisionSession(calendar: ExchangeCalendar, session: Iso
   return weeklyDecisionSessions(calendar, session, addDays(session, 13))[0] === session;
 }
 
-/** One operative policy file: its parsed config is used, its raw bytes are hashed for the ledger record. */
-function readPolicyFile<T>(dir: string, file: string, parse: (path: string) => T): { value: T; hash: string } {
+/**
+ * One operative policy file, read ONCE: the same bytes are parsed and hashed (Codex P2 - two reads could
+ * straddle an operator replacing a bind-mounted file, sealing a decision under one byte-state while recording
+ * the hash of another; the whole point of the hash is exact attribution).
+ */
+function readPolicyFile<T>(dir: string, file: string, parse: (text: string, label: string) => T): { value: T; hash: string } {
   const path = join(dir, file);
-  const value = parse(path);
-  return { value, hash: `sha256:${sha256Hex(readFileSync(path))}` };
+  const bytes = readFileSync(path);
+  return { value: parse(bytes.toString("utf8"), path), hash: `sha256:${sha256Hex(bytes)}` };
 }
 
 /**
@@ -76,10 +80,18 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
 
   if (!sealsProspectiveDecisions(config.mode)) return;
 
+  // The schedule offset is DERIVED from the charter (Codex P2): a fixed offset smaller than the charter's
+  // decision_offset_minutes would fire before the decision instant, consume the scheduler's idempotency key on
+  // a successful skip, and leave that week's records permanently missing. Loading here also fails a
+  // misconfigured path loudly at startup instead of at the first close. The 150-minute floor keeps the job
+  // behind the nightly ingest (close + 90 min); the +30 buffer absorbs scheduler polling delay.
+  const registeredOffsetMinutes = loadCharterFile(charterPath).charter.rules.decision_offset_minutes;
+  const jobOffsetMinutes = Math.max(150, registeredOffsetMinutes + 30);
+
   scheduler.register({
     jobId: "shadow_decision",
     name: "Seal the prospective shadow decision records for the configured charter",
-    schedule: { kind: "after_close", offsetMs: 150 * 60_000 },
+    schedule: { kind: "after_close", offsetMs: jobOffsetMinutes * 60_000 },
     deadlineMs: 10 * 60_000,
     handler: (ctx) => {
       // Defence in depth: the registration gate above already excludes non-sealing modes, and the sealer
@@ -108,19 +120,29 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       }
 
       // The operative policy files, from the fixed baked-in directory, hashed as read.
-      const risk = readPolicyFile(config.shadow.policyDir, "risk.yaml", (p) => loadYamlConfig(p, RiskConfigSchema));
-      const restricted = readPolicyFile(config.shadow.policyDir, "restricted-list.yaml", (p) => loadYamlConfig(p, RestrictedListConfigSchema));
-      const membership = readPolicyFile(config.shadow.policyDir, "theme-membership.yaml", (p) => loadYamlConfig(p, ThemeMembershipConfigSchema));
+      const risk = readPolicyFile(config.shadow.policyDir, "risk.yaml", (t, l) => parseYamlConfig(t, RiskConfigSchema, l));
+      const restricted = readPolicyFile(config.shadow.policyDir, "restricted-list.yaml", (t, l) => parseYamlConfig(t, RestrictedListConfigSchema, l));
+      const membership = readPolicyFile(config.shadow.policyDir, "theme-membership.yaml", (t, l) => parseYamlConfig(t, ThemeMembershipConfigSchema, l));
 
       const pit = new PointInTimeRepository(ctx.db, { processingDelayOverrides: processingDelayOverridesMs(config.sources) });
       const entityMap = new EntityMap(ctx.db);
+      entityMap.syncFromRepository(pit, decisionAt);
+      // Bring the map up to date from the ingested corporate-action observations first (Codex P1): in
+      // production, symbol changes arrive as `corporate_action.SYMBOL_CHANGE` rows, and a map that is never
+      // synced resolves nothing - which would silently drop the very ticker history identity relies on. The
+      // sync is knowledge-scoped to the decision instant, so a change recorded later cannot reach back.
+
       // Identity carries the entity's FULL ticker history known by the decision instant, not just today's
       // symbol (Codex P1): the compliance engine matches restricted-list entries by identifier, and a list
-      // keyed by an issuer's old ticker must still catch it after a symbol change.
+      // keyed by an issuer's old ticker must still catch it after a symbol change. The resolved stable id and
+      // the aliases go into `identifiers`, NOT into `SymbolIdentity.entityId`: the decision gate binds
+      // compliance coverage by canonical key (`entityId ?? symbol`), and the target book is keyed by the
+      // charter symbol - an entity id differing from the book key would make every mapped holding read as
+      // MISSING_COMPLIANCE and block clean new risk (Codex P1, round 2).
       const identity = (symbol: string): SymbolIdentity => {
-        const entityId = entityMap.resolve(symbol, session, { knownAt: decisionAt });
-        const aliases = entityId === undefined ? [] : entityMap.symbolsFor(entityId, { knownAt: decisionAt });
-        return { identifiers: [...new Set([symbol, ...aliases])].sort(), entityId };
+        const stableId = entityMap.resolve(symbol, session, { knownAt: decisionAt });
+        const aliases = stableId === undefined ? [] : entityMap.symbolsFor(stableId, { knownAt: decisionAt });
+        return { identifiers: [...new Set([symbol, ...aliases, ...(stableId === undefined ? [] : [stableId])])].sort(), entityId: undefined };
       };
       const lookThrough = storedLookThroughResolver(pit, membership.value, restricted.value, {
         decisionAt,
