@@ -1,0 +1,24 @@
+# Issuer -> restricted-theme membership (FAKE values) plus the two look-through policy numbers
+# ALPHA_CHARTER.md section 2.2 leaves to the owner (D-53 slice 3a-3).
+# Schema: config/schema/theme-membership.schema.json
+#
+# The real content is the owner's nonpublic compliance policy (which issuers belong to which
+# restricted theme, the admissibility threshold, and how stale a holdings file may be). This file
+# stays fake, exactly like restricted-list.yaml; the real one lives in config/local/ (gitignored)
+# or ${APP_DATA_DIR} on the Pi, never in git. Themes here must use the same names as
+# restricted-list.yaml's `themes` - only themes on the restricted list are counted or reported.
+asOf: "2026-09-01"
+
+# Fraction of ETF NAV. Charter section 2.2 proposes "0.10" (10%); the owner confirms or sets it.
+maxAggregateThemeWeightPct: "0.10"
+
+# Days a published holdings file may be old before look-through returns unknown and compliance
+# fails closed for new risk.
+maxHoldingsAgeDays: 7
+
+issuers:
+  - symbols: [FAKEPROC, FAKEPROC.B] # two share classes of the same fake issuer
+    entityId: FAKE_PROCESSOR_CORP
+    themes: [soybean_processing]
+  - symbols: [FAKEAGRI]
+    themes: [crop_inputs, soybean_processing]

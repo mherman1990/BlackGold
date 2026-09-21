@@ -34,12 +34,15 @@ import { prospectiveTargetBooks, type ArmTargetBook, type DecisionEngineDeps } f
  *  - **B1 (and any deterministic arm) is the real book.** It runs the full decision gate - halt, every risk
  *    limit, and new-risk compliance with enforced coverage - exactly as the broker gateway will.
  *
- * Fail-closed compliance is honest here, not bypassed: ETF theme look-through is not yet wired (slice 3), so a
- * candidate whose `lookThrough` resolver is absent carries `themeExposures: undefined`, which the compliance
- * engine treats as an unknown state that blocks NEW risk (`UNKNOWN_LOOK_THROUGH`). A shadow B1 record then
- * seals `newRiskAllowed: false` with that reason. That is the correct record to seal: the sealed target weights
+ * Fail-closed compliance is honest here, not bypassed: a candidate whose `lookThrough` resolver is absent (or
+ * returns `undefined` for it) carries `themeExposures: undefined`, which the compliance engine treats as an
+ * unknown state that blocks NEW risk (`UNKNOWN_LOOK_THROUGH`). A shadow B1 record then seals
+ * `newRiskAllowed: false` with that reason. That is the correct record to seal: the sealed target weights
  * (byte-for-byte the backtested ones, per the slice-2a anti-drift test) are the rung-2 evidence, and the gate
- * verdict truthfully reports that no new exposure cleared. Wiring look-through so B1 can clear is a later slice.
+ * verdict truthfully reports that no new exposure cleared. The store-backed resolver is slice 3a-3's
+ * `storedLookThroughResolver` (`compliance/theme-membership.ts`): published PIT holdings + the owner's
+ * theme-membership config + the restricted list. It clears B1 only where the owner's real config says so;
+ * the tracked example config is fake, so a deployment on examples still fails closed.
  */
 
 /** The shadow book carried into a decision: current weights (for new-risk deltas) and the halt portfolio snapshot. */

@@ -358,6 +358,44 @@ export const RestrictedListConfigSchema = z.object({
 export type RestrictedListConfig = z.output<typeof RestrictedListConfigSchema>;
 
 // ---------------------------------------------------------------------------------------------
+// ThemeMembershipConfig (D-53 slice 3a-3): the owner-authored issuer -> restricted-theme map plus the two
+// look-through policy values ALPHA_CHARTER.md section 2.2 leaves to the owner. The CONTENT is compliance
+// policy the owner writes (which issuers are `crop_inputs`, `soybean_processing`, ... is his nonpublic
+// professional restriction set); config/examples/theme-membership.yaml stays fake, exactly like the
+// restricted list. The schema deliberately sets NO default for the threshold or the freshness limit -
+// they are compliance decisions, not engineering defaults, so an unset value fails the load rather than
+// silently choosing a policy.
+// ---------------------------------------------------------------------------------------------
+
+export const ThemeMembershipConfigSchema = z.object({
+  asOf: isoDateString,
+  /**
+   * Max aggregate weight of restricted-theme issuers, as a fraction of ETF NAV, at or below which a
+   * diversified ETF is admissible. Charter section 2.2 proposes "0.10"; the owner sets it.
+   */
+  maxAggregateThemeWeightPct: ratioString,
+  /** Max age in days of a published holdings file before look-through is unknown and compliance fails closed. */
+  maxHoldingsAgeDays: z.number().int().positive(),
+  /**
+   * Positive membership list: an issuer absent from it belongs to no restricted theme. `symbols` are the
+   * tickers holdings files list the issuer under (share classes included); `entityId` is the resolved stable
+   * id when one exists. Matching is by any symbol or the entity id; a constituent matching several entries
+   * carries the union of their themes.
+   */
+  issuers: z
+    .array(
+      z.object({
+        symbols: z.array(z.string().min(1)).min(1),
+        entityId: z.string().min(1).optional(),
+        themes: z.array(z.string().min(1)).min(1),
+      }),
+    )
+    .default([]),
+});
+
+export type ThemeMembershipConfig = z.output<typeof ThemeMembershipConfigSchema>;
+
+// ---------------------------------------------------------------------------------------------
 // LiveAuthorization (docs/AUTOMATION_AND_LIVE_GATES.md section 5). Schema only: Phase 0 has no verifier
 // and no live path. Field names mirror the YAML artifact (snake_case).
 // ---------------------------------------------------------------------------------------------
@@ -451,6 +489,7 @@ export const CONFIG_SCHEMAS = {
   risk: RiskConfigSchema,
   "financial-picture": FinancialPictureConfigSchema,
   "restricted-list": RestrictedListConfigSchema,
+  "theme-membership": ThemeMembershipConfigSchema,
   "live-authorization": LiveAuthorizationSchema,
   "model-manifest": ModelManifestConfigSchema,
 } as const;
