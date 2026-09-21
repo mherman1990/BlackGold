@@ -17,7 +17,7 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 **Read this first (2026-09-20).** The bullets below were written on 2026-09-08 and were not maintained since. They are kept because their detail about *how each piece works* is still accurate and useful, but several of their **status claims are superseded**. Where they disagree with this box, this box wins:
 
-- `main` is at `cbbd79a` (PR #93), not `4135453`/`03bf580`/`9238e94`/`4f5d005`. Releases through **0.1.12** are published; the app is installed and running on the Pi.
+- **PR #94 (D-51 step 2) merged as `17c787b`; PR #95 (test-suite headroom) as `cfef173`. `main` is at `cfef173`.** But #94 was merged with a Codex round still in flight, so **two accepted P1 fixes are NOT in `main`** and ride a follow-up PR: the second §16.1 prong consumed the same gap-distorted NAV the first prong withholds on, and the gap scan covered sessions on which the position was flat. Until that merges, `main` both under- and over-withholds. Check whether the follow-up landed before trusting §16.1 output. Releases through **0.1.12** are published; the app is installed and running on the Pi.
 - The charter is signed at **0.2.0** (owner, 2026-09-12, `code_commit 115dae4`, D-50), not awaiting signature. Its default bar source is Tiingo, not Alpaca. 0.2.0 inherits **none** of 0.1.0's evidence.
 - **Market data is ingested** and refreshed nightly. "No data has been ingested" appears below and in `STATE.md`'s older rows; it is no longer true.
 - Phase 4's four engines, Phase 5's decision gate, and **D-53 slices 1, 2a, 2b, 3a-1, 3a-2 decoder and 3a-2 fetch** (PRs #81, #82, #83, #85, #86, #87) are merged. Remaining D-53 slices: 3a-3, 2c, 3b, 4.
