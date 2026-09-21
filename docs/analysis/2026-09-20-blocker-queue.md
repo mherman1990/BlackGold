@@ -276,10 +276,17 @@ it. **Before rebuilding anything, check whether a branch already has it.**
 ## 4. One thing worth saying plainly
 
 The machinery is in good shape and the evidence is not. Nine phases of
-fail-closed engines, 829 tests, a working point-in-time evaluation loop on real
-Pi-ingested data — and zero registered experiments, zero citable runs, a sealed
-holdout, and a strategy that fails its own preregistered gate on the window it
-was fit to.
+fail-closed engines, 920 tests as of 2026-09-21, a working point-in-time
+evaluation loop on real Pi-ingested data — and zero registered experiments,
+zero citable runs, and a sealed holdout.
+
+**Corrected 2026-09-21.** This paragraph used to end "and a strategy that fails
+its own preregistered gate on the window it was fit to" — the exact claim the
+SUPERSEDED block in §1 withdraws, left standing here in the section a reader is
+most likely to quote. It is wrong twice over: that number was an information
+ratio, not §13's metric, and DESIGN is in-sample, so no DESIGN number is ever an
+F1 verdict. **No evidence for or against this strategy exists yet, in either
+direction.** The corrected statistic has run on synthetic fixtures only.
 
 That is not a criticism of the build; it is what the build was designed to
 surface, and it surfaced it before any capital moved. But it means the next
