@@ -108,25 +108,31 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       const loaded = loadCharterFile(charterPath);
       const charter = loaded.charter;
 
+      const decisionAt = addMs(calendar.sessionClose(session), charter.rules.decision_offset_minutes * 60_000);
+
       // Rung order is enforced in code, not prose (Codex P1, round 3): ALPHA_CHARTER section 14.2 dates the
       // prospective record "from registration", and D-53 says rung-2 sealing cannot precede the rung-1
-      // experiment. No experiment registered for THIS charter hash means no sealing - the job skips, visibly.
+      // experiment. The registration must exist AT the decision instant, not merely by the time the delayed
+      // job runs (Codex P1, round 5) - a registration landing between close+offset and the run would otherwise
+      // retroactively manufacture a prospective record timestamped before rung 1 began. No qualifying
+      // registration means no sealing - the job skips, visibly.
       // (Whether sealing should additionally wait for the owner's ACTIVE acceptance - the section 17 reading -
       // is the open clock-start question in docs/analysis/2026-09-21-rung5-decision-packet.md; tightening this
       // gate to that reading is one line once the owner decides. This gate only ever fails closed vs. none.)
       const registeredExperiments = (
-        ctx.db.prepare("SELECT COUNT(*) AS n FROM experiments WHERE json_extract(definition_json, '$.charter.charter_hash') = ?").get(loaded.charterHash) as { n: number }
+        ctx.db
+          .prepare("SELECT COUNT(*) AS n FROM experiments WHERE json_extract(definition_json, '$.charter.charter_hash') = ? AND registered_at <= ?")
+          .get(loaded.charterHash, decisionAt) as { n: number }
       ).n;
       if (registeredExperiments === 0) {
         ctx.ledger.append(
           SHADOW_DECISION_SKIPPED,
-          { scheduledFor: ctx.scheduledFor, session, charterHash: loaded.charterHash, reason: "no registered experiment for this charter hash; rung-2 sealing cannot precede the rung-1 registration (D-53)" },
+          { scheduledFor: ctx.scheduledFor, session, decisionAt, charterHash: loaded.charterHash, reason: "no experiment registered for this charter hash at the decision instant; rung-2 sealing cannot precede the rung-1 registration (D-53)" },
           ctx.now,
         );
         return;
       }
 
-      const decisionAt = addMs(calendar.sessionClose(session), charter.rules.decision_offset_minutes * 60_000);
       if (ctx.now < decisionAt) {
         // The job fired before the charter's decision instant (offsets misconfigured). Sealing now would
         // timestamp-lock reads to an instant that has not happened; fail closed and say so.
@@ -174,10 +180,12 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       // the gate on placeholder compliance. Each unapproved file enters the halt machine as a stale input, so
       // every arm seals with new risk blocked and the reason on the record - honest, and it lifts the moment
       // the owner's signed files replace the examples (a config act, no code change).
-      // Approval means a real signature: a non-empty signer AND a timestamp that exists and is not in the
-      // future (Codex P1, round 4 - a null or future approvedAt, or a whitespace signer, is not an approval).
+      // Approval means a real signature KNOWN AT THE DECISION INSTANT: a non-empty signer AND a timestamp that
+      // exists and is not after decisionAt (Codex P1, rounds 4-5). Comparing against the run instant instead
+      // would let an approval landing between close+offset and the delayed run count for a decision that is
+      // timestamp-locked to before it existed.
       const approved = (v: { approvedBy: string | null; approvedAt: string | null }): boolean =>
-        v.approvedBy !== null && v.approvedBy.trim().length > 0 && v.approvedAt !== null && v.approvedAt <= ctx.now;
+        v.approvedBy !== null && v.approvedBy.trim().length > 0 && v.approvedAt !== null && v.approvedAt <= decisionAt;
       const unapprovedPolicies: string[] = [];
       if (!approved(risk.value)) unapprovedPolicies.push("policy_unapproved:risk.yaml");
       if (!approved(restricted.value)) unapprovedPolicies.push("policy_unapproved:restricted-list.yaml");

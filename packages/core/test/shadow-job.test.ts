@@ -71,10 +71,10 @@ function writePolicyDir(dir: string, opts: { approveRestrictedList?: boolean } =
 }
 
 /** Register a minimal rung-1 experiment for the charter hash, the precondition the job enforces (D-53). */
-function registerExperimentFor(db: Db, charterHash: string): void {
+function registerExperimentFor(db: Db, charterHash: string, registeredAt = "2026-03-01T00:00:00Z"): void {
   db.prepare(
     "INSERT INTO experiments (experiment_id, registered_at, registered_by, definition_json, definition_hash, labels_json) VALUES (?,?,?,?,?,?)",
-  ).run(`exp-${sha256Hex(charterHash).slice(0, 8)}`, "2026-03-01T00:00:00Z", "test", JSON.stringify({ charter: { strategy_id: "etf-trend-vol", charter_version: "0.2.0", charter_hash: charterHash } }), `sha256:${sha256Hex(charterHash)}`, "[]");
+  ).run(`exp-${sha256Hex(charterHash).slice(0, 8)}`, registeredAt, "test", JSON.stringify({ charter: { strategy_id: "etf-trend-vol", charter_version: "0.2.0", charter_hash: charterHash } }), `sha256:${sha256Hex(charterHash)}`, "[]");
 }
 
 const PATHS: PricePath[] = [
@@ -189,7 +189,7 @@ describe("shadow_decision job: rung order and policy approval", () => {
     expect(decisionRecordCount(env.db)).toBe(0);
     const skips = env.db.prepare("SELECT payload FROM ledger_events WHERE kind = 'shadow.decision_skipped'").all() as { payload: string }[];
     expect(skips).toHaveLength(1);
-    expect(skips[0]?.payload).toContain("no registered experiment");
+    expect(skips[0]?.payload).toContain("no experiment registered");
   });
 
   it("treats an incomplete or future approval as unapproved: empty signer, missing timestamp, future timestamp (Codex P1, round 4)", async () => {
@@ -208,6 +208,33 @@ describe("shadow_decision job: rung order and policy approval", () => {
         expect(rec.gate.newRiskAllowed).toBe(false);
         expect(rec.gate.blockedBy.join(" ")).toContain("policy_unapproved:restricted-list.yaml");
       }
+    }
+  });
+
+  it("ignores an experiment registered AFTER the decision instant, even when it exists by run time (Codex P1, round 5)", async () => {
+    const env = setup("SHADOW", true, { registerExperiment: false });
+    // Registered at close+120: after the decision instant (close+60) but before the job runs (close+150).
+    registerExperimentFor(env.db, loadCharterFile(env.charterPath).charterHash, afterClose("2026-03-06", 120));
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    expect(decisionRecordCount(env.db)).toBe(0);
+    const skips = env.db.prepare("SELECT payload FROM ledger_events WHERE kind = 'shadow.decision_skipped'").all() as { payload: string }[];
+    expect(skips[0]?.payload).toContain("at the decision instant");
+  });
+
+  it("treats an approval stamped AFTER the decision instant as unapproved, even when it exists by run time (Codex P1, round 5)", async () => {
+    const env = setup("SHADOW");
+    // Approved at close+120: after the decision instant (close+60) but before the job runs (close+150).
+    writeFileSync(
+      join(env.policyDir, "restricted-list.yaml"),
+      stringify({ approvedBy: "Test Owner", approvedAt: afterClose("2026-03-06", 120), asOf: "2026-03-01", themes: ["soybean_processing"] }),
+    );
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    const rows = env.db.prepare("SELECT record_json FROM decision_records").all() as { record_json: string }[];
+    expect(rows.length).toBe(2);
+    for (const row of rows) {
+      const rec = JSON.parse(row.record_json) as { gate: { newRiskAllowed: boolean; blockedBy: string[] } };
+      expect(rec.gate.newRiskAllowed).toBe(false);
+      expect(rec.gate.blockedBy.join(" ")).toContain("policy_unapproved:restricted-list.yaml");
     }
   });
 
