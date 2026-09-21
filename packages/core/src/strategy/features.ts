@@ -2,7 +2,7 @@ import { addDays, Dec, ONE, ZERO, sumDec, type IsoDate, type UtcInstant } from "
 import type { ExchangeCalendar } from "../calendar/types.ts";
 import type { ReadOnlyPointInTime } from "../data/pit/types.ts";
 import { blocksPromotionEvidence } from "../data/quality.ts";
-import { corporateActionFromValue, corporateActionSourceId, CORPORATE_ACTION_KINDS, type CorporateAction } from "../market/types.ts";
+import { corporateActionSourceId, CORPORATE_ACTION_KINDS, dedupeCorporateActionRows, type CorporateAction } from "../market/types.ts";
 import { RawSeries, TotalReturnSeries, TR_ADJUSTMENT_VERSION, type LoadedBar, type TRPoint } from "../market/series.ts";
 import type { Charter } from "./charter.ts";
 
@@ -20,7 +20,13 @@ import type { Charter } from "./charter.ts";
  * `Math.log` are not guaranteed to be in their last bits.
  */
 
-export const FEATURES_VERSION = 1;
+/**
+ * 2: corporate-action rows are deduped per (entity, kind, effective date) before entering the total-return
+ * series (shared `dedupeCorporateActionRows`), matching the execution path. On a store where a reconciled and
+ * a single-source row coexist for the same event, version-1 features counted it twice; the algorithms must not
+ * share a declared transformation version (Codex P2, PR #99).
+ */
+export const FEATURES_VERSION = 2;
 const SESSIONS_PER_YEAR = 252;
 
 export type FeatureParams = {
@@ -158,9 +164,13 @@ function loadEntity(deps: FeatureEngineDeps, entityId: string, from: IsoDate, to
       // An action row's own quality flags are not in asOf().labels (that only carries OPTIMISTIC_DELAY), so
       // surface the promotion-blocking ones here: a total-return series built from a single-source corporate
       // action (UNVERIFIED_SINGLE_SOURCE, D-49) must carry that label into the trial so it bars promotion.
+      // Accumulated over EVERY row, before the dedupe picks a winner, so a superseded single-source row
+      // still taints the run - the dedupe never makes a run look more citable than its store.
       for (const code of blocksPromotionEvidence(row.qualityFlags)) labels.add(code);
-      actions.push(corporateActionFromValue(row.value));
     }
+    // Same event from both the reconciled file and the Tiingo feed must be credited once, not twice -
+    // matching loadExecutionSeries, so the features and the execution path read the same action set.
+    actions.push(...dedupeCorporateActionRows(res.rows));
   }
   const tr = TotalReturnSeries.build(raw.bars, actions, entityId);
   return { bars: raw.bars, tr: tr.points, labels: [...labels], observationIds: raw.bars.map((b) => b.observationId), warnings: tr.warnings };

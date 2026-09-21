@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dedupeCorporateActionRows } from "../src/market/types.ts";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -243,5 +244,34 @@ describe("RawSeries.load", () => {
     const tr = TotalReturnSeries.build(res.bars, []);
     expect(tr.points.map((p) => p.session)).toEqual(["2026-03-02", "2026-03-03", "2026-03-04", "2026-03-09"]);
     expect(tr.points[3]?.trIndex.toFixed()).toBe("1.03");
+  });
+});
+
+describe("dedupeCorporateActionRows", () => {
+  // Direct unit coverage of the preference order, with AMOUNTS THAT DIFFER between the duplicate rows - the
+  // series-level dedupe tests use identical amounts, where the arithmetic cannot reveal which row won.
+  const row = (id: number, amount: string, flags: string[]): { id: number; qualityFlags: string[]; value: unknown } => ({
+    id,
+    qualityFlags: flags,
+    value: { kind: "CASH_DIVIDEND", entityId: "AAA", amount, exDate: "2026-04-17", payDate: "2026-04-17", qualified: false },
+  });
+  const amounts = (rows: Parameters<typeof dedupeCorporateActionRows>[0]): string[] =>
+    dedupeCorporateActionRows(rows).map((a) => (a.kind === "CASH_DIVIDEND" ? a.amount.toFixed(2) : a.kind));
+
+  it("prefers the reconciled row over a single-source one regardless of row order or id", () => {
+    const reconciled = row(1, "2.50", []);
+    const single = row(2, "9.99", ["UNVERIFIED_SINGLE_SOURCE"]);
+    expect(amounts([reconciled, single])).toEqual(["2.50"]);
+    expect(amounts([single, reconciled])).toEqual(["2.50"]);
+  });
+
+  it("breaks a same-tier tie toward the later row (greater id)", () => {
+    expect(amounts([row(5, "1.00", []), row(9, "1.25", [])])).toEqual(["1.25"]);
+    expect(amounts([row(9, "1.25", []), row(5, "1.00", [])])).toEqual(["1.25"]);
+  });
+
+  it("keeps actions on distinct effective dates separate", () => {
+    const other = { ...row(3, "0.75", []), value: { kind: "CASH_DIVIDEND", entityId: "AAA", amount: "0.75", exDate: "2026-05-15", payDate: "2026-05-15", qualified: false } };
+    expect(amounts([row(1, "2.50", []), other]).sort()).toEqual(["0.75", "2.50"]);
   });
 });

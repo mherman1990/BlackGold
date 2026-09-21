@@ -306,4 +306,49 @@ describe("featureParamsFromCharter", () => {
     );
     expect(fs.labels).toContain(UNVERIFIED_SINGLE_SOURCE);
   });
+
+  it("dedupes a corporate action present from both a reconciled and a single-source feed (no double-count)", () => {
+    // Mirror of the loadExecutionSeries dedupe test (research-backtest.test.ts): the same dividend can arrive
+    // from the reconciled operator file AND the single-source Tiingo feed - same entity/kind/exDate, different
+    // locators - which asOf retains. Before this fix, computeFeatures pushed every row into
+    // TotalReturnSeries.build, so the dividend was counted twice in momentum/trend/volatility while the
+    // execution path counted it once. The exDate sits inside the momentum lookback window, so a double-counted
+    // credit moves the feature - the fixture varies exactly the dimension the dedupe branches on.
+    const exDate = D("2026-04-17");
+    const div = { kind: "CASH_DIVIDEND", entityId: "AAA", amount: N("2.5"), exDate, payDate: exDate, qualified: false } as const;
+    const from = D("2026-01-02");
+    const to = D("2026-06-30");
+    const decisionSession = D("2026-05-01");
+    const momOf = (m: ReturnType<typeof buildMarket>): { mom: Dec; labels: string[] } => {
+      const fs = computeFeatures(
+        { pit: m.pit, calendar: m.calendar },
+        { riskEntities: ["AAA"], cashEntityId: "BIL", decisionAt: m.decisionAt(decisionSession), params: SMALL },
+      );
+      const mom = fs.features.get("AAA")?.mom;
+      if (!mom) throw new Error("no momentum for AAA");
+      return { mom, labels: fs.labels };
+    };
+
+    const reconciledOnly = momOf(buildMarket({ paths: RISERS, from, to, actions: [{ action: div, sourceLocator: "vendored/div" }] }));
+    const bothSources = momOf(
+      buildMarket({
+        paths: RISERS,
+        from,
+        to,
+        actions: [
+          { action: div, sourceLocator: "vendored/div" },
+          { action: div, sourceLocator: "tiingo/div", qualityFlags: [UNVERIFIED_SINGLE_SOURCE] },
+        ],
+      }),
+    );
+    const noDividend = momOf(market());
+
+    // The dividend moves the feature at all (the fixture spans the dimension under test)...
+    expect(reconciledOnly.mom.eq(noDividend.mom)).toBe(false);
+    // ...deduped: the two-source market reproduces the single-action momentum exactly (credited once)...
+    expect(bothSources.mom.eq(reconciledOnly.mom)).toBe(true);
+    // ...and labeling stays conservative: the superseded single-source row still taints the features.
+    expect(bothSources.labels).toContain(UNVERIFIED_SINGLE_SOURCE);
+    expect(reconciledOnly.labels).not.toContain(UNVERIFIED_SINGLE_SOURCE);
+  });
 });
