@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Dec, ONE, ZERO, isoDate, type IsoDate } from "@blackgold/shared";
 import { type Charter } from "../src/strategy/charter.ts";
 import { TR_ADJUSTMENT_VERSION, type TRPoint, type TRSeries } from "../src/market/series.ts";
-import { armMetrics, buildResultReport, REPORT_VERSION, taxScenarios } from "../src/research/report.ts";
+import { armMetrics, buildResultReport, REPORT_VERSION, sharpeInputSeries, taxScenarios } from "../src/research/report.ts";
 import { backtestParamsFromCharter, costsFromCharter, runBacktest } from "../src/research/backtest.ts";
 import { buildMarket, fixtureCharter, D, N, type PricePath } from "./strategy-fixture.ts";
 
@@ -11,11 +11,23 @@ function charter(): Charter {
   return fixtureCharter();
 }
 
-function series(entityId: string, sessions: readonly IsoDate[], growth: Dec): TRSeries {
+/**
+ * A total-return series growing at `growth` per session, with optional deterministic jitter.
+ *
+ * The jitter is not decoration. A constant-growth series has ZERO volatility, so every Sharpe ratio taken
+ * against it is degenerate - the `sd === 0` guard returns 0, or an empty excess series returns NaN - and any
+ * assertion about a Sharpe DIFFERENCE over such a fixture is vacuous. That is the same shape as the nine
+ * vacuous tests PRs #91-#93 produced: a fixture uniform in the dimension the code branches on.
+ */
+function series(entityId: string, sessions: readonly IsoDate[], growth: Dec, wobble: Dec = ZERO): TRSeries {
   const points: TRPoint[] = [];
   let index = ONE;
   sessions.forEach((session, i) => {
-    if (i > 0) index = index.times(growth);
+    if (i > 0) {
+      // A short integer cycle, so the path is reproducible and has no trend of its own.
+      const swing = new Dec(((i * 7919) % 13) - 6).div(6);
+      index = index.times(growth).times(ONE.plus(wobble.times(swing)));
+    }
     points.push({ session, trIndex: index, adjClose: index, distribution: ZERO, terminal: false });
   });
   return { entityId, points, adjustmentVersion: TR_ADJUSTMENT_VERSION, warnings: [] };
@@ -80,6 +92,78 @@ describe("armMetrics", () => {
     expect(m.cagr.isZero()).toBe(true);
     expect(m.sharpeVsCash).toBe(0);
     expect(m.sessions).toBe(0);
+  });
+});
+
+describe("sharpeInputSeries", () => {
+  /**
+   * `to/from - 1` on one leg minus `to/from - 1` on another, in decimal: the excess return this function
+   * is expected to produce. The two `- 1` terms cancel, so it is just a difference of gross ratios.
+   * Computed with `Dec` because the repository forbids float-literal arithmetic even in an expectation.
+   */
+  function excess(fromA: string, toA: string, fromB: string, toB: string): number {
+    return new Dec(toA).div(fromA).minus(new Dec(toB).div(fromB)).toNumber();
+  }
+
+  function levels(pairs: readonly (readonly [string, string])[]): TRPoint[] {
+    return pairs.map(([session, level]) => ({
+      session: isoDate(session),
+      trIndex: new Dec(level),
+      adjClose: new Dec(level),
+      distribution: ZERO,
+      terminal: false,
+    }));
+  }
+
+  // Codex P1 on PR #94, twice over. The first version differenced each leg independently and intersected
+  // the RETURNS, so a missing session paired a two-session move against a one-session move. Aligning the
+  // levels fixed the pairing and left a second defect behind: the aligned interval still spans two trading
+  // days on every leg while `annualizedSharpeDifference` annualizes by sqrt(252) as though it were one, and
+  // the 21-session bootstrap counts it as one session.
+  it("drops an interval that swallowed a session rather than treating it as a daily return", () => {
+    // The primary has no bar on 2026-01-07, so the 2026-01-08 observation would span two trading days.
+    const candidate = levels([["2026-01-05", "100"], ["2026-01-06", "101"], ["2026-01-07", "102"], ["2026-01-08", "103"]]);
+    const primary = levels([["2026-01-05", "200"], ["2026-01-06", "202"], ["2026-01-08", "206"]]);
+    const cash = levels([["2026-01-05", "50"], ["2026-01-06", "50.01"], ["2026-01-07", "50.02"], ["2026-01-08", "50.03"]]);
+
+    const out = sharpeInputSeries(candidate, primary, cash);
+    // 2026-01-06 is a clean daily observation and survives; 2026-01-08 is not and does not.
+    expect(out.map((p) => p.session)).toEqual(["2026-01-06"]);
+    expect(out[0]?.strategy).toBeCloseTo(excess("100", "101", "50", "50.01"), 12);
+
+    // The fixture is only meaningful if the dropped observation would otherwise have been a two-day move:
+    // 101 -> 103 on the candidate, against the single day 102 -> 103 it is being kept out of.
+    expect(excess("101", "103", "50.01", "50.03")).not.toBeCloseTo(excess("102", "103", "50.02", "50.03"), 6);
+  });
+
+  it("keeps every observation when no leg is missing a session", () => {
+    // The control for the test above: same shape, no gap, nothing dropped. Without this, a function that
+    // dropped everything would satisfy the gap assertion.
+    const candidate = levels([["2026-01-05", "100"], ["2026-01-06", "101"], ["2026-01-07", "102"]]);
+    const primary = levels([["2026-01-05", "200"], ["2026-01-06", "202"], ["2026-01-07", "204"]]);
+    const cash = levels([["2026-01-05", "50"], ["2026-01-06", "50.01"], ["2026-01-07", "50.02"]]);
+    const out = sharpeInputSeries(candidate, primary, cash);
+    expect(out.map((p) => p.session)).toEqual(["2026-01-06", "2026-01-07"]);
+    expect(out[1]?.benchmark).toBeCloseTo(excess("202", "204", "50.01", "50.02"), 12);
+  });
+
+  it("treats a session only the OTHER legs traded as a gap the candidate's series cannot see", () => {
+    // The discriminating case: the candidate itself has no bar between 2026-01-05 and 2026-01-08, so its
+    // own sessions look contiguous. The benchmark and cash legs both traded 2026-01-06, so the interval is
+    // three days long on every leg once aligned. Keying the rule to the candidate alone would keep it.
+    const candidate = levels([["2026-01-05", "100"], ["2026-01-08", "103"]]);
+    const primary = levels([["2026-01-05", "200"], ["2026-01-06", "202"], ["2026-01-08", "206"]]);
+    const cash = levels([["2026-01-05", "50"], ["2026-01-06", "50.01"], ["2026-01-08", "50.03"]]);
+    expect(candidate.map((p) => p.session)).toEqual(["2026-01-05", "2026-01-08"]);
+    expect(sharpeInputSeries(candidate, primary, cash)).toEqual([]);
+  });
+
+  it("drops the whole interval when the cash leg is the one missing a session", () => {
+    // Any leg's gap collapses the interval on all three, so the rule cannot be keyed to the candidate.
+    const candidate = levels([["2026-01-05", "100"], ["2026-01-06", "101"], ["2026-01-07", "102"]]);
+    const primary = levels([["2026-01-05", "200"], ["2026-01-06", "202"], ["2026-01-07", "204"]]);
+    const cash = levels([["2026-01-05", "50"], ["2026-01-07", "50.02"]]);
+    expect(sharpeInputSeries(candidate, primary, cash)).toEqual([]);
   });
 });
 
@@ -187,7 +271,9 @@ describe("buildResultReport", () => {
     return {
       charter: c,
       backtest: bt,
-      primary: series("VTI", sessions, N("1.0010")),
+      // VTI carries volatility so the registered Sharpe DIFFERENCE has a denominator on both legs;
+      // BIL stays flat, which is what a cash proxy is.
+      primary: series("VTI", sessions, N("1.0010"), N("0.004")),
       cash: series("BIL", sessions, N("1.00008")),
       trialLedgerCount: 1,
       bootstrapResamples: 200,
@@ -267,6 +353,30 @@ describe("buildResultReport", () => {
     expect(r.primaryMetric.interval.meanBlockSessions).toBe(21);
     expect(r.primaryMetric.interval.confidence).toBe(0.9);
     expect(r.primaryMetric.threshold).toBe(0.1);
+  });
+
+  // ALPHA_CHARTER section 13 registers "difference in after-cost annualized Sharpe ratio between the
+  // strategy and VTI total return". Until 2026-09-20 this bootstrapped the Sharpe of the paired DIFFERENCE,
+  // which is the information ratio - and the report already published that very number, correctly named,
+  // as `informationRatioVsPrimary`. So the gate and a descriptive statistic were the same number under two
+  // names, and nothing here noticed. Found by Codex on PR #94.
+  it("computes the primary metric as a difference of Sharpe ratios, not an information ratio", () => {
+    const r = buildResultReport(run());
+    const candidate = r.arms.find((a) => a.arm === "B1_DETERMINISTIC");
+    const benchmark = r.benchmarks.find((b) => b.arm === "VTI_TR");
+    expect(candidate).toBeDefined();
+    expect(benchmark).toBeDefined();
+    if (candidate === undefined || benchmark === undefined) return;
+
+    // Each arm's `sharpeVsCash` is that arm's Sharpe against the cash leg, so their difference is the
+    // registered metric. The fixture's three series share every session, so the point estimate matches it
+    // exactly rather than approximately.
+    expect(r.primaryMetric.pointEstimate).toBeCloseTo(candidate.sharpeVsCash - benchmark.sharpeVsCash, 10);
+
+    // And it is NOT the information ratio, which the same report publishes beside it. The assertion is only
+    // worth anything if the fixture actually separates the two, so check that first.
+    expect(candidate.informationRatioVsPrimary).not.toBeCloseTo(candidate.sharpeVsCash - benchmark.sharpeVsCash, 6);
+    expect(r.primaryMetric.pointEstimate).not.toBeCloseTo(candidate.informationRatioVsPrimary, 6);
   });
 
   it("shows the passive baseline on the same page as the candidate", () => {

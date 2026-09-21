@@ -31,7 +31,9 @@ import type { LeakageAuditor } from "./leakage.ts";
  * result carries `registrable` and the labels that bar promotion evidence.
  */
 
-export const BACKTEST_VERSION = 4;
+// 5: `navDistortingSessions` joins the result and its hashed body. Sessions where a held instrument's bar
+// was absent or stale, which section 16.1's first prong withholds on and which the labels never carried.
+export const BACKTEST_VERSION = 5;
 
 export const COST_MODEL_VERSION = 1;
 
@@ -157,6 +159,14 @@ export type BacktestResult = {
   secondary2Withheld: boolean;
   /** Why the comparator is inexact or withheld. Empty only when Secondary 2 was not built at all. */
   secondary2InexactReasons: string[];
+  /**
+   * Sessions where a HELD instrument's bar was absent or carried forward, so the candidate arm's NAV return
+   * is distorted at or after them. Not derivable from `labels` - see the derivation in `runBacktest`.
+   *
+   * ALPHA_CHARTER section 16.1's first prong is withheld when a pooled split reports any of these
+   * (`research/aggregate.ts`), because the distortion has no fixed sign.
+   */
+  navDistortingSessions: IsoDate[];
   labels: string[];
   /**
    * Fills that landed on or before the decision that caused them. Must be empty: a non-empty list is a
@@ -715,6 +725,41 @@ export function runBacktest(input: BacktestInput): BacktestResult {
     built === undefined
       ? []
       : [...built.inexactReasons, ...(s2?.unplaced ?? []), ...windowMismatch, ...missingVol];
+  /**
+   * Sessions where a HELD instrument's bar was absent or carried forward, so the candidate arm's NAV return
+   * is distorted at or after them.
+   *
+   * `dailyNavSeries` is handed the run's whole calendar and `closeOf` marks a missing holding at its
+   * previous close, so the arm has a point on every session while that holding's multi-day move lands in one
+   * later return. Nothing downstream can see this from the level series: it is contiguous by construction.
+   *
+   * Computed here rather than read from `labels`, because the labels do not carry it. Three separate holes,
+   * all found by Codex on PR #94 after a first attempt keyed the withhold off `bt.labels`:
+   *
+   *   - `loadExecutionSeries` keeps only CORPORATE-ACTION quality codes, and filters even those through
+   *     `blocksPromotionEvidence` - which excludes `GAP` and `STALE_BAR` by definition, since both are
+   *     `promotionEvidenceAllowed: true`. The marking series' own labels are discarded.
+   *   - `STALE_BAR` is recorded on a bar's `flags` and never becomes a series label at all.
+   *   - `RawSeries` derives `GAP` only between the FIRST and LAST loaded bar, so a missing session at either
+   *     end of the run window produces no label.
+   *
+   * Reading the bars directly closes all three. Restricted to instruments the candidate actually FILLED:
+   * a gap in an instrument it never held cannot move its NAV, and widening this to the whole universe would
+   * withhold the prong on almost any real window.
+   */
+  const heldEntities = new Set(fills.map((f) => f.entityId));
+  const navDistorting = new Set<IsoDate>();
+  for (const entityId of heldEntities) {
+    const bars = series.get(entityId)?.bars;
+    if (bars === undefined) continue;
+    const bySession = new Map(bars.map((b) => [b.session, b]));
+    for (const session of allSessions) {
+      const bar = bySession.get(session);
+      if (bar === undefined || bar.flags.includes("STALE_BAR") || bar.flags.includes("GAP")) navDistorting.add(session);
+    }
+  }
+  const navDistortingSessions = [...navDistorting].sort();
+
   const citability: string[] = [...(input.registrabilityReasons ?? [])];
   for (const l of ["SURVIVORSHIP_BIASED", "OPTIMISTIC_DELAY"]) if (labels.has(l)) citability.push(`run carries the ${l} label`);
   if (labels.has("SYNTHETIC_MISSING_DATA")) citability.push("run injected synthetic missing data for the sensitivity grid");
@@ -755,6 +800,9 @@ export function runBacktest(input: BacktestInput): BacktestResult {
     // after the tri-state verdict and `secondary2Exact` itself. The rule is now explicit: anything that
     // changes whether or how a number may be used goes in the body.
     secondary2Withheld,
+    // Same rule again: whether the candidate's own NAV returns are distorted changes what every metric built
+    // on them MEANS, so it belongs in the identity rather than beside it.
+    navDistortingSessions,
     decisionSeals: decisions.map((d) => d.sealHash),
     finalNav: Object.fromEntries(Object.entries(arms).map(([k, v]) => [k, (v.nav.at(-1)?.nav ?? ZERO).toFixed()])),
     labels: [...labels].sort(),
@@ -776,6 +824,7 @@ export function runBacktest(input: BacktestInput): BacktestResult {
     secondary2Exact,
     secondary2Withheld,
     secondary2InexactReasons,
+    navDistortingSessions,
     labels: [...labels].sort(),
     executionOrderViolations,
     citableAsEvidence: citability.length === 0,

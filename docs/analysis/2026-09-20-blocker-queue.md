@@ -40,11 +40,30 @@ output: on DESIGN (2007–2018, contains the GFC) the strategy captured ~83% of
 passive total return while cutting max drawdown from −54% to −13%. On RECENT
 (2025–present, uninterrupted bull) it lagged badly, as a trend follower should.
 
-Both runs are `citableAsEvidence: false`. And on its **own** primary promotion
-metric — `net_sharpe_difference_vs_primary_benchmark`, threshold +0.10 — the
-strategy reads −0.19 on the very window it was fit to. It fails its own gate
-in-sample. That is the substance behind decision **D-51** below, and it is the
-most important open question in the project.
+Both runs are `citableAsEvidence: false`.
+
+> **SUPERSEDED (2026-09-20, PR #94). Do not resume from the number below.**
+>
+> This passage used to say the strategy "reads −0.19 on the very window it was
+> fit to" and "fails its own gate in-sample". **Both claims are withdrawn**, for
+> two independent reasons, and this note is where a fresh session looks first —
+> which is exactly why it is annotated rather than quietly edited.
+>
+> 1. **That −0.19 is not the primary metric.** The code computed
+>    `annualizedSharpe(strategy − VTI)`, an **information ratio**; ALPHA_CHARTER
+>    §13 registers a **difference of Sharpe ratios**. The two disagree in
+>    magnitude and in sign. The statistic was corrected in PR #94 and **has
+>    never been run on real data**, so the number that replaces −0.19 is
+>    unknown — in value and in sign.
+> 2. **"Fails its own gate" was a category error even before that.** §13 scopes
+>    the pass rule to the *aggregate walk-forward out-of-sample set*. DESIGN is
+>    in-sample (§14.1), so a DESIGN number is a per-window diagnostic and never
+>    an F1 verdict.
+>
+> D-51 remains the most important open question in the project. What has
+> changed is that **no evidence for or against the strategy has actually been
+> produced yet** — neither this note's numbers nor any other. See
+> `docs/analysis/2026-09-20-d51-primary-metric.md` §2f.
 
 ---
 

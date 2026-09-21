@@ -171,6 +171,74 @@ describe("runBacktest", () => {
     }
   });
 
+  // ALPHA_CHARTER section 16.1's first prong is withheld on these, so a signal that never fires is worse
+  // than none: it reads as a clean run. A first attempt keyed the withhold off `bt.labels`, and Codex showed
+  // on PR #94 that the labels cannot carry it - `loadExecutionSeries` keeps only corporate-action codes and
+  // filters even those through `blocksPromotionEvidence` (which excludes GAP and STALE_BAR by definition),
+  // `STALE_BAR` never becomes a series label at all, and `RawSeries` derives GAP only between the first and
+  // last loaded bar. These tests exist to prove the replacement actually fires.
+  describe("navDistortingSessions", () => {
+    const from = D("2026-01-02");
+    const to = D("2026-06-30");
+
+    function heldEntities(r: ReturnType<typeof runBacktest>): Set<string> {
+      return new Set(r.arms["B1_DETERMINISTIC"]?.fills.map((f) => f.entityId) ?? []);
+    }
+
+    it("is empty on a clean market", () => {
+      // `from`/`to` are the shared market's own range, so the clean run here IS the default run.
+      const r = defaultRun();
+      expect(heldEntities(r).size).toBeGreaterThan(0);
+      expect(r.navDistortingSessions).toEqual([]);
+    });
+
+    it("reports a session omitted from a held instrument", () => {
+      const omitted = D("2026-04-17");
+      const held = [...heldEntities(defaultRun())].filter((e) => e !== "BIL");
+      const entity = held[0];
+      expect(entity).toBeDefined();
+      if (entity === undefined) return;
+
+      const m = buildMarket({ paths: PATHS, from, to, omitSessions: { [entity]: [omitted] } });
+      const r = runBacktest(setup({ pit: m.pit, calendar: m.calendar }).input);
+      expect(r.navDistortingSessions).toContain(omitted);
+    });
+
+    it("reports a stale bar on a held instrument, which no label carries", () => {
+      // The hole that matters most: staleness lives on the bar's `flags` and never becomes a series label,
+      // so a run with a carried-forward close looks entirely clean from `bt.labels`.
+      const stale = D("2026-04-17");
+      const held = [...heldEntities(defaultRun())].filter((e) => e !== "BIL");
+      const entity = held[0];
+      expect(entity).toBeDefined();
+      if (entity === undefined) return;
+
+      const m = buildMarket({ paths: PATHS, from, to, staleSessions: { [entity]: [stale] } });
+      const r = runBacktest(setup({ pit: m.pit, calendar: m.calendar }).input);
+      expect(r.navDistortingSessions).toContain(stale);
+      // Exactly the point: the labels are no help here.
+      expect(r.labels).not.toContain("STALE_BAR");
+    });
+
+    it("ignores a gap in a universe instrument the candidate never held", () => {
+      // A gap somewhere the strategy never put money cannot move its NAV, and withholding on it would make
+      // the prong unmeasurable on almost any real window.
+      //
+      // XLU is the fixture's only declining path, so a trend follower does not buy it - but the assertion
+      // does not rest on that prediction. Both facts are read from the SAME run, so if the gap ever did
+      // change the decisions enough to make XLU held, the test fails loudly rather than passing vacuously.
+      const omitted = D("2026-04-17");
+      const m = buildMarket({ paths: PATHS, from, to, omitSessions: { XLU: [omitted] } });
+      const r = runBacktest(setup({ pit: m.pit, calendar: m.calendar }).input);
+
+      expect(heldEntities(r).has("XLU")).toBe(false);
+      expect(r.navDistortingSessions).not.toContain(omitted);
+      // And XLU really is in the universe, so it was loaded and skipped rather than never seen: a version
+      // of this that picked an instrument outside the universe would pass without testing anything.
+      expect(shortWindowCharter().universe.risk_etfs).toContain("XLU");
+    });
+  });
+
   it("carries a consumed single-source corporate action's UNVERIFIED_SINGLE_SOURCE into the run labels (D-49)", () => {
     // A backtest that credits a single-source dividend must be barred from promotion evidence: the flag has to
     // reach the trial labels. A fresh market so the flagged action does not couple the shared-market tests.

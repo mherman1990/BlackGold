@@ -116,6 +116,25 @@ export type BootstrapResult = {
 };
 
 /**
+ * One resample's worth of block indices, geometric restarts, wrapping at the end.
+ *
+ * Extracted so a PAIRED resample can apply the very same draw to two series. Reusing the draw is the whole
+ * point: the strategy and its benchmark are observed on the same sessions, and a statistic that compares
+ * them has to see them move together. Two independent draws would destroy the correlation the interval is
+ * meant to reflect and would widen it toward the independent-arms case the protocol forbids.
+ *
+ * The random-number call sequence is identical to the inline loop this replaces, so an existing single-series
+ * bootstrap returns exactly what it returned before at the same seed.
+ */
+function drawBlockIndices(out: number[], n: number, restartProbability: number, rand: () => number): void {
+  let idx = Math.floor(rand() * n) % n;
+  for (let t = 0; t < n; t++) {
+    out[t] = idx;
+    idx = rand() < restartProbability ? Math.floor(rand() * n) % n : (idx + 1) % n;
+  }
+}
+
+/**
  * Stationary block bootstrap (Politis and Romano). Blocks have geometrically distributed lengths with mean
  * `meanBlockSessions` and wrap around the series, which keeps the resampled series stationary and preserves
  * serial dependence at roughly the block scale. The charter freezes the block length (21 sessions, about a
@@ -138,13 +157,10 @@ export function stationaryBootstrap(
 
   const stats: number[] = [];
   const sample = new Array<number>(n);
+  const indices = new Array<number>(n);
   for (let r = 0; r < resamples; r++) {
-    let idx = Math.floor(rand() * n) % n;
-    for (let t = 0; t < n; t++) {
-      const v = series[idx];
-      sample[t] = v ?? 0;
-      idx = rand() < restartProbability ? Math.floor(rand() * n) % n : (idx + 1) % n;
-    }
+    drawBlockIndices(indices, n, restartProbability, rand);
+    for (let t = 0; t < n; t++) sample[t] = series[indices[t] ?? 0] ?? 0;
     stats.push(statistic(sample));
   }
   const alpha = (1 - confidence) / 2;
@@ -160,6 +176,80 @@ export function stationaryBootstrap(
     seed,
     excludesZero: (lower > 0 && upper > 0) || (lower < 0 && upper < 0),
     diagnostics: { n, skewness: skewness(series), excessKurtosis: excessKurtosis(series) },
+    statsVersion: STATS_VERSION,
+  };
+}
+
+/**
+ * Annualized Sharpe of `a` minus annualized Sharpe of `b`, each series being an excess return over the cash
+ * leg. ALPHA_CHARTER section 13's primary metric: "difference in after-cost annualized Sharpe ratio between
+ * the strategy and VTI total return".
+ *
+ * NOT the Sharpe of the difference. `annualizedSharpe(a - b)` is the information ratio of `a` against `b`
+ * (this module's `informationRatio` in benchmarks.ts is literally that function), and the two disagree in
+ * magnitude and in sign whenever the legs differ in volatility or are imperfectly correlated. The report
+ * computed the information ratio under the registered metric's name until 2026-09-20.
+ */
+export function annualizedSharpeDifference(a: readonly number[], b: readonly number[]): number {
+  return annualizedSharpe(a) - annualizedSharpe(b);
+}
+
+/**
+ * Stationary block bootstrap over two series resampled together.
+ *
+ * Same estimator as `stationaryBootstrap` - same block length, same geometric restarts, same wrap - applied
+ * to a statistic of two aligned series. Each resample draws ONE set of block indices and applies it to both,
+ * so session `t` of the strategy is always paired with session `t` of the benchmark. That pairing is what
+ * makes an interval around a DIFFERENCE of Sharpe ratios meaningful: the two legs share market moves, and a
+ * bootstrap that broke the pairing would report the interval of two independent arms.
+ *
+ * `diagnostics` describes the pointwise difference `a - b`, because that is the series whose serial
+ * dependence the 21-session block length is chosen for.
+ */
+export function stationaryBootstrapPaired(
+  a: readonly number[],
+  b: readonly number[],
+  statistic: (sampleA: readonly number[], sampleB: readonly number[]) => number,
+  opts: { meanBlockSessions: number; resamples?: number; confidence?: number; seed?: number },
+): BootstrapResult {
+  const n = a.length;
+  if (b.length !== n) throw new RangeError("paired bootstrap needs two series of the same length");
+  if (n < 2) throw new RangeError("bootstrap needs at least two observations");
+  if (opts.meanBlockSessions < 1) throw new RangeError("meanBlockSessions must be at least 1");
+  const confidence = opts.confidence ?? 0.9;
+  if (confidence <= 0 || confidence >= 1) throw new RangeError("confidence must be in (0, 1)");
+  const resamples = opts.resamples ?? 2000;
+  const seed = opts.seed ?? 1;
+  const rand = seededRandom(seed);
+  const restartProbability = 1 / opts.meanBlockSessions;
+
+  const stats: number[] = [];
+  const sampleA = new Array<number>(n);
+  const sampleB = new Array<number>(n);
+  const indices = new Array<number>(n);
+  for (let r = 0; r < resamples; r++) {
+    drawBlockIndices(indices, n, restartProbability, rand);
+    for (let t = 0; t < n; t++) {
+      const i = indices[t] ?? 0;
+      sampleA[t] = a[i] ?? 0;
+      sampleB[t] = b[i] ?? 0;
+    }
+    stats.push(statistic(sampleA, sampleB));
+  }
+  const alpha = (1 - confidence) / 2;
+  const lower = quantile(stats, alpha);
+  const upper = quantile(stats, 1 - alpha);
+  const difference = a.map((v, i) => v - (b[i] ?? 0));
+  return {
+    pointEstimate: statistic(a, b),
+    lower,
+    upper,
+    confidence,
+    resamples,
+    meanBlockSessions: opts.meanBlockSessions,
+    seed,
+    excludesZero: (lower > 0 && upper > 0) || (lower < 0 && upper < 0),
+    diagnostics: { n, skewness: skewness(difference), excessKurtosis: excessKurtosis(difference) },
     statsVersion: STATS_VERSION,
   };
 }

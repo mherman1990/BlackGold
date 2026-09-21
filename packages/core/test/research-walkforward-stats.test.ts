@@ -24,6 +24,8 @@ import {
   seededRandom,
   skewness,
   stationaryBootstrap,
+  stationaryBootstrapPaired,
+  annualizedSharpeDifference,
   stdev,
 } from "../src/research/stats.ts";
 
@@ -189,6 +191,46 @@ describe("seededRandom", () => {
       expect(v).toBeGreaterThanOrEqual(0);
       expect(v).toBeLessThan(1);
     }
+  });
+});
+
+describe("stationaryBootstrapPaired", () => {
+  const legA = Array.from({ length: 120 }, (_, i) => (i % 2 === 0 ? -0.002 : 0.005));
+  const legB = Array.from({ length: 120 }, (_, i) => (i % 3 === 0 ? 0.004 : -0.001));
+  const opts = { meanBlockSessions: 21, resamples: 300, seed: 3 };
+
+  // The pairing IS the estimator here, and it cannot be checked by comparing against the same function.
+  // This invariant pins it without reimplementing it: resample one series against ITSELF under a statistic
+  // that is identically zero on equal inputs. Under a shared draw every resample sees sampleA === sampleB,
+  // so the whole bootstrap distribution collapses to exactly zero. Draw the two legs independently and the
+  // samples differ, so the interval opens up. Nothing but the shared draw produces a degenerate interval.
+  it("applies one draw of block indices to both legs", () => {
+    const r = stationaryBootstrapPaired(legA, legA, annualizedSharpeDifference, opts);
+    expect(r.pointEstimate).toBe(0);
+    expect(r.lower).toBe(0);
+    expect(r.upper).toBe(0);
+    // The fixture is only meaningful if an unpaired draw would have moved: the leg has real dispersion.
+    expect(annualizedSharpe(legA)).not.toBe(0);
+  });
+
+  it("computes the difference of the two legs' Sharpe ratios, not the Sharpe of their difference", () => {
+    const r = stationaryBootstrapPaired(legA, legB, annualizedSharpeDifference, opts);
+    expect(r.pointEstimate).toBe(annualizedSharpe(legA) - annualizedSharpe(legB));
+    const informationRatio = annualizedSharpe(legA.map((v, i) => v - (legB[i] ?? 0)));
+    expect(r.pointEstimate).not.toBe(informationRatio);
+  });
+
+  it("refuses legs of different lengths rather than pairing across a gap", () => {
+    expect(() => stationaryBootstrapPaired(legA, legB.slice(1), annualizedSharpeDifference, opts)).toThrow(/same length/);
+  });
+
+  it("is deterministic at a seed and reports the block length it used", () => {
+    const a = stationaryBootstrapPaired(legA, legB, annualizedSharpeDifference, opts);
+    const b = stationaryBootstrapPaired(legA, legB, annualizedSharpeDifference, opts);
+    expect(a.lower).toBe(b.lower);
+    expect(a.upper).toBe(b.upper);
+    expect(a.meanBlockSessions).toBe(21);
+    expect(a.diagnostics.n).toBe(120);
   });
 });
 

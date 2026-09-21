@@ -62,6 +62,8 @@ Phase 2 research (deterministic charters only; computes nothing that a DRAFT cha
                                             Deterministic backtest over the charter's design, walk-forward and recent splits
                                             (never the sealed holdout); emits a per-split result report. Numbers only: a run over
                                             promotion-ineligible data (e.g. single-source) is reported uncitable as evidence.
+                                            ALPHA_CHARTER section 16.1's verdict appears once, under aggregate, over the
+                                            walk-forward splits pooled - and only when the whole schedule ran.
                                             --split (comma-separated) runs only those kinds; progress is printed to stderr.
 
 Phase 3 runtime-LLM analyst (requires ANTHROPIC_API_KEY in the environment; abstains fail-closed without it):
