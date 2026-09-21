@@ -74,7 +74,7 @@ function writePolicyDir(dir: string, opts: { approveRestrictedList?: boolean } =
 function registerExperimentFor(db: Db, charterHash: string): void {
   db.prepare(
     "INSERT INTO experiments (experiment_id, registered_at, registered_by, definition_json, definition_hash, labels_json) VALUES (?,?,?,?,?,?)",
-  ).run(`exp-${sha256Hex(charterHash).slice(0, 8)}`, "2026-03-01T00:00:00Z", "test", JSON.stringify({ charter_hash: charterHash }), `sha256:${sha256Hex(charterHash)}`, "[]");
+  ).run(`exp-${sha256Hex(charterHash).slice(0, 8)}`, "2026-03-01T00:00:00Z", "test", JSON.stringify({ charter: { strategy_id: "etf-trend-vol", charter_version: "0.2.0", charter_hash: charterHash } }), `sha256:${sha256Hex(charterHash)}`, "[]");
 }
 
 const PATHS: PricePath[] = [
@@ -190,6 +190,25 @@ describe("shadow_decision job: rung order and policy approval", () => {
     const skips = env.db.prepare("SELECT payload FROM ledger_events WHERE kind = 'shadow.decision_skipped'").all() as { payload: string }[];
     expect(skips).toHaveLength(1);
     expect(skips[0]?.payload).toContain("no registered experiment");
+  });
+
+  it("treats an incomplete or future approval as unapproved: empty signer, missing timestamp, future timestamp (Codex P1, round 4)", async () => {
+    for (const approval of [
+      { approvedBy: "  ", approvedAt: "2026-03-01T00:00:00Z" }, // whitespace signer
+      { approvedBy: "Test Owner" }, // no timestamp
+      { approvedBy: "Test Owner", approvedAt: "2027-01-01T00:00:00Z" }, // future timestamp
+    ]) {
+      const env = setup("SHADOW");
+      writeFileSync(join(env.policyDir, "restricted-list.yaml"), stringify({ ...approval, asOf: "2026-03-01", themes: ["soybean_processing"] }));
+      await env.scheduler.tick(afterClose("2026-03-06", 150));
+      const rows = env.db.prepare("SELECT record_json FROM decision_records").all() as { record_json: string }[];
+      expect(rows.length).toBe(2);
+      for (const row of rows) {
+        const rec = JSON.parse(row.record_json) as { gate: { newRiskAllowed: boolean; blockedBy: string[] } };
+        expect(rec.gate.newRiskAllowed).toBe(false);
+        expect(rec.gate.blockedBy.join(" ")).toContain("policy_unapproved:restricted-list.yaml");
+      }
+    }
   });
 
   it("seals every arm with new risk BLOCKED while any policy file is unapproved (placeholder content is not policy)", async () => {

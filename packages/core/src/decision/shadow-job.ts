@@ -115,7 +115,7 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       // is the open clock-start question in docs/analysis/2026-09-21-rung5-decision-packet.md; tightening this
       // gate to that reading is one line once the owner decides. This gate only ever fails closed vs. none.)
       const registeredExperiments = (
-        ctx.db.prepare("SELECT COUNT(*) AS n FROM experiments WHERE json_extract(definition_json, '$.charter_hash') = ?").get(loaded.charterHash) as { n: number }
+        ctx.db.prepare("SELECT COUNT(*) AS n FROM experiments WHERE json_extract(definition_json, '$.charter.charter_hash') = ?").get(loaded.charterHash) as { n: number }
       ).n;
       if (registeredExperiments === 0) {
         ctx.ledger.append(
@@ -174,10 +174,14 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       // the gate on placeholder compliance. Each unapproved file enters the halt machine as a stale input, so
       // every arm seals with new risk blocked and the reason on the record - honest, and it lifts the moment
       // the owner's signed files replace the examples (a config act, no code change).
+      // Approval means a real signature: a non-empty signer AND a timestamp that exists and is not in the
+      // future (Codex P1, round 4 - a null or future approvedAt, or a whitespace signer, is not an approval).
+      const approved = (v: { approvedBy: string | null; approvedAt: string | null }): boolean =>
+        v.approvedBy !== null && v.approvedBy.trim().length > 0 && v.approvedAt !== null && v.approvedAt <= ctx.now;
       const unapprovedPolicies: string[] = [];
-      if (risk.value.approvedBy === null) unapprovedPolicies.push("policy_unapproved:risk.yaml");
-      if (restricted.value.approvedBy === null) unapprovedPolicies.push("policy_unapproved:restricted-list.yaml");
-      if (membership.value.approvedBy === null) unapprovedPolicies.push("policy_unapproved:theme-membership.yaml");
+      if (!approved(risk.value)) unapprovedPolicies.push("policy_unapproved:risk.yaml");
+      if (!approved(restricted.value)) unapprovedPolicies.push("policy_unapproved:restricted-list.yaml");
+      if (!approved(membership.value)) unapprovedPolicies.push("policy_unapproved:theme-membership.yaml");
 
       const records = shadowDecisionRecords(charter, {
         mode: config.mode,
