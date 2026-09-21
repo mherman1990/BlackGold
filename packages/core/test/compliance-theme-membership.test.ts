@@ -57,6 +57,16 @@ describe("themeMembershipOf", () => {
 });
 
 describe("ThemeMembershipConfigSchema", () => {
+  it("rejects a threshold outside 0-1 with a pattern that survives into the JSON schema (Codex P2)", () => {
+    const base = { asOf: "2026-09-01", maxHoldingsAgeDays: 7, issuers: [{ symbols: ["PROC"], themes: ["soybean_processing"] }] };
+    for (const bad of ["-0.1", "2", "1.5"]) {
+      expect(() => ThemeMembershipConfigSchema.parse({ ...base, maxAggregateThemeWeightPct: bad })).toThrow();
+    }
+    for (const ok of ["0", "0.10", "1", "1.0"]) {
+      expect(() => ThemeMembershipConfigSchema.parse({ ...base, maxAggregateThemeWeightPct: ok })).not.toThrow();
+    }
+  });
+
   it("rejects a symbol that canonicalizes to an invalid ticker - an unreachable entry is not coverage (Codex P1, round 5)", () => {
     const base = { asOf: "2026-09-01", maxAggregateThemeWeightPct: "0.10", maxHoldingsAgeDays: 7 };
     for (const bad of [" ", "1BAD", "TOOLONGTICKER", "BA$D"]) {

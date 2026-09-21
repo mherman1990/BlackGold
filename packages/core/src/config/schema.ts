@@ -373,7 +373,9 @@ export const ThemeMembershipConfigSchema = z.object({
    * Max aggregate weight of restricted-theme issuers, as a fraction of ETF NAV, at or below which a
    * diversified ETF is admissible. Charter section 2.2 proposes "0.10"; the owner sets it.
    */
-  maxAggregateThemeWeightPct: ratioString,
+  // A .regex form of ratioString's 0-1 bound so it survives into the emitted JSON Schema (Codex P2):
+  // editor/CI validation of the owner's YAML then matches runtime validation. Matches 0, 0.x, 1, 1.0...
+  maxAggregateThemeWeightPct: ratioString.regex(/^(0(\.\d+)?|1(\.0+)?)$/, "must be a ratio between 0 and 1 such as \"0.10\""),
   /** Max age in days of a published holdings file before look-through is unknown and compliance fails closed. */
   maxHoldingsAgeDays: z.number().int().positive(),
   /**
