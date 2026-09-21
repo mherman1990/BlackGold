@@ -75,6 +75,12 @@ export type ShadowDecisionContext = {
   mode: Mode;
   /** `sha256:<hex>` of the charter, from the loaded charter artifact (never recomputed here). */
   charterHash: string;
+  /**
+   * `sha256:<hex>` of each operative policy file, keyed by file (e.g. `risk_yaml`), sealed into every record
+   * (Codex P2, round 9): the record must be attributable to its exact policy byte-state on its own, even for
+   * the halt-only passive arm whose gate reads no policy content.
+   */
+  policyHashes: Record<string, string>;
   risk: RiskConfig;
   restrictedList: RestrictedListConfig;
   /** The narrowed point-in-time read surface plus calendar; `asOf` enforces the availability filter. */
@@ -168,6 +174,7 @@ function recordFor(charter: Charter, ctx: ShadowDecisionContext, book: ArmTarget
     charterHash: ctx.charterHash,
     arm: book.arm,
     mode: ctx.mode,
+    policyHashes: { ...ctx.policyHashes },
     decisionAt: ctx.decisionAt,
     sealedAt: ctx.sealedAt,
     snapshotIds: [...(ctx.snapshotIds ?? [])].sort(),
@@ -189,5 +196,18 @@ export function shadowDecisionRecords(charter: Charter, ctx: ShadowDecisionConte
   const state = ctx.state ?? EMPTY_SHADOW_BOOK;
   const held = new Set(state.currentWeights.keys());
   const books = prospectiveTargetBooks(charter, ctx.deps, ctx.decisionAt, held);
-  return books.map((book) => recordFor(charter, ctx, book, gateForArm(charter, ctx, state, book)));
+
+  // Uniformly stale market data fails closed (Codex P1, round 9): when EVERY universe member lacks the newest
+  // admissible bar (a failed or incomplete ingest), `computeFeatures` moves its shared anchor back to the
+  // newest older session - honest for cross-sectional ranking, but no per-symbol STALE_ANCHOR fires, so a
+  // plausible book would otherwise clear the gate on uniformly stale prices. A deterministic book anchored
+  // before the decision session therefore enters the halt machine as a stale input: every arm still seals,
+  // with new risk blocked and the anchor gap on the record. (A single broken feed keeps the anchor current
+  // and marks only that member STALE_ANCHOR; this fault is the all-feeds-behind case.)
+  const decisionSession = ctx.deps.calendar.previousSession(ctx.decisionAt);
+  const staleMarket = books
+    .filter((b) => b.arm !== "B0_PASSIVE" && b.anchorSession < decisionSession)
+    .map((b) => `market_data_stale:${b.arm} anchored at ${b.anchorSession}, decision session ${decisionSession}`);
+  const effCtx = staleMarket.length === 0 ? ctx : { ...ctx, staleInputs: [...(ctx.staleInputs ?? []), ...staleMarket] };
+  return books.map((book) => recordFor(charter, effCtx, book, gateForArm(charter, effCtx, state, book)));
 }

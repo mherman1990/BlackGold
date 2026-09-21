@@ -104,6 +104,7 @@ function baseContext(overrides: Partial<ShadowDecisionContext> = {}): ShadowDeci
   return {
     mode: "SHADOW",
     charterHash: charterHash(charter),
+    policyHashes: { risk_yaml: `sha256:${"1".repeat(64)}`, restricted_list_yaml: `sha256:${"2".repeat(64)}`, theme_membership_yaml: `sha256:${"3".repeat(64)}` },
     risk: relaxedRisk(),
     restrictedList: cleanList(decisionAt),
     deps,

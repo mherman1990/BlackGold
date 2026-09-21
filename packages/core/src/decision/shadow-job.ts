@@ -214,6 +214,7 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       const records = shadowDecisionRecords(charter, {
         mode: config.mode,
         charterHash: loaded.charterHash,
+        policyHashes: { risk_yaml: risk.hash, restricted_list_yaml: restricted.hash, theme_membership_yaml: membership.hash },
         risk: risk.value,
         restrictedList: restricted.value,
         deps: { pit, calendar },

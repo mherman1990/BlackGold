@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,10 +92,10 @@ const PATHS: PricePath[] = [
 
 type Env = { db: Db; scheduler: Scheduler; config: AppConfig; charterPath: string; policyDir: string };
 
-function setup(mode: "SHADOW" | "RESEARCH", withCharterPath = true, opts: { registerExperiment?: boolean; approveRestrictedList?: boolean } = {}): Env {
+function setup(mode: "SHADOW" | "RESEARCH", withCharterPath = true, opts: { registerExperiment?: boolean; approveRestrictedList?: boolean; marketTo?: string } = {}): Env {
   const dir = mkdtempSync(join(tmpdir(), "bg-shadowjob-"));
   const db = openCoreDb({ dbPath: join(dir, "s.sqlite") }).db;
-  buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-03-13"), db });
+  buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D(opts.marketTo ?? "2026-03-13"), db });
   const charterPath = writeShadowCharter(dir);
   if (opts.registerExperiment !== false) registerExperimentFor(db, loadCharterFile(charterPath).charterHash);
   writePolicyDir(dir, opts);
@@ -145,6 +145,38 @@ describe("shadow_decision job", () => {
     ] as const) {
       expect(ev.policyHashes[key]).toBe(`sha256:${sha256Hex(readFileSync(join(env.policyDir, file)))}`);
     }
+    // Each RECORD carries the same policy hashes (Codex P2, round 9): an arm is attributable to its exact
+    // policy byte-state on its own, not only through the run's ledger event.
+    const rows = env.db.prepare("SELECT record_json FROM decision_records").all() as { record_json: string }[];
+    expect(rows.length).toBe(2);
+    for (const row of rows) {
+      const rec = JSON.parse(row.record_json) as { policyHashes: Record<string, string> };
+      expect(rec.policyHashes).toEqual(ev.policyHashes);
+    }
+  });
+
+  it("seals with new risk BLOCKED when every universe member lacks the decision session's bar (Codex P1, round 9)", async () => {
+    // A failed nightly ingest: the newest admissible bar for EVERY symbol is 2026-03-05, so computeFeatures
+    // silently anchors the whole cross-section there with no per-symbol STALE_ANCHOR. The uniformly stale
+    // market must enter the halt machine, not clear the gate on day-old prices.
+    const env = setup("SHADOW", true, { marketTo: "2026-03-05" });
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    const rows = env.db.prepare("SELECT record_json FROM decision_records").all() as { record_json: string }[];
+    expect(rows.length).toBe(2); // still sealed - honestly blocked, not silently absent
+    for (const row of rows) {
+      const rec = JSON.parse(row.record_json) as { gate: { newRiskAllowed: boolean; blockedBy: string[] } };
+      expect(rec.gate.newRiskAllowed).toBe(false);
+      expect(rec.gate.blockedBy.join(" ")).toContain("market_data_stale");
+    }
+    // Control (the fixture spans the dimension): with the decision session's bars ingested, nothing is stale.
+    const fresh = setup("SHADOW");
+    await fresh.scheduler.tick(afterClose("2026-03-06", 150));
+    const freshRows = fresh.db.prepare("SELECT record_json FROM decision_records").all() as { record_json: string }[];
+    expect(freshRows.length).toBe(2);
+    for (const row of freshRows) {
+      const rec = JSON.parse(row.record_json) as { gate: { blockedBy: string[] } };
+      expect(rec.gate.blockedBy.join(" ")).not.toContain("market_data_stale");
+    }
   });
 
   it("seals nothing on a non-decision session (the charter's weekly cadence, not the job's daily schedule)", async () => {
@@ -162,6 +194,7 @@ describe("shadow_decision job", () => {
       charterHash,
       arm: "B0_PASSIVE",
       mode: "SHADOW",
+      policyHashes: {},
       decisionAt: afterClose("2026-03-06", 60),
       sealedAt: afterClose("2026-03-06", 61),
       snapshotIds: [],
@@ -189,6 +222,22 @@ describe("shadow_decision job", () => {
     if (!ev) throw new Error("no sealed event");
     expect(ev.alreadySealed).toEqual(["B0_PASSIVE"]);
     expect(ev.sealed.map((s) => s.arm)).toEqual(["B1_DETERMINISTIC"]);
+  });
+
+  it("refuses a pre-sealed arm sealed under DIFFERENT policy bytes, even when the decision content matches (Codex P2, round 9)", async () => {
+    // The passive arm is halt-only and never evaluates compliance, so a cosmetic policy-file change leaves its
+    // gate and book identical - only the policy hashes sealed INTO the record (recordVersion 2) distinguish it.
+    const sibling = setup("SHADOW");
+    appendFileSync(join(sibling.policyDir, "restricted-list.yaml"), "\n# cosmetic byte change: same parsed policy\n");
+    await sibling.scheduler.tick(afterClose("2026-03-06", 150));
+    const priorRow = sibling.db.prepare("SELECT record_json FROM decision_records WHERE arm = 'B0_PASSIVE'").get() as { record_json: string };
+    const env = setup("SHADOW");
+    appendDecisionRecord(env.db, JSON.parse(priorRow.record_json) as Parameters<typeof appendDecisionRecord>[1]);
+    const outcomes = await env.scheduler.tick(afterClose("2026-03-06", 150));
+    expect(outcomes.find((o) => o.jobId === "shadow_decision")?.status).toBe("failed");
+    expect(outcomes.find((o) => o.jobId === "shadow_decision")?.error).toContain("different content");
+    expect(decisionRecordCount(env.db)).toBe(1);
+    expect(sealedEvents(env.db)).toHaveLength(0);
   });
 
   it("refuses to complete an arm pair when the pre-sealed arm has DIFFERENT content (Codex P2, rounds 7-8)", async () => {
