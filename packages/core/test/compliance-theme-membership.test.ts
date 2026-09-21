@@ -43,6 +43,12 @@ describe("themeMembershipOf", () => {
   });
 });
 
+describe("ThemeMembershipConfigSchema", () => {
+  it("rejects an omitted issuers list - missing owner content is not an empty policy (Codex P1)", () => {
+    expect(() => ThemeMembershipConfigSchema.parse({ asOf: "2026-09-01", maxAggregateThemeWeightPct: "0.10", maxHoldingsAgeDays: 7 })).toThrow();
+  });
+});
+
 describe("lookThroughParamsOf", () => {
   it("takes the restricted themes from the restricted list and the two policy values from the membership config", () => {
     const params = lookThroughParamsOf(MEMBERSHIP, RESTRICTED);
@@ -176,6 +182,21 @@ describe("storedLookThroughResolver", () => {
     expect(lookThrough("VTI")).toEqual([]);
     // ...while a FLAGGED ETF with no stored holdings still fails closed - the scope never weakens in-scope checks.
     expect(lookThrough("XLE")).toBeUndefined();
+  });
+
+  it("fails closed when the membership covers none of the restricted themes in force (Codex P1)", () => {
+    const pit = seeded();
+    // Explicitly empty issuers against a live restricted-theme list: vacuous content, not a clean policy.
+    const vacuous = ThemeMembershipConfigSchema.parse({ asOf: "2026-09-01", maxAggregateThemeWeightPct: "0.10", maxHoldingsAgeDays: 7, issuers: [] });
+    const base = { decisionAt: DECISION_AT, processingDelayMs: 0, lookThroughScope: SCOPE } as const;
+    const lookThrough = storedLookThroughResolver(pit, vacuous, RESTRICTED, base);
+    // In-scope ETFs read unknown (UNKNOWN_LOOK_THROUGH downstream) even though holdings are stored...
+    expect(lookThrough("XLI")).toBeUndefined();
+    expect(lookThrough("XLP")).toBeUndefined();
+    // ...out-of-scope stays the charter's own declaration, and an empty restricted-theme list needs no content.
+    expect(lookThrough("VTI")).toEqual([]);
+    const noThemes = RestrictedListConfigSchema.parse({ asOf: "2026-09-01", themes: [] });
+    expect(storedLookThroughResolver(pit, vacuous, noThemes, base)("XLP")).toEqual([]);
   });
 
   it("matches an aliased constituent through the point-in-time entity map (Codex P1)", () => {

@@ -389,8 +389,7 @@ export const ThemeMembershipConfigSchema = z.object({
         entityId: z.string().min(1).optional(),
         themes: z.array(z.string().min(1)).min(1),
       }),
-    )
-    .default([]),
+    ),
 });
 
 export type ThemeMembershipConfig = z.output<typeof ThemeMembershipConfigSchema>;

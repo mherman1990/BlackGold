@@ -19,7 +19,6 @@
       "maximum": 9007199254740991
     },
     "issuers": {
-      "default": [],
       "type": "array",
       "items": {
         "type": "object",
@@ -55,6 +54,7 @@
   "required": [
     "asOf",
     "maxAggregateThemeWeightPct",
-    "maxHoldingsAgeDays"
+    "maxHoldingsAgeDays",
+    "issuers"
   ]
 }
