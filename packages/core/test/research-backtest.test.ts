@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { fileURLToPath } from "node:url";
 import { Dec, ONE, ZERO } from "@blackgold/shared";
-import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
+import { type Charter } from "../src/strategy/charter.ts";
 import { backtestParamsFromCharter, costModelFor, costsFromCharter, reportBenchmarkSeries, runBacktest, weeklyDecisionSessions, type BacktestInput } from "../src/research/backtest.ts";
 import { blendSeries } from "../src/research/benchmarks.ts";
 import { auditReads } from "../src/research/leakage.ts";
 import { computeFeatures } from "../src/strategy/features.ts";
 import { defaultProcessingDelayMs } from "../src/data/pit/repository.ts";
 import { UNVERIFIED_SINGLE_SOURCE } from "../src/data/adapters/corporate-actions.ts";
-import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
+import { buildMarket, fixtureCharter, D, N, type PricePath } from "./strategy-fixture.ts";
 
 
 /**
@@ -17,8 +16,7 @@ import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
  * charter's own, and the sensitivity grid is rewritten to keep the registered point a grid member.
  */
 function shortWindowCharter(): Charter {
-  const base = loadCharterFile(fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url))).charter;
-  const c = structuredClone(base);
+  const c = fixtureCharter();
   c.universe.risk_etfs = ["VTI", "QQQ", "IWM", "VTV", "VUG", "XLK", "XLV", "XLU"];
   c.universe.conditional = [];
   c.universe.look_through_flagged = [];
@@ -89,6 +87,31 @@ function setup(over: Partial<BacktestInput> = {}, charterOver: (c: Charter) => v
   return { charter: c, market: m, input };
 }
 
+/**
+ * Two results the whole suite shares: the unmodified base-tier run, and the same input at zero execution
+ * delay.
+ *
+ * `runBacktest` is a pure function of a read-only store - it takes a `ReadOnlyPointInTime` and cannot append
+ * - so every case that asserted over an unmodified run was re-deriving a result byte-identical to its
+ * neighbour's, at about a second each. Sharing one result cannot couple them because nothing here writes to
+ * it. Two cases deliberately keep their own runs: "is deterministic" has to execute the same input twice
+ * (that is the property), and the leakage audit has to pass its own auditor into the run.
+ */
+let baseRun: ReturnType<typeof runBacktest> | undefined;
+function defaultRun(): ReturnType<typeof runBacktest> {
+  baseRun ??= runBacktest(setup().input);
+  return baseRun;
+}
+
+let zeroDelay: ReturnType<typeof runBacktest> | undefined;
+function zeroDelayRun(): ReturnType<typeof runBacktest> {
+  if (zeroDelay === undefined) {
+    const { input } = setup();
+    zeroDelay = runBacktest({ ...input, costs: { ...input.costs, delayBars: 0 } });
+  }
+  return zeroDelay;
+}
+
 describe("weeklyDecisionSessions", () => {
   it("picks the last session of each exchange week", () => {
     const m = buildMarket({ paths: PATHS.slice(0, 1), from: D("2026-01-02"), to: D("2026-02-28") });
@@ -135,7 +158,7 @@ describe("costsFromCharter", () => {
 describe("runBacktest", () => {
   it("produces sealed weekly decisions and two independent arms", () => {
     const { input } = setup();
-    const r = runBacktest(input);
+    const r = defaultRun();
     expect(r.decisions.length).toBeGreaterThan(10);
     expect(Object.keys(r.arms).sort()).toEqual(["B0_PASSIVE", "B1_DETERMINISTIC"]);
     for (const d of r.decisions) {
@@ -163,16 +186,15 @@ describe("runBacktest", () => {
     }
 
     it("is empty on a clean market", () => {
-      const m = buildMarket({ paths: PATHS, from, to });
-      const r = runBacktest(setup({ pit: m.pit, calendar: m.calendar }).input);
+      // `from`/`to` are the shared market's own range, so the clean run here IS the default run.
+      const r = defaultRun();
       expect(heldEntities(r).size).toBeGreaterThan(0);
       expect(r.navDistortingSessions).toEqual([]);
     });
 
     it("reports a session omitted from a held instrument", () => {
       const omitted = D("2026-04-17");
-      const clean = runBacktest(setup({ ...buildMarket({ paths: PATHS, from, to }) }).input);
-      const held = [...heldEntities(clean)].filter((e) => e !== "BIL");
+      const held = [...heldEntities(defaultRun())].filter((e) => e !== "BIL");
       const entity = held[0];
       expect(entity).toBeDefined();
       if (entity === undefined) return;
@@ -186,8 +208,7 @@ describe("runBacktest", () => {
       // The hole that matters most: staleness lives on the bar's `flags` and never becomes a series label,
       // so a run with a carried-forward close looks entirely clean from `bt.labels`.
       const stale = D("2026-04-17");
-      const clean = runBacktest(setup({ ...buildMarket({ paths: PATHS, from, to }) }).input);
-      const held = [...heldEntities(clean)].filter((e) => e !== "BIL");
+      const held = [...heldEntities(defaultRun())].filter((e) => e !== "BIL");
       const entity = held[0];
       expect(entity).toBeDefined();
       if (entity === undefined) return;
@@ -254,7 +275,8 @@ describe("runBacktest", () => {
         { action: div, sourceLocator: "tiingo/div", qualityFlags: [UNVERIFIED_SINGLE_SOURCE] },
       ],
     });
-    const noDividend = buildMarket({ paths: PATHS, from, to });
+    // The shared market is this same fixture with no corporate actions at all, which is exactly the control.
+    const noDividend = defaultMarket();
 
     // Deduped: the two-source run reproduces the single-action run exactly (the dividend is credited once)...
     expect(primaryTr(bothSources)).toEqual(primaryTr(reconciledOnly));
@@ -289,9 +311,9 @@ describe("runBacktest", () => {
   });
 
   it("holds at most the charter's book size and respects the per-ETF cap at every decision", () => {
-    const { charter, input } = setup();
+    const { charter } = setup();
     const cap = new Dec(charter.sizing.max_weight_per_etf);
-    const r = runBacktest(input);
+    const r = defaultRun();
     for (const d of r.decisions) {
       expect(d.candidates.selected.length).toBeLessThanOrEqual(charter.rules.max_positions);
       for (const [, w] of d.targets.weights) expect(w.lte(cap)).toBe(true);
@@ -300,10 +322,10 @@ describe("runBacktest", () => {
   });
 
   it("keeps the cluster cap at every decision", () => {
-    const { charter, input } = setup();
+    const { charter } = setup();
     const cluster = charter.sizing.clusters[0];
     if (!cluster) throw new Error("fixture charter must declare a cluster");
-    const r = runBacktest(input);
+    const r = defaultRun();
     for (const d of r.decisions) {
       const inCluster = d.candidates.selected.filter((e) => cluster.members.includes(e));
       expect(inCluster.length).toBeLessThanOrEqual(cluster.max_members);
@@ -311,7 +333,7 @@ describe("runBacktest", () => {
   });
 
   it("never shorts, never levers, and never spends cash it does not have", () => {
-    const r = runBacktest(setup().input);
+    const r = defaultRun();
     const arm = r.arms["B1_DETERMINISTIC"];
     if (!arm) throw new Error("missing arm");
     for (const p of arm.nav) {
@@ -322,7 +344,7 @@ describe("runBacktest", () => {
   });
 
   it("avoids the falling ETF and holds the strongest risers", () => {
-    const r = runBacktest(setup().input);
+    const r = defaultRun();
     const everSelected = new Set(r.decisions.flatMap((d) => d.candidates.selected));
     // XLU falls every session, so its trend flag is never up.
     expect(everSelected.has("XLU")).toBe(false);
@@ -345,7 +367,7 @@ describe("runBacktest", () => {
   });
 
   it("never fills before or on the decision session at the charter's one-session delay", () => {
-    const r = runBacktest(setup().input);
+    const r = defaultRun();
     expect(r.executionOrderViolations).toEqual([]);
     const arm = r.arms["B1_DETERMINISTIC"];
     if (!arm) throw new Error("missing arm");
@@ -363,7 +385,7 @@ describe("runBacktest", () => {
   // earn the return ending at it.
   it("applies the Secondary 2 weight only where the strategy's own fills land", () => {
     const { input } = setup();
-    const r = runBacktest(input);
+    const r = defaultRun();
     const delay = input.costs.delayBars;
     expect(r.secondary2Weights.length).toBe(r.sessions.length);
 
@@ -397,8 +419,7 @@ describe("runBacktest", () => {
   // The whole point of building Secondary 2 as its own index: the rebalance session is split at the open, so
   // the new weight cannot earn the overnight move its position did not exist for.
   it("splits the rebalance session at the open, so a pre-fill gap is earned at the OLD weight", () => {
-    const { input } = setup();
-    const r = runBacktest(input);
+    const r = defaultRun();
     const idx = r.secondary2Index;
     expect(idx).toBeDefined();
     if (idx === undefined) return;
@@ -418,8 +439,7 @@ describe("runBacktest", () => {
     // session at all, which was a symptom of the calendar-shift hack rather than the invariant: what must
     // never happen is the weight EARNING that session, which `secondary2Weights` alone cannot show. The index
     // oracle below pins that half.
-    const { input } = setup();
-    const r = runBacktest({ ...input, costs: { ...input.costs, delayBars: 0 } });
+    const r = zeroDelayRun();
     const decisionSessions = new Set(r.decisions.map((d) => d.decisionSession));
     let changes = 0;
     for (let i = 1; i < r.secondary2Weights.length; i++) {
@@ -459,7 +479,7 @@ describe("runBacktest", () => {
     const levels = (r: ReturnType<typeof runBacktest>): string[] => (r.secondary2Index?.points ?? []).map((p) => p.trIndex.toFixed(12));
 
     // Zero delay: every weight is acquired at a close, so no session is split.
-    const zero = runBacktest({ ...input, costs: { ...input.costs, delayBars: 0 } });
+    const zero = zeroDelayRun();
     expect(levels(zero).length).toBeGreaterThan(1);
     expect(zero.secondary2Exact).toBe(true);
     expect(levels(zero)).toEqual(asLaggedBlend(zero));
@@ -559,14 +579,13 @@ describe("runBacktest", () => {
     // here removes the volatility (a stale bar keeps series continuity, and a long gap still leaves enough
     // observations in the covariance window), so it is guarded by construction rather than by evidence. The
     // warm-up guard itself IS covered - removing it turns three evaluation tests red, which I verified.
-    const clean = runBacktest(setup().input);
+    const clean = defaultRun();
     expect(clean.secondary2Exact).toBe(true);
     expect(clean.secondary2InexactReasons.join(" ")).not.toContain("no primary volatility");
   });
 
   it("places Secondary 2 exactly on clean data, and no longer withholds it", () => {
-    const { input } = setup();
-    const r = runBacktest(input);
+    const r = defaultRun();
     expect(r.secondary2Exact).toBe(true);
     expect(r.secondary2Index?.warnings).toEqual([]);
     expect(r.secondary2InexactReasons).toEqual([]);
@@ -588,9 +607,9 @@ describe("runBacktest", () => {
       omitSessions: { BIL: [D("2026-03-09")] },
     });
     const runs = [
-      runBacktest(input0()),
-      runBacktest({ ...input0(), costs: { ...input0().costs, delayBars: 0 } }),
-      runBacktest({ ...input0(), costs: costsFromCharter(setup().charter, "adverse") }),
+      defaultRun(),
+      zeroDelayRun(),
+      runBacktest({ ...setup().input, costs: costsFromCharter(setup().charter, "adverse") }),
       runBacktest(setup({ pit: holed.pit, calendar: holed.calendar }).input),
     ];
     expect(runs.some((r) => r.secondary2Exact)).toBe(true);
@@ -599,14 +618,10 @@ describe("runBacktest", () => {
       expect(r.secondary2Index).toBeDefined();
       expect(r.secondary2Withheld).toBe(!r.secondary2Exact);
     }
-    function input0(): BacktestInput {
-      return setup().input;
-    }
   });
 
   it("holds Secondary 2 in cash until its first decision takes effect, and keeps it long-only", () => {
-    const { input } = setup();
-    const r = runBacktest(input);
+    const r = defaultRun();
     const first = r.secondary2Weights[0];
     expect(first?.weight.isZero()).toBe(true);
     for (const w of r.secondary2Weights) {
@@ -626,23 +641,36 @@ describe("runBacktest", () => {
     // version used one fixture and asserted only `capped + scaled === checked`, which is true by
     // construction and passes at `capped === 0`; before that it asserted only that weights lay in (0, 1],
     // every part of which survived replacing the formula with an arbitrary positive fraction.
+    // Six weeks of decisions per branch rather than four months. The assertion is per weight change and the
+    // wobble is constant within a run, so a branch that is exercised at all is exercised on its first few
+    // rebalances; the counts below still refuse a window that produced none.
     const branch = (wobble: Dec): { checked: number; capped: number; scaled: number } => {
       const paths: PricePath[] = PATHS.map((x) => (x.entityId === "VTI" ? { ...x, wobble } : x));
-      const m = buildMarket({ paths, from: D("2026-01-02"), to: D("2026-06-30") });
-      const { charter, input } = setup({ pit: m.pit, calendar: m.calendar });
+      const m = buildMarket({ paths, from: D("2026-01-02"), to: D("2026-04-15") });
+      const { charter, input } = setup({ pit: m.pit, calendar: m.calendar, to: D("2026-04-15") });
       const r = runBacktest(input);
       const params = backtestParamsFromCharter(charter);
       const target = params.sizing.annualVolatilityTarget;
-      const volAt = (session: ReturnType<typeof D>): Dec | undefined =>
-        computeFeatures(
-          { pit: m.pit, calendar: m.calendar },
-          {
-            riskEntities: [...charter.universe.risk_etfs],
-            cashEntityId: charter.universe.cash_etf,
-            decisionAt: m.decisionAt(session),
-            params: params.features,
-          },
-        ).features.get(charter.benchmarks.primary)?.vol;
+      // One evaluation per session, not one per weight change. `computeFeatures` re-reads the whole window
+      // at the instant it is given, so calling it twice for the same session repeats the identical reads.
+      const volCache = new Map<string, Dec | undefined>();
+      const volAt = (session: ReturnType<typeof D>): Dec | undefined => {
+        if (!volCache.has(session)) {
+          volCache.set(
+            session,
+            computeFeatures(
+              { pit: m.pit, calendar: m.calendar },
+              {
+                riskEntities: [...charter.universe.risk_etfs],
+                cashEntityId: charter.universe.cash_etf,
+                decisionAt: m.decisionAt(session),
+                params: params.features,
+              },
+            ).features.get(charter.benchmarks.primary)?.vol,
+          );
+        }
+        return volCache.get(session);
+      };
 
       const decisionSessions = new Set(r.decisions.map((d) => d.decisionSession));
       const indexOf = new Map(r.sessions.map((x, i) => [x, i]));
@@ -680,7 +708,7 @@ describe("runBacktest", () => {
   });
 
   it("refuses to be cited as evidence while the charter is a draft", () => {
-    const r = runBacktest(setup().input);
+    const r = defaultRun();
     expect(r.citableAsEvidence).toBe(false);
     expect(r.citabilityReasons.join(" ")).toContain("DRAFT");
   });
@@ -702,7 +730,7 @@ describe("runBacktest", () => {
 
   it("costs more under the adverse and stress tiers than under the base tier", () => {
     const { charter, input } = setup();
-    const base = runBacktest(input);
+    const base = defaultRun();
     const stress = runBacktest({ ...input, costs: costsFromCharter(charter, "stress") });
     const baseArm = base.arms["B1_DETERMINISTIC"];
     const stressArm = stress.arms["B1_DETERMINISTIC"];
@@ -725,8 +753,8 @@ describe("runBacktest", () => {
   });
 
   it("runs the passive arm as buy-and-hold of the primary benchmark", () => {
-    const { charter, input } = setup();
-    const r = runBacktest(input);
+    const { charter } = setup();
+    const r = defaultRun();
     const passive = r.arms["B0_PASSIVE"];
     if (!passive) throw new Error("missing passive arm");
     expect(passive.fills).toHaveLength(1);
@@ -738,7 +766,7 @@ describe("runBacktest", () => {
   });
 
   it("keeps the arms independent: the passive arm has no decisions and its own cash", () => {
-    const r = runBacktest(setup().input);
+    const r = defaultRun();
     const passive = r.arms["B0_PASSIVE"];
     const deterministic = r.arms["B1_DETERMINISTIC"];
     if (!passive || !deterministic) throw new Error("missing arm");
@@ -753,7 +781,7 @@ describe("runBacktest", () => {
   });
 
   it("reports the realized equity weight per session for the exposure-matched benchmark", () => {
-    const r = runBacktest(setup().input);
+    const r = defaultRun();
     expect(r.equityWeights).toHaveLength(r.sessions.length);
     for (const w of r.equityWeights) {
       expect(w.weight.isNegative()).toBe(false);

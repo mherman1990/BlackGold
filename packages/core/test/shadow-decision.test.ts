@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { fileURLToPath } from "node:url";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Dec, utc, type Db, type Mode, type UtcInstant } from "@blackgold/shared";
 import { openCoreDb } from "../src/index.ts";
-import { charterHash, loadCharterFile, type Charter } from "../src/strategy/charter.ts";
+import { charterHash, type Charter } from "../src/strategy/charter.ts";
 import { RestrictedListConfigSchema, RiskConfigSchema, type RestrictedListConfig, type RiskConfig } from "../src/config/schema.ts";
 import { backtestParamsFromCharter, costsFromCharter, runBacktest, type BacktestInput } from "../src/research/backtest.ts";
 import { deterministicTargetBook, type DecisionEngineDeps } from "../src/decision/prospective.ts";
@@ -16,15 +15,14 @@ import {
   sealDecision,
 } from "../src/decision/decision-record.ts";
 import { EMPTY_SHADOW_BOOK, shadowDecisionRecords, type ShadowDecisionContext } from "../src/decision/shadow-decision.ts";
-import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
+import { buildMarket, fixtureCharter, D, N, type PricePath } from "./strategy-fixture.ts";
 
 // The slice-2a fixture charter (short feature windows), with clusters removed. Construction and candidate
 // selection do not read clusters (only the risk-limit engine does), so the target book is identical to the
 // clustered fixture, while dropping clusters keeps these gate-composition tests from tripping the separate
 // cluster-membership limit that limits.test.ts already covers.
 function shadowCharter(): Charter {
-  const base = loadCharterFile(fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url))).charter;
-  const c = structuredClone(base);
+  const c = fixtureCharter();
   c.universe.risk_etfs = ["VTI", "QQQ", "IWM", "VTV", "VUG", "XLK", "XLV", "XLU"];
   c.universe.conditional = [];
   c.universe.look_through_flagged = [];
@@ -46,24 +44,43 @@ const PATHS: PricePath[] = [
   { entityId: "SPY", start: N("500"), perSession: N("1.0010"), volumeShares: 6_000_000n, wobble: N("0.003") },
 ];
 
-function fixture() {
-  const charter = shadowCharter();
-  const market = buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-06-30") });
-  const input: BacktestInput = {
-    charter,
-    charterHash: "sha256:" + "0".repeat(64),
-    pit: market.pit,
-    calendar: market.calendar,
-    from: D("2026-03-02"),
-    to: D("2026-06-30"),
-    initialCash: N("100000"),
-    costs: costsFromCharter(charter, "base"),
-    params: backtestParamsFromCharter(charter),
-  };
-  const first = runBacktest(input).decisions.at(0);
-  if (first === undefined) throw new Error("fixture produced no backtest decision");
-  const deps: DecisionEngineDeps = { pit: market.pit, calendar: market.calendar };
-  return { charter, deps, decisionAt: first.decisionAt };
+/**
+ * The market, charter and decision instant every case in this file decides at, built once.
+ *
+ * Two things were being paid per test and neither could differ between them. The fixture market is seeded
+ * from a closed-form price path and is only ever read here - `runBacktest`, `deterministicTargetBook` and
+ * `shadowDecisionRecords` all take a `ReadOnlyPointInTime` and cannot append - so one market cannot couple
+ * the cases. And `baseContext` called `fixture()` itself, so a test that also called it directly built the
+ * whole thing twice. The charter is cloned per call, because a case may narrow its own copy.
+ *
+ * The window is the shortest that reaches a decision: the fixture ends a fortnight after the backtest's
+ * `from`, because only `decisions.at(0)` is read. The feature windows (20 + 4 momentum sessions, 15 for
+ * volatility) still warm up over January and February exactly as they did over a four-month run - the same
+ * code, at the same instant, on the same reads.
+ */
+type Fixture = { charter: Charter; deps: DecisionEngineDeps; decisionAt: UtcInstant };
+let built: Fixture | undefined;
+
+function fixture(): Fixture {
+  if (built === undefined) {
+    const charter = shadowCharter();
+    const market = buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-03-13") });
+    const input: BacktestInput = {
+      charter,
+      charterHash: "sha256:" + "0".repeat(64),
+      pit: market.pit,
+      calendar: market.calendar,
+      from: D("2026-03-02"),
+      to: D("2026-03-13"),
+      initialCash: N("100000"),
+      costs: costsFromCharter(charter, "base"),
+      params: backtestParamsFromCharter(charter),
+    };
+    const first = runBacktest(input).decisions.at(0);
+    if (first === undefined) throw new Error("fixture produced no backtest decision");
+    built = { charter, deps: { pit: market.pit, calendar: market.calendar }, decisionAt: first.decisionAt };
+  }
+  return { ...built, charter: structuredClone(built.charter) };
 }
 
 /** A restricted list that is fresh at the decision instant and restricts nothing, so compliance turns on look-through. */

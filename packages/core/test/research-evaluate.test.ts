@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { Dec } from "@blackgold/shared";
-import { fileURLToPath } from "node:url";
-import { loadCharterFile, registrabilityReasons, type Charter } from "../src/strategy/charter.ts";
+import { registrabilityReasons, type Charter } from "../src/strategy/charter.ts";
 import { runEvaluation } from "../src/research/evaluate.ts";
 import { splitPlan, SplitRangeError, type SplitKind } from "../src/research/walkforward.ts";
 import { UNVERIFIED_SINGLE_SOURCE } from "../src/data/adapters/corporate-actions.ts";
-import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
+import { buildMarket, fixtureCharter, D, N, type PricePath } from "./strategy-fixture.ts";
 
 /**
  * A charter with short feature windows and design/holdout/recent windows that fall inside a one-year fixture,
@@ -14,8 +13,7 @@ import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
  * point a member (mirrors the backtest suite's short-window charter).
  */
 function evalCharter(mut: (c: Charter) => void = () => undefined): Charter {
-  const base = loadCharterFile(fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url))).charter;
-  const c = structuredClone(base);
+  const c = fixtureCharter();
   c.universe.risk_etfs = ["VTI", "QQQ", "IWM", "VTV", "VUG", "XLK", "XLV", "XLU"];
   c.universe.conditional = [];
   c.universe.look_through_flagged = [];
@@ -120,9 +118,25 @@ function evaluateKinds(c: Charter, market: ReturnType<typeof buildMarket>, split
   });
 }
 
+/**
+ * The unmodified charter evaluated over the clean market, run once and read by every case that does not
+ * change either input.
+ *
+ * Two thirds of this file asserted over a run that could not differ between cases: `runEvaluation` reads the
+ * store and returns a fresh report, so the twelve identical runs it was doing produced twelve identical
+ * reports at around two and a half seconds each. Nothing here mutates the report. The determinism case below
+ * keeps its own two runs on purpose - the whole property is that running twice agrees - and every case that
+ * mutates the charter still evaluates its own.
+ */
+let cleanEvaluation: ReturnType<typeof evaluate> | undefined;
+function defaultEvaluation(): ReturnType<typeof evaluate> {
+  cleanEvaluation ??= evaluate(evalCharter(), cleanMarket());
+  return cleanEvaluation;
+}
+
 describe("runEvaluation", () => {
   it("evaluates the design and recent splits and never the sealed holdout", () => {
-    const r = evaluate(evalCharter(), cleanMarket());
+    const r = defaultEvaluation();
     expect(r.evaluationVersion).toBe(4);
     // Design and recent are in-window; the 1-year walk-forward window yields no rolling split here.
     const kinds = r.splits.map((s) => s.kind);
@@ -145,7 +159,7 @@ describe("runEvaluation", () => {
   // difference. The charter's own hypothesis (section 4) claims the strategy raises "Sharpe and Calmar",
   // and section 16.1's decisive falsifier is a conjunction whose second prong was therefore unreadable.
   it("surfaces the section 13 secondary risk metrics for every arm and benchmark", () => {
-    const r = evaluate(evalCharter(), cleanMarket());
+    const r = defaultEvaluation();
     const split = r.splits[0];
     expect(split).toBeDefined();
     if (split === undefined) return;
@@ -163,7 +177,7 @@ describe("runEvaluation", () => {
   });
 
   it("reports F2 as the charter computes it: |strategy| against max_drawdown_ratio x |benchmark|", () => {
-    const r = evaluate(evalCharter(), cleanMarket());
+    const r = defaultEvaluation();
     const split = r.splits[0];
     expect(split?.drawdown).toBeDefined();
     const dd = split?.drawdown;
@@ -179,7 +193,7 @@ describe("runEvaluation", () => {
   });
 
   it("names which falsifiers the run evaluated, rather than implying the rest passed", () => {
-    const r = evaluate(evalCharter(), cleanMarket());
+    const r = defaultEvaluation();
     const split = r.splits[0];
     // F3/F4/F5 need the cost and delay tiers, the drop-best-year refit and the full grid; F6 is prospective.
     // F1 is NOT per-split: section 13 defines the primary-metric pass rule on the aggregate walk-forward
@@ -194,7 +208,7 @@ describe("runEvaluation", () => {
   // 63-day estimator, remainder in BIL". Built from the strategy's own covariance window so the estimator is
   // literally the registered one, and timed to the strategy's fills so the weight cannot be look-ahead.
   it("builds the registered Secondary 2 as a reporting benchmark", () => {
-    const r = evaluate(evalCharter(), cleanMarket());
+    const r = defaultEvaluation();
     const split = r.splits[0];
     // Under the registered name again, now that the legSplit ex-date defect is fixed and the withhold that
     // stood in for it is gone. `__INEXACT` is reserved for a comparator that could not be placed exactly.
@@ -209,7 +223,7 @@ describe("runEvaluation", () => {
     // The prong is measurable again: legSplit is fixed, so nothing withholds a comparator that placed
     // exactly. Section 13's measure is excess return - candidate total return less Secondary 2's - not a
     // Sharpe difference, and this asserts the value rather than only its presence.
-    const r = evaluate(evalCharter(), cleanMarket());
+    const r = defaultEvaluation();
     expect(r.splits.length).toBeGreaterThan(0);
     for (const split of r.splits) {
       expect(split.primaryVersusSecondary2).toMatch(/^-?\d+\.\d{8}$/);
@@ -247,7 +261,7 @@ describe("runEvaluation", () => {
   it("keeps Secondary 2 distinct from the average-exposure approximation", () => {
     // If these two ever coincide the rename in PR #90 bought nothing. They are different series: one is
     // volatility-targeted per decision, the other is a single constant average exposure.
-    const r = evaluate(evalCharter(), cleanMarket());
+    const r = defaultEvaluation();
     const split = r.splits[0];
     const s2 = split?.benchmarks.find((b) => b.arm === "SECONDARY_2_VOL_TARGET_PRIMARY");
     const approx = split?.benchmarks.find((b) => b.arm === "APPROX_AVERAGE_EXPOSURE_PRIMARY");
@@ -262,7 +276,7 @@ describe("runEvaluation", () => {
     // Secondary 2 is "VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator" - a
     // dynamically re-scaled series. The approximation is a coarser Secondary 1, so this surface must not
     // present it as the registered comparator.
-    const r = evaluate(evalCharter(), cleanMarket());
+    const r = defaultEvaluation();
     const split = r.splits[0];
     expect(split?.approximateVersusAverageExposureBenchmark).toBeTypeOf("number");
     // The registered second prong is not computed anywhere, so no section 16.1 verdict may appear here.
@@ -273,7 +287,7 @@ describe("runEvaluation", () => {
     // Section 16.1 applies "on the aggregate walk-forward out-of-sample set". A per-split verdict would
     // state a rejection over the in-sample DESIGN window, and several walk-forward splits would contradict
     // each other where the charter registers exactly one verdict.
-    const r = evaluate(evalCharter(), cleanMarket());
+    const r = defaultEvaluation();
     for (const split of r.splits) {
       expect(split).not.toHaveProperty("decisiveRejection");
       expect(split).not.toHaveProperty("decisiveRejectionDetail");
@@ -293,16 +307,17 @@ describe("runEvaluation", () => {
   });
 
   it("is deterministic: the same charter and store hash to the same report", () => {
-    const m = cleanMarket();
-    const a = evaluate(evalCharter(), m);
-    const b = evaluate(evalCharter(), m);
+    // One of the two is the report the rest of this file reads, which also pins that the shared run is
+    // reproducible rather than merely self-consistent; the other is evaluated fresh here.
+    const a = defaultEvaluation();
+    const b = evaluate(evalCharter(), cleanMarket());
     expect(a.reportHash).toBe(b.reportHash);
     expect(a.splits.map((s) => s.reportHash)).toEqual(b.splits.map((s) => s.reportHash));
     expect(a.splits.map((s) => s.resultHash)).toEqual(b.splits.map((s) => s.resultHash));
   });
 
   it("an approved charter over clean data is registrable and citable as evidence", () => {
-    const r = evaluate(evalCharter(), cleanMarket());
+    const r = defaultEvaluation();
     expect(r.registrable).toBe(true);
     expect(r.promotionBlockingCodes).toEqual([]);
     expect(r.citableAsEvidence).toBe(true);
@@ -348,7 +363,7 @@ describe("runEvaluation", () => {
   it("runs only the requested split kinds when a --split filter is given", () => {
     const c = evalCharter();
     const m = cleanMarket();
-    const full = evaluate(c, m);
+    const full = defaultEvaluation();
     expect(full.splitKinds).toContain("DESIGN");
     expect(full.splitKinds).toContain("RECENT");
 

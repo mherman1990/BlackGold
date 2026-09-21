@@ -1,15 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { fileURLToPath } from "node:url";
 import { Dec, ONE, ZERO, isoDate, type IsoDate } from "@blackgold/shared";
-import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
+import { type Charter } from "../src/strategy/charter.ts";
 import { TR_ADJUSTMENT_VERSION, type TRPoint, type TRSeries } from "../src/market/series.ts";
 import { armMetrics, buildResultReport, REPORT_VERSION, sharpeInputSeries, taxScenarios } from "../src/research/report.ts";
 import { backtestParamsFromCharter, costsFromCharter, runBacktest } from "../src/research/backtest.ts";
-import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
+import { buildMarket, fixtureCharter, D, N, type PricePath } from "./strategy-fixture.ts";
 
 
 function charter(): Charter {
-  return loadCharterFile(fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url))).charter;
+  return fixtureCharter();
 }
 
 /**
@@ -226,7 +225,7 @@ describe("buildResultReport", () => {
   ];
 
   function shortCharter(): Charter {
-    const c = structuredClone(charter());
+    const c = charter();
     c.universe.risk_etfs = ["VTI", "QQQ", "IWM", "XLV", "XLU"];
     c.universe.conditional = [];
     c.universe.look_through_flagged = [];
@@ -248,6 +247,10 @@ describe("buildResultReport", () => {
   // Read-only across tests, so one market serves the whole suite (see the backtest suite for the reasoning).
   let sharedMarket: ReturnType<typeof buildMarket> | undefined;
 
+  /**
+   * A fresh backtest and the report arguments built from it. Only the determinism case needs this: every
+   * other case reads `defaultArgs()`, which runs it once.
+   */
   function run() {
     const c = shortCharter();
     sharedMarket ??= buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-06-30") });
@@ -278,6 +281,20 @@ describe("buildResultReport", () => {
     };
   }
 
+  /**
+   * The report arguments every case here starts from, built once.
+   *
+   * `buildResultReport` is a pure function of these arguments and each case was re-running the same backtest
+   * over the same read-only market to rebuild an identical input, at over half a second a time. No case
+   * mutates the arguments - each spreads its own variant - so one shared value cannot couple them. The
+   * determinism case still calls `run()` itself, because its property is that two independent runs agree.
+   */
+  let defaultReportArgs: ReturnType<typeof run> | undefined;
+  function defaultArgs(): ReturnType<typeof run> {
+    defaultReportArgs ??= run();
+    return defaultReportArgs;
+  }
+
   // Section 16.1's second prong is decisive, and an approximated comparator has no safe direction of error.
   // So an index that could not place every rebalance exactly loses the registered name and takes the prong
   // with it, rather than being published as though it were the charter's Secondary 2.
@@ -286,7 +303,7 @@ describe("buildResultReport", () => {
     // caller of the exported buildResultReport - has no `secondary2Withheld`. Read as a truthiness test,
     // `undefined` would mean "not withheld" and hand that result the registered arm name and the prong. The
     // gate would then be defeated by a schema gap rather than by any argument about the comparator.
-    const base = run();
+    const base = defaultArgs();
     const legacy = { ...base.backtest } as Record<string, unknown>;
     delete legacy["secondary2Withheld"];
     const r = buildResultReport({ ...base, backtest: legacy as unknown as typeof base.backtest });
@@ -296,7 +313,7 @@ describe("buildResultReport", () => {
   });
 
   it("withholds the second prong and renames the arm whenever Secondary 2 is withheld", () => {
-    const base = run();
+    const base = defaultArgs();
     // Every real run is withheld today by SECONDARY_2_KNOWN_DEFECT, so the usable case has to be constructed.
     // That is deliberate: the withhold is unconditional in `runBacktest`, and a test that could turn it off
     // from the outside would not be much of a gate.
@@ -323,7 +340,7 @@ describe("buildResultReport", () => {
   });
 
   it("reports both arms, the charter's benchmarks, and the primary metric with its interval", () => {
-    const r = buildResultReport(run());
+    const r = buildResultReport(defaultArgs());
     expect(r.version).toBe(REPORT_VERSION);
     expect(r.reportId).toMatch(/^res_20260630_[0-9a-f]{8}$/);
     expect(r.arms.map((a) => a.arm).sort()).toEqual(["B0_PASSIVE", "B1_DETERMINISTIC"]);
@@ -363,7 +380,7 @@ describe("buildResultReport", () => {
   });
 
   it("shows the passive baseline on the same page as the candidate", () => {
-    const r = buildResultReport(run());
+    const r = buildResultReport(defaultArgs());
     const candidate = r.arms.find((a) => a.arm === "B1_DETERMINISTIC");
     const passive = r.arms.find((a) => a.arm === "B0_PASSIVE");
     expect(candidate).toBeDefined();
@@ -373,40 +390,40 @@ describe("buildResultReport", () => {
   });
 
   it("carries the charter's reasons it may not work verbatim", () => {
-    const args = run();
+    const args = defaultArgs();
     const r = buildResultReport(args);
     expect(r.reasonsItMayNotWork).toEqual(args.charter.reasons_it_may_not_work);
     expect(r.reasonsItMayNotWork.length).toBeGreaterThan(5);
   });
 
   it("marks the report uncitable while the charter is a draft, and says why", () => {
-    const r = buildResultReport(run());
+    const r = buildResultReport(defaultArgs());
     expect(r.citableAsEvidence).toBe(false);
     expect(r.citabilityReasons.join(" ")).toContain("DRAFT");
   });
 
   it("reports every declared tax scenario with its stated rates", () => {
-    const args = run();
+    const args = defaultArgs();
     const r = buildResultReport(args);
     expect(r.taxScenarios.map((t) => t.scenario)).toEqual(args.charter.tax_scenarios);
   });
 
   it("reports the trial ledger count and the independent-decision count", () => {
-    const r = buildResultReport({ ...run(), trialLedgerCount: 72 });
+    const r = buildResultReport({ ...defaultArgs(), trialLedgerCount: 72 });
     expect(r.trialLedgerCount).toBe(72);
     expect(r.independentDecisions).toBeGreaterThan(0);
     expect(r.decisions).toBeGreaterThan(0);
   });
 
   it("hashes deterministically for the same inputs", () => {
-    const a = buildResultReport(run());
+    const a = buildResultReport(defaultArgs());
     const b = buildResultReport(run());
     expect(a.reportHash).toBe(b.reportHash);
     expect(a.reportId).toBe(b.reportId);
   });
 
   it("refuses to build without the deterministic arm", () => {
-    const args = run();
+    const args = defaultArgs();
     const stripped = { ...args, backtest: { ...args.backtest, arms: {} } };
     expect(() => buildResultReport(stripped)).toThrow(RangeError);
   });
