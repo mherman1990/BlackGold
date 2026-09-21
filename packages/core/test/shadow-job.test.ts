@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse, stringify } from "yaml";
 import { addMs, isoDate, sha256Hex, type Db, type UtcInstant } from "@blackgold/shared";
@@ -92,10 +92,10 @@ const PATHS: PricePath[] = [
 
 type Env = { db: Db; scheduler: Scheduler; config: AppConfig; charterPath: string; policyDir: string };
 
-function setup(mode: "SHADOW" | "RESEARCH", withCharterPath = true, opts: { registerExperiment?: boolean; approveRestrictedList?: boolean; marketTo?: string } = {}): Env {
+function setup(mode: "SHADOW" | "RESEARCH", withCharterPath = true, opts: { registerExperiment?: boolean; approveRestrictedList?: boolean; marketTo?: string; noMarket?: boolean } = {}): Env {
   const dir = mkdtempSync(join(tmpdir(), "bg-shadowjob-"));
   const db = openCoreDb({ dbPath: join(dir, "s.sqlite") }).db;
-  buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D(opts.marketTo ?? "2026-03-13"), db });
+  if (opts.noMarket !== true) buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D(opts.marketTo ?? "2026-03-13"), db });
   const charterPath = writeShadowCharter(dir);
   if (opts.registerExperiment !== false) registerExperimentFor(db, loadCharterFile(charterPath).charterHash);
   writePolicyDir(dir, opts);
@@ -177,6 +177,34 @@ describe("shadow_decision job", () => {
       const rec = JSON.parse(row.record_json) as { gate: { blockedBy: string[] } };
       expect(rec.gate.blockedBy.join(" ")).not.toContain("market_data_stale");
     }
+  });
+
+  it("seals with new risk BLOCKED when there are NO admissible market observations at all (Codex P1, round 10)", async () => {
+    // SHADOW enabled before the initial ingest: zero bars anywhere. computeFeatures substitutes the decision
+    // session as its anchor (a calendar fallback, not data), so the anchor-date comparison alone reads an empty
+    // database as fresh - B1 would seal all-cash and B0 halt-normal, both with newRiskAllowed true.
+    const env = setup("SHADOW", true, { noMarket: true });
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    const rows = env.db.prepare("SELECT record_json FROM decision_records").all() as { record_json: string }[];
+    expect(rows.length).toBe(2);
+    for (const row of rows) {
+      const rec = JSON.parse(row.record_json) as { gate: { newRiskAllowed: boolean; blockedBy: string[] } };
+      expect(rec.gate.newRiskAllowed).toBe(false);
+      expect(rec.gate.blockedBy.join(" ")).toContain("no admissible market observations");
+    }
+  });
+
+  it("fails LOUDLY when the charter file's decision offset no longer matches the registered schedule (Codex P2, round 10)", async () => {
+    // The charter file is replaced mid-process with a larger offset: the old schedule would fire before the
+    // new decision instant and the pre-instant skip would consume the session's idempotency key, silently
+    // losing the week's records. The run must fail visibly instead.
+    const env = setup("SHADOW");
+    writeShadowCharter(dirname(env.charterPath), 300);
+    const outcomes = await env.scheduler.tick(afterClose("2026-03-06", 150));
+    expect(outcomes.find((o) => o.jobId === "shadow_decision")?.status).toBe("failed");
+    expect(outcomes.find((o) => o.jobId === "shadow_decision")?.error).toContain("decision_offset_minutes changed");
+    expect(decisionRecordCount(env.db)).toBe(0);
+    expect(sealedEvents(env.db)).toHaveLength(0);
   });
 
   it("seals nothing on a non-decision session (the charter's weekly cadence, not the job's daily schedule)", async () => {

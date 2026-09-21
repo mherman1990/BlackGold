@@ -105,6 +105,13 @@ export type FeatureSet = {
    * rather than dragging the whole cross-section back to its last good bar.
    */
   anchorSession: IsoDate;
+  /**
+   * False when NO universe member had any admissible bar at all, so `anchorSession` is the calendar fallback
+   * (`decisionSession`), not a session any observation supports. A consumer that treats "anchor == decision
+   * session" as fresh must check this first: a completely empty read is the stalest possible market, and the
+   * synthetic anchor date must not make it look current (Codex P1, round 10).
+   */
+  anchorFromData: boolean;
   features: Map<string, EntityFeatures>;
   /** Cash-leg momentum over the same window: the hurdle `mom_i > mom_cash`. */
   cashMom: Dec | undefined;
@@ -392,6 +399,7 @@ export function computeFeatures(deps: FeatureEngineDeps, input: ComputeFeaturesI
     decisionAt: input.decisionAt,
     decisionSession,
     anchorSession: anchor,
+    anchorFromData: anchorSession !== undefined,
     features,
     cashMom,
     cashEntityId: input.cashEntityId,

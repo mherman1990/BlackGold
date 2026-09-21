@@ -115,6 +115,18 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       const loaded = loadCharterFile(charterPath);
       const charter = loaded.charter;
 
+      // The reloaded charter must still carry the offset the SCHEDULE was registered with (Codex P2, round
+      // 10): if the file is replaced mid-process with a larger offset, the old schedule fires before the new
+      // decision instant, and the pre-instant guard below would record a "successful" skip that consumes the
+      // session's idempotency key - that week's records would be silently unrecoverable. A loud failure keeps
+      // the mismatch visible and re-runnable: restart the process so the schedule re-derives from the charter.
+      if (charter.rules.decision_offset_minutes !== registeredOffsetMinutes) {
+        throw new Error(
+          `charter decision_offset_minutes changed from ${registeredOffsetMinutes} (the registered schedule) to ` +
+            `${charter.rules.decision_offset_minutes}; restart the process so the schedule matches the charter`,
+        );
+      }
+
       const decisionAt = addMs(calendar.sessionClose(session), charter.rules.decision_offset_minutes * 60_000);
 
       // Rung order is enforced in code, not prose (Codex P1, round 3): ALPHA_CHARTER section 14.2 dates the

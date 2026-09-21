@@ -205,9 +205,16 @@ export function shadowDecisionRecords(charter: Charter, ctx: ShadowDecisionConte
   // with new risk blocked and the anchor gap on the record. (A single broken feed keeps the anchor current
   // and marks only that member STALE_ANCHOR; this fault is the all-feeds-behind case.)
   const decisionSession = ctx.deps.calendar.previousSession(ctx.decisionAt);
+  // `anchorFromData === false` is the zero-observation case (Codex P1, round 10): with NO admissible bar
+  // anywhere, computeFeatures substitutes the decision session as a calendar fallback, so the date comparison
+  // alone would read an empty database as fresh.
   const staleMarket = books
-    .filter((b) => b.arm !== "B0_PASSIVE" && b.anchorSession < decisionSession)
-    .map((b) => `market_data_stale:${b.arm} anchored at ${b.anchorSession}, decision session ${decisionSession}`);
+    .filter((b) => b.arm !== "B0_PASSIVE" && (!b.anchorFromData || b.anchorSession < decisionSession))
+    .map((b) =>
+      b.anchorFromData
+        ? `market_data_stale:${b.arm} anchored at ${b.anchorSession}, decision session ${decisionSession}`
+        : `market_data_stale:${b.arm} has no admissible market observations at ${decisionSession}`,
+    );
   const effCtx = staleMarket.length === 0 ? ctx : { ...ctx, staleInputs: [...(ctx.staleInputs ?? []), ...staleMarket] };
   return books.map((book) => recordFor(charter, effCtx, book, gateForArm(charter, effCtx, state, book)));
 }
