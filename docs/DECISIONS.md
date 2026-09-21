@@ -819,7 +819,8 @@ evidence for or against the strategy. The full write-up is
 `docs/analysis/2026-09-13-etf-trend-vol-machinery-check.md`. What surfaced is a metric-design observation, not a
 result claim.
 
-**The observation.** On the in-sample DESIGN window (2007–2018, which contains 2008) the strategy captured
+**The observation.** *(The −0.19 below is superseded: it is an information ratio, not the primary metric —
+see "TWO P1 DEFECTS FOUND BY CODEX ON PR #94" further down this entry. Kept as written for the record.)* On the in-sample DESIGN window (2007–2018, which contains 2008) the strategy captured
 ~83% of passive total return while cutting maximum drawdown by roughly four-fifths (−13% vs −54%), yet the
 primary promotion metric `net_sharpe_difference_vs_primary_benchmark` still read −0.19 (CI straddling zero) and
 `passes: false`. The metric rewards full-period risk-adjusted return and is nearly blind to the tail: a
@@ -946,6 +947,144 @@ failure. The reversal was forced by the withholding decision: once the prong was
 treating absence as failure made rejection the *only* outcome for any run whose primary metric failed. The
 tri-state value also enters the hashed `verdictHash`, so a withheld verdict and a measured rejection cannot
 share an identity; `ROBUSTNESS_VERSION` 1 → 2.
+
+**STEP 2 DONE (2026-09-20): §16.1 is now evaluated once, over the walk-forward splits pooled.**
+`packages/core/src/research/aggregate.ts` is the missing scope. `runEvaluation` collects each walk-forward
+split's Sharpe input legs and its arm/benchmark total returns, and `aggregateWalkForward` returns one
+`REJECT | OWNER_REVIEW | UNMEASURED` verdict under `EvaluationReport.aggregate`. There is still **no** per-split
+§16.1 outcome, and none is added: §13 scopes the primary metric's pass rule and §16.1 scopes the falsifier to
+the same aggregate set.
+
+Four rules decide the verdict, and each exists to stop a rejection being manufactured rather than measured:
+
+- **Walk-forward splits only.** DESIGN is in-sample, RECENT is reported separately, HOLDOUT is sealed. Any
+  other kind throws rather than being pooled.
+- **The pool must be the whole schedule.** A run narrowed with `--split` produces `UNMEASURED`, not a verdict
+  from the windows that happened to run. Both outcomes are withheld from a partial pool, not just the
+  rejection: "goes to owner review" is equally a claim about a set that was not measured.
+- **Both prongs must be measured.** One split without a usable Secondary 2 leaves the aggregate prong
+  `undefined` — a comparator covering part of the window is not the registered comparator — and §16.1 rejects
+  only "if both fail".
+- **Returns link, they do not add.** Each window is backtested from cash, so the aggregate is the chained
+  product of the per-split total returns. A test pins a fixture where summing and linking disagree in *sign*,
+  so a summing implementation would reject where a linking one routes to owner review.
+
+**Three limits the verdict carries in `evidenceCaveats`, all stated rather than corrected:**
+
+1. **The registered deflated-Sharpe adjustment is not applied.** §13 registers "a deflated-Sharpe adjustment
+   for the registered trial count (§15)". `deflatedSharpe` (`stats.ts`) exists but needs the cross-trial
+   Sharpe dispersion of the full 72-member grid, which one evaluation run does not produce. Deflation can only
+   lower a Sharpe, so the first prong here is **easier** to pass than the registered statistic: the omission
+   biases §16.1 toward owner review and away from rejection. Wiring it needs the grid sweep (F5's work) and is
+   not done here.
+2. **Each window restarts from cash.** At every boundary the strategy sits flat until its first fill while the
+   benchmark is fully invested, so the pooled paired excess carries a warm-up drag and a round of re-entry
+   cost that a continuously-held portfolio would not pay. Bootstrap blocks drawn from the concatenation can
+   also straddle a boundary. Concatenation is §13's literal reading ("a stationary block-bootstrap … on the
+   aggregate set"); a within-split bootstrap would be a different, unregistered estimator.
+3. **The registered walk-forward schedule cannot reach the charter's own minimum.** §14.3 sets a minimum of
+   **150** monthly-equivalent independent out-of-sample blocks. `splitPlan` on charter 0.2.0 yields **9**
+   walk-forward splits tiling **2010-06-28 → 2018-12-31** (3-year window, 12-month step, 21-day purge, 5-day
+   embargo over the 2007-06-01→2018-12-31 design range) — 3,108 calendar days, roughly **2,150 sessions, so
+   about 102 blocks**. The §14.3 figures of "about 155 in design and 72 in holdout" count the design window
+   itself and the sealed holdout, neither of which is the walk-forward out-of-sample set; nothing in §14
+   reconciles them with the schedule §14.1 actually registers. §16.1 states no such precondition, so the
+   verdict is computed anyway and `minimumIndependentDecisionsMet` reports the shortfall. **This is an owner
+   question, not a code one:** either the walk-forward schedule or the §14.3 minimum is wrong for this
+   charter, and both are charter values. (The 9 windows tile without gaps — 2011-06-27 is followed by
+   2011-06-28 — which is what lets them be pooled at all; the aggregate throws on an overlapping session
+   rather than double-counting it.)
+
+Both open Secondary 2 readings — the weekly re-scaling cadence and the ex-date reinvestment convention — are
+carried onto any verdict that rests on the second prong (`SECONDARY_2_OPEN_READINGS`). **Until the owner
+confirms or overrules them, a §16.1 rejection from this code is provisional.** Claude Code computes the
+verdict; it does not act on it, and may not treat its own research output as investment evidence.
+
+**TWO P1 DEFECTS FOUND BY CODEX ON PR #94, BOTH FIXED THERE. The first changes every primary-metric
+number this project has ever recorded.**
+
+**1. The primary metric was an information ratio, not the registered Sharpe difference.** §13 registers the
+"difference in after-cost annualized Sharpe ratio between the strategy and VTI total return", and
+`pass_fail.primary_metric` is literally named `net_sharpe_difference_vs_primary_benchmark`. What
+`buildResultReport` bootstrapped was `annualizedSharpe(candidate − benchmark)` — the Sharpe of the paired
+difference, which is the **information ratio**. The repository said so itself and nobody read it:
+`informationRatio(strategy, benchmark)` in `benchmarks.ts` is defined as `sharpe(strategy, benchmark)`, the
+same construction, and `armMetrics` already published that number under its correct name beside the gate. The
+report was publishing one statistic twice, once named honestly and once as the registered promotion gate.
+
+The two disagree in magnitude **and in sign** whenever the legs differ in volatility or are imperfectly
+correlated, so the gate could read either way. Now fixed: both legs are taken in excess of the cash leg,
+their Sharpe ratios are computed separately, and the difference is bootstrapped with
+`stationaryBootstrapPaired` — one draw of block indices applied to both legs, so session *t* of the strategy
+stays paired with session *t* of the benchmark. `REPORT_VERSION` 4 → 5, because a v4 point estimate and a v5
+one are **different statistics and must never be compared**.
+
+**Consequence for this register entry and for the analysis note: the −0.19 on DESIGN was an information
+ratio, not the primary metric.** Every primary-metric number quoted anywhere in this repository predates the
+fix and is superseded. The corrected statistic has **not** been run on real data, so which way it moves is
+unknown, and nobody — Claude Code least of all — knew the direction when the fix was made. That ordering
+matters: this is implementing the registered metric, as the Secondary 2 work was, not selecting one after
+seeing a result.
+
+**2. A pass on the unadjusted statistic was being published as a registered pass.** §13's metric also carries
+"a deflated-Sharpe adjustment for the registered trial count (§15)", and §15 fixes it concretely: "N = 72
+trials and the observed cross-trial variance". One evaluation run produces neither, so the adjustment is not
+applied. The first version of the aggregate recorded that in `evidenceCaveats` and still emitted
+`passes: true`, which let a consumer act on a concrete verdict the missing adjustment might reverse — the
+same shape as the Secondary 2 gate that was prose before it was code.
+
+The prong is now **tri-state**, and the asymmetry is the point:
+
+- `false` when the threshold test fails. **Sound without the adjustment**, because the adjustment can only
+  ever add a hurdle — neither reading of how it enters the pass rule can turn a failure into a pass — so a
+  failing prong stays failing once the grid statistics exist and §16.1 may act on it. REJECT stays reachable.
+- `undefined` when the threshold test clears. An undeflated pass is not a registered pass, so it is withheld.
+- `true` unreachable until F5's grid sweep wires the adjustment.
+
+§16.1 is now evaluated in **three-valued logic**: either prong passing gives owner review (determinate even
+when the other is unknown, since §16.1 asks only whether either passed); both prongs known to have failed
+gives rejection; anything else is undetermined. Collapsing unknown into either branch is the error this
+thread keeps rediscovering.
+
+**OWNER DECISION (Matt, 2026-09-20): the first prong is withheld on any data gap.** Codex found, on PR #94,
+that a gap in a **held risk ETF** is invisible to the level series the Sharpe legs are built from:
+`dailyNavSeries` is handed the run's whole calendar and marks a missing holding at its previous close, so the
+candidate arm has a point on every exchange session while that holding's multi-day move sits inside one later
+return. Nothing downstream can see it. `GAP` and `STALE_BAR` are both `promotionEvidenceAllowed: true`, so
+such a run is otherwise citable and the distortion can reach a §16.1 verdict.
+
+Offered: withhold the prong on the label; plumb per-session constituent gap marks through `BacktestResult`
+and exclude the affected intervals; or record it as a caveat and fix separately. **Matt chose the withhold**,
+which is the pattern this repository already used for an inexact Secondary 2 and which needs no new plumbing.
+
+**It withholds in both directions, unlike the deflated-Sharpe withhold**, and the asymmetry is the point. The
+deflation can only ever add a hurdle, so a failure survives it and only a pass is withheld. A gap distorts
+with a sign that depends on where it falls, so it can push the estimate either way: a failing threshold test
+is then no more trustworthy than a passing one, and withholding only the pass would keep `REJECT` reachable
+on a number nobody can vouch for — the outcome that is hardest to walk back.
+
+Accepted cost, stated plainly: on real data this may leave the first prong unmeasured often, and §16.1
+correspondingly `UNMEASURED`, until either the data carries no gaps or the constituent-level plumbing lands.
+That is the honest state rather than a broken one, and it is the same shape as Secondary 2's withhold, which
+was retired once the construction became exact.
+
+**And the withhold's first implementation was inert (Codex, PR #94).** It keyed off `bt.labels`, which cannot
+carry the signal, for three independent reasons: `loadExecutionSeries` keeps only corporate-action quality
+codes and filters even those through `blocksPromotionEvidence` — which excludes `GAP` and `STALE_BAR` by
+definition, since both are promotion-eligible; `STALE_BAR` is recorded on a bar's `flags` and never becomes a
+series label at all; and `RawSeries` derives `GAP` only between the first and last loaded bar, so a missing
+session at either end of the window is unlabelled.
+
+So the premise the owner's choice rested on — "withhold on the label, no new plumbing" — was false. The
+decision itself stands: `runBacktest` now derives the sessions directly from the bars of the instruments the
+candidate actually **filled**, as `BacktestResult.navDistortingSessions` (`BACKTEST_VERSION` 4 → 5), and the
+prong withholds on those. Restricting to filled instruments matters: a gap in something the strategy never
+held cannot move its NAV, and widening it to the universe would withhold on almost any real window. What the
+owner declined — per-interval exclusion — remains declined.
+
+A signal that never fires is worse than no signal, because it reads as a clean run. Four tests now prove this
+one fires, including one on a **stale bar**, the hole no label carries; three mutations, no survivors
+(reporting nothing, missing `STALE_BAR`, and widening to the universe).
 
 **Correction history.** This entry's first version (2026-09-20) said the second prong was computed on every
 run and merely needed surfacing, and recommended running it. That was wrong on both counts and is corrected

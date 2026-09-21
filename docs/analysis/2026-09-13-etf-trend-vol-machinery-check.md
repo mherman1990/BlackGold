@@ -48,6 +48,15 @@ The holdout split is never evaluated by this command by construction.
 
 Primary metric `net_sharpe_difference_vs_primary_benchmark` (threshold +0.10):
 
+> **SUPERSEDED (2026-09-20, PR #94). These two numbers are information ratios, not the primary metric.**
+> The code computed `annualizedSharpe(strategy − VTI)` under the registered metric's name; ALPHA_CHARTER
+> §13 registers a **difference of Sharpe ratios**, and the two disagree in magnitude and in sign. The
+> statistic was corrected in PR #94 and **has not been run on real data**, so what replaces these numbers is
+> unknown. Neither is evidence for or against the strategy — both runs were already
+> `citableAsEvidence: false` — and "Passes?" was never an F1 verdict, since §13 scopes the pass rule to the
+> aggregate walk-forward out-of-sample set. Kept as written, for the record of what was run.
+> See `docs/analysis/2026-09-20-d51-primary-metric.md` §2f.
+
 | Split | Point estimate | 95% CI | Passes? |
 |---|---|---|---|
 | DESIGN | −0.189 | [−0.642, +0.194] | no |

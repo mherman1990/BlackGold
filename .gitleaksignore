@@ -5,3 +5,10 @@
 # Synthetic Alpaca paging cursor in a recorded fixture. It was a base64 page token,
 # not a credential, and the fixture now uses an obviously fake string.
 cdfcc9502cdd1e980e89e802d0c9a6326f057e4d:test/fixtures/alpaca/bars-1d-page1.json:generic-api-key:9
+
+# False positive in a superseded commit on the D-51 step 2 branch (PR #94). The `vault-service-token`
+# rule also matches the legacy Vault shape - one letter, a dot, exactly 24 alphanumerics, then
+# whitespace - and a one-letter loop variable reading a 24-character field in aggregate.ts spelled it.
+# No credential was ever present. The name was lengthened in the following commit, so only this one
+# historical commit needs suppressing; the entry goes inert once the PR squash-merges.
+496036f6a554b473279f01d6a08b1101c3a89f8f:packages/core/src/research/aggregate.ts:vault-service-token:285
