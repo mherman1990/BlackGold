@@ -1068,6 +1068,24 @@ correspondingly `UNMEASURED`, until either the data carries no gaps or the const
 That is the honest state rather than a broken one, and it is the same shape as Secondary 2's withhold, which
 was retired once the construction became exact.
 
+**And the withhold's first implementation was inert (Codex, PR #94).** It keyed off `bt.labels`, which cannot
+carry the signal, for three independent reasons: `loadExecutionSeries` keeps only corporate-action quality
+codes and filters even those through `blocksPromotionEvidence` — which excludes `GAP` and `STALE_BAR` by
+definition, since both are promotion-eligible; `STALE_BAR` is recorded on a bar's `flags` and never becomes a
+series label at all; and `RawSeries` derives `GAP` only between the first and last loaded bar, so a missing
+session at either end of the window is unlabelled.
+
+So the premise the owner's choice rested on — "withhold on the label, no new plumbing" — was false. The
+decision itself stands: `runBacktest` now derives the sessions directly from the bars of the instruments the
+candidate actually **filled**, as `BacktestResult.navDistortingSessions` (`BACKTEST_VERSION` 4 → 5), and the
+prong withholds on those. Restricting to filled instruments matters: a gap in something the strategy never
+held cannot move its NAV, and widening it to the universe would withhold on almost any real window. What the
+owner declined — per-interval exclusion — remains declined.
+
+A signal that never fires is worse than no signal, because it reads as a clean run. Four tests now prove this
+one fires, including one on a **stale bar**, the hole no label carries; three mutations, no survivors
+(reporting nothing, missing `STALE_BAR`, and widening to the universe).
+
 **Correction history.** This entry's first version (2026-09-20) said the second prong was computed on every
 run and merely needed surfacing, and recommended running it. That was wrong on both counts and is corrected
 above; the errors were found by Codex review, not by the sessions that wrote them.

@@ -74,11 +74,11 @@ export type AggregateSplitInput = {
   /** Why Secondary 2 was unusable on this split, when it was. */
   secondary2UnusableReason: string | undefined;
   /**
-   * Codes from this split's run that distort a daily return series
-   * (`SHARPE_DISTORTING_QUALITY_CODES`). Not the same thing as `promotionBlockingCodes`: these do not bar
-   * the run from being cited, which is exactly why the first prong has to notice them itself.
+   * Sessions where a HELD instrument's bar was absent or carried forward in this split's run
+   * (`BacktestResult.navDistortingSessions`). Not the same thing as `promotionBlockingCodes`: a run carrying
+   * these is still citable, which is exactly why the first prong has to notice them itself.
    */
-  dataGapCodes: readonly string[];
+  navDistortingSessions: readonly IsoDate[];
   citableAsEvidence: boolean;
   citabilityReasons: readonly string[];
   promotionBlockingCodes: readonly string[];
@@ -205,19 +205,6 @@ export class AggregateScopeError extends Error {
  * shape: Claude Code implemented a reading, and the owner confirms or overrules it before the number is
  * treated as decisive. Remove an entry when `docs/DECISIONS.md` records the owner's answer to it.
  */
-/**
- * Data-quality codes that make a daily return series unsafe for a Sharpe statistic.
- *
- * `GAP` means a session's bar is absent; `STALE_BAR` means it was carried forward. Either way the candidate
- * arm's NAV still has a point on every exchange session - `dailyNavSeries` is handed the run's whole
- * calendar and marks a missing holding at its previous close - so the arm's series looks contiguous while
- * the affected holding's multi-day move lands in a single later return. Nothing downstream can see that from
- * the level series alone, which is why the first prong is withheld on the label rather than repaired here.
- *
- * Both are `promotionEvidenceAllowed: true` (data/quality.ts), so such a run is otherwise citable.
- */
-export const SHARPE_DISTORTING_QUALITY_CODES: readonly string[] = ["GAP", "STALE_BAR"];
-
 export const SECONDARY_2_OPEN_READINGS: readonly string[] = [
   "Secondary 2 re-scales weekly, at the strategy's own decision instants. Section 11 states the estimator, the target and the cash leg but not the cadence; re-scaling every session is equally literal and gives a different number (docs/analysis/2026-09-20-d51-primary-metric.md, section 2d).",
   "Secondary 2 reinvests a distribution at the ex-date session's close, following the total-return index convention. Reinvesting at the open is defensible and would move the second prong.",
@@ -327,12 +314,12 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
     // the gap falls, so it can push the estimate either way. A failing threshold test is then no more
     // trustworthy than a passing one, and withholding only the pass would quietly keep REJECT reachable on
     // a number nobody can vouch for - a rejection being the outcome that is hardest to walk back.
-    const gapped = ordered.filter((split) => split.dataGapCodes.length > 0);
+    const gapped = ordered.filter((split) => split.navDistortingSessions.length > 0);
     const withheldBecause: string[] = [];
     if (gapped.length > 0) {
-      const codes = [...new Set(gapped.flatMap((split) => split.dataGapCodes))].sort();
+      const sessions = gapped.reduce((n, split) => n + split.navDistortingSessions.length, 0);
       withheldBecause.push(
-        `${gapped.length} of ${ordered.length} pooled split(s) carry ${codes.join(", ")}, which leave a holding's multi-day move inside a single daily return. The distortion's sign depends on where the gap falls, so neither a pass nor a failure can be relied on: ${gapped.map((split) => split.splitId).join(", ")}.`,
+        `${gapped.length} of ${ordered.length} pooled split(s) hold an instrument whose bar was absent or carried forward on ${sessions} session(s), leaving its multi-day move inside a single daily return. The distortion's sign depends on where the gap falls, so neither a pass nor a failure can be relied on: ${gapped.map((split) => split.splitId).join(", ")}.`,
       );
     }
     if (clearsUndeflatedThreshold) {

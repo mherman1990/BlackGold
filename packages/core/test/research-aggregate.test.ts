@@ -63,7 +63,7 @@ function split(id: string, startDay: number, count: number, legs: Legs, over: Sp
     candidateTotalReturn: new Dec("0.10"),
     secondary2TotalReturn: new Dec("0.20"),
     secondary2UnusableReason: undefined,
-    dataGapCodes: [],
+    navDistortingSessions: [],
     citableAsEvidence: true,
     citabilityReasons: [],
     promotionBlockingCodes: [],
@@ -254,14 +254,14 @@ describe("aggregateWalkForward: section 16.1", () => {
     expect(clean.verdict).toBe("REJECT");
 
     const gapped = run(charter(SMALL_MINIMUM), [
-      split("walk_forward/a", 2, 40, LOSING, { dataGapCodes: ["GAP"] }),
+      split("walk_forward/a", 2, 40, LOSING, { navDistortingSessions: [isoDate("2026-01-09")] }),
       split("walk_forward/b", 42, 40, LOSING),
     ]);
     // Same numbers - the gap changes nothing the aggregate can compute, only what it may conclude.
     expect(gapped.primaryMetric?.pointEstimate).toBe(clean.primaryMetric?.pointEstimate);
     expect(gapped.primaryMetric?.clearsUndeflatedThreshold).toBe(false);
     expect(gapped.primaryMetric?.passes).toBeUndefined();
-    expect(gapped.primaryMetric?.withheldBecause.join(" ")).toContain("GAP");
+    expect(gapped.primaryMetric?.withheldBecause.join(" ")).toContain("absent or carried forward on 1 session(s)");
     expect(gapped.primaryMetric?.withheldBecause.join(" ")).toContain("walk_forward/a");
     expect(gapped.verdict).toBe("UNMEASURED");
     // And it is a different result, so it cannot share an identity with the clean one.
@@ -270,13 +270,13 @@ describe("aggregateWalkForward: section 16.1", () => {
 
   it("names both reasons when a gapped split's threshold test also clears", () => {
     const r = run(charter(SMALL_MINIMUM), [
-      split("walk_forward/a", 2, 40, CLEARING, { dataGapCodes: ["STALE_BAR"] }),
+      split("walk_forward/a", 2, 40, CLEARING, { navDistortingSessions: [isoDate("2026-01-09"), isoDate("2026-01-12")] }),
       split("walk_forward/b", 42, 40, CLEARING),
     ]);
     expect(r.primaryMetric?.clearsUndeflatedThreshold).toBe(true);
     expect(r.primaryMetric?.passes).toBeUndefined();
     expect(r.primaryMetric?.withheldBecause.length).toBe(2);
-    expect(r.primaryMetric?.withheldBecause.join(" ")).toContain("STALE_BAR");
+    expect(r.primaryMetric?.withheldBecause.join(" ")).toContain("absent or carried forward on 2 session(s)");
     expect(r.primaryMetric?.withheldBecause.join(" ")).toContain("deflated-Sharpe");
   });
 
