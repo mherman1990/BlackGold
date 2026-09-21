@@ -268,6 +268,27 @@ describe("aggregateWalkForward: section 16.1", () => {
     expect(gapped.aggregateHash).not.toBe(clean.aggregateHash);
   });
 
+  it("withholds the SECOND prong on the same gap, closing the owner-review back door", () => {
+    // The second prong is a difference of total returns, and the candidate's comes from the very NAV the
+    // gap distorts. Withholding only the first prong would leave OWNER_REVIEW reachable through a `beats`
+    // computed on a number with the same unknown-sign error.
+    const clean = run(charter(SMALL_MINIMUM), [
+      split("walk_forward/a", 2, 40, LOSING, BEATS_SECONDARY_2),
+      split("walk_forward/b", 42, 40, LOSING, BEATS_SECONDARY_2),
+    ]);
+    expect(clean.secondary2?.beats).toBe(true);
+    expect(clean.verdict).toBe("OWNER_REVIEW");
+
+    const gapped = run(charter(SMALL_MINIMUM), [
+      split("walk_forward/a", 2, 40, LOSING, { ...BEATS_SECONDARY_2, navDistortingSessions: [isoDate("2026-01-09")] }),
+      split("walk_forward/b", 42, 40, LOSING, BEATS_SECONDARY_2),
+    ]);
+    expect(gapped.secondary2).toBeUndefined();
+    expect(gapped.secondary2UnmeasuredReasons.join(" ")).toContain("distorts the candidate's own total return");
+    expect(gapped.primaryMetric?.passes).toBeUndefined();
+    expect(gapped.verdict).toBe("UNMEASURED");
+  });
+
   it("names both reasons when a gapped split's threshold test also clears", () => {
     const r = run(charter(SMALL_MINIMUM), [
       split("walk_forward/a", 2, 40, CLEARING, { navDistortingSessions: [isoDate("2026-01-09"), isoDate("2026-01-12")] }),

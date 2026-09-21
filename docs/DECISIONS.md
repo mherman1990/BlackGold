@@ -1077,14 +1077,29 @@ session at either end of the window is unlabelled.
 
 So the premise the owner's choice rested on — "withhold on the label, no new plumbing" — was false. The
 decision itself stands: `runBacktest` now derives the sessions directly from the bars of the instruments the
-candidate actually **filled**, as `BacktestResult.navDistortingSessions` (`BACKTEST_VERSION` 4 → 5), and the
-prong withholds on those. Restricting to filled instruments matters: a gap in something the strategy never
-held cannot move its NAV, and widening it to the universe would withhold on almost any real window. What the
-owner declined — per-interval exclusion — remains declined.
+candidate **held on that session**, as `BacktestResult.navDistortingSessions` (`BACKTEST_VERSION` 4 → 5), and
+the prong withholds on those. The narrowing matters as much as the widening: a gap in something the strategy
+held none of cannot move its NAV, and scanning the whole universe would withhold on almost any real window.
+What the owner declined — per-interval exclusion — remains declined.
 
-A signal that never fires is worse than no signal, because it reads as a clean run. Four tests now prove this
-one fires, including one on a **stale bar**, the hole no label carries; three mutations, no survivors
-(reporting nothing, missing `STALE_BAR`, and widening to the universe).
+**Two further defects in the same derivation, both Codex on PR #96, both in the direction that over-withholds
+— a `REJECT` the run earned read back as `UNMEASURED`.** First, the held set was reconstructed from the
+fills. The NAV replay also applies SPLIT and DELISTING and orders a SPLIT before a same-day fill, so a
+fill-only count drifts the moment a holding splits (buy 100, split 2:1, sell 100, and the naive count reaches
+zero while the portfolio still holds 100) — there the error runs the other way and a later gap goes
+unreported. The held set is now read from the replay's own `NavPoint.held`: whatever NAV was marked on is
+what the scan examines. Second, a bar's own `GAP` flag was read as a distortion. `RawSeries.load` puts that
+flag on the first bar **after** each missing session — a recovery bar, which prints a real close for its own
+session. A holding that spanned the gap is already reported through the missing session itself, where its bar
+is absent, so the flag added nothing but the case where the portfolio was flat through the gap and opened the
+position on the recovery bar: every held session priced off a real close, and the split withheld anyway. The
+flag is no longer a trigger. `STALE_BAR` remains one — that bar is present, but its price is carried forward.
+
+A signal that never fires is worse than no signal, because it reads as a clean run; one that fires on clean
+data is worse still, because it destroys a verdict the evidence supports. Seven tests now pin both edges,
+including one on a **stale bar** (the hole no label carries), one on a holding that has split, and one on a
+recovery bar. Five mutations, no survivors: reporting nothing, missing `STALE_BAR`, widening to the universe,
+reconstructing the held set from fills, and reinstating the `GAP` clause.
 
 **Correction history.** This entry's first version (2026-09-20) said the second prong was computed on every
 run and merely needed surfacing, and recommended running it. That was wrong on both counts and is corrected

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Dec, ONE, ZERO } from "@blackgold/shared";
+import { Dec, ONE, ZERO, utc, type IsoDate } from "@blackgold/shared";
 import { type Charter } from "../src/strategy/charter.ts";
 import { backtestParamsFromCharter, costModelFor, costsFromCharter, reportBenchmarkSeries, runBacktest, weeklyDecisionSessions, type BacktestInput } from "../src/research/backtest.ts";
 import { blendSeries } from "../src/research/benchmarks.ts";
@@ -8,6 +8,7 @@ import { computeFeatures } from "../src/strategy/features.ts";
 import { defaultProcessingDelayMs } from "../src/data/pit/repository.ts";
 import { UNVERIFIED_SINGLE_SOURCE } from "../src/data/adapters/corporate-actions.ts";
 import { buildMarket, fixtureCharter, D, N, type PricePath } from "./strategy-fixture.ts";
+import { RawSeries } from "../src/market/series.ts";
 
 
 /**
@@ -218,6 +219,95 @@ describe("runBacktest", () => {
       expect(r.navDistortingSessions).toContain(stale);
       // Exactly the point: the labels are no help here.
       expect(r.labels).not.toContain("STALE_BAR");
+    });
+
+    /** Net quantity of `entityId` at the close of `session`, from the run's own fills. */
+    function quantityAt(r: ReturnType<typeof runBacktest>, entityId: string, session: IsoDate): Dec {
+      let qty = ZERO;
+      for (const f of r.arms["B1_DETERMINISTIC"]?.fills ?? []) {
+        if (f.entityId !== entityId || f.session > session) continue;
+        qty = qty.plus(f.side === "BUY" ? f.quantity : f.quantity.negated());
+      }
+      return qty;
+    }
+
+    it("ignores a gap on a session when the position is flat, even in an instrument held elsewhere", () => {
+      // The discriminating case. Restricting to instruments that were FILLED at some point is not enough:
+      // a gap while the portfolio holds none of them puts no carried price into NAV, and reporting it turns
+      // a REJECT the run earned into an UNMEASURED it did not (Codex, PR #94). IWM is bought and fully sold
+      // in this fixture, so there is a long stretch where it is held at zero.
+      const flat = D("2026-04-17");
+      const m = buildMarket({ paths: PATHS, from, to, omitSessions: { IWM: [flat] } });
+      const r = runBacktest(setup({ pit: m.pit, calendar: m.calendar }).input);
+
+      // Both premises read from THIS run, so the test cannot pass vacuously if the gap shifts the decisions:
+      // IWM really was traded, and really was flat on the session whose bar is missing.
+      expect((r.arms["B1_DETERMINISTIC"]?.fills ?? []).some((f) => f.entityId === "IWM")).toBe(true);
+      expect(quantityAt(r, "IWM", flat).isZero()).toBe(true);
+      expect(r.navDistortingSessions).not.toContain(flat);
+    });
+
+    it("still sees a holding that has split, where a fill-only count would lose it", () => {
+      // Codex P1 on PR #96. The NAV replay applies SPLIT and orders it before a same-day fill, so a
+      // fill-only reconstruction of "what is held" drifts the moment a holding splits: buy 100, split 2:1,
+      // sell 100, and the naive count reaches zero while the portfolio still holds 100. A later gap in that
+      // holding would then go unreported and both section 16.1 prongs would consume distorted NAV. The held
+      // set is therefore read from `dailyNavSeries`' own replay rather than rebuilt here.
+      const exDate = D("2026-04-06");
+      const gap = D("2026-04-17");
+      const m = buildMarket({
+        paths: PATHS,
+        from,
+        to,
+        actions: [{ action: { kind: "SPLIT", entityId: "VTI", ratio: N("2"), exDate } }],
+        omitSessions: { VTI: [gap] },
+      });
+      const r = runBacktest(setup({ pit: m.pit, calendar: m.calendar }).input);
+
+      // Premises, read from this run: VTI was traded, and it was still held when the gap landed.
+      expect((r.arms["B1_DETERMINISTIC"]?.fills ?? []).some((f) => f.entityId === "VTI")).toBe(true);
+      const atGap = r.arms["B1_DETERMINISTIC"]?.nav.find((p) => p.session === gap);
+      expect(atGap?.held).toContain("VTI");
+      expect(r.navDistortingSessions).toContain(gap);
+    });
+
+    it("ignores a recovery bar, where the gap flag lands but the close is real", () => {
+      // Codex P1 on PR #96. `RawSeries.load` flags the first bar AFTER each missing session, not the
+      // missing session itself - a recovery bar, which prints a real close for its own session. Reading
+      // that flag as a distortion invented a case the market never had: flat through the gap, position
+      // opened on the recovery bar, every held session priced off a real close, and the split withheld
+      // anyway - an UNMEASURED where the run earned a REJECT. Nothing is lost by ignoring the flag,
+      // because a holding that spanned the gap is already reported through the missing session, where
+      // its bar is absent (the "reports a session omitted from a held instrument" case above).
+      const omitted = D("2026-04-20");
+      const recovery = D("2026-04-21");
+      const m = buildMarket({ paths: PATHS, from, to, omitSessions: { IWM: [omitted] } });
+      const r = runBacktest(setup({ pit: m.pit, calendar: m.calendar }).input);
+
+      // Premise 1: the flag really is on the recovery bar, read from the same store the run read. Without
+      // this the case is vacuous - it would pass on any session where nothing happened at all.
+      const loaded = RawSeries.load({
+        pit: m.pit,
+        entityId: "IWM",
+        from,
+        to,
+        decisionAt: utc("2026-07-01T00:00:00Z"),
+        calendar: m.calendar,
+      });
+      expect(loaded.gaps).toContain(omitted);
+      expect(loaded.bars.find((b) => b.session === recovery)?.flags).toContain("GAP");
+
+      // Premise 2: read from THIS run, the portfolio was flat in IWM through the missing session and held
+      // it on the recovery bar. That is the configuration the old clause mishandled; if the omission
+      // shifts the decisions away from it, the test fails rather than passing for the wrong reason.
+      expect(r.arms["B1_DETERMINISTIC"]?.nav.find((p) => p.session === omitted)?.held).not.toContain("IWM");
+      expect(r.arms["B1_DETERMINISTIC"]?.nav.find((p) => p.session === recovery)?.held).toContain("IWM");
+
+      expect(r.navDistortingSessions).not.toContain(recovery);
+      // And the missing session is not reported either, since nothing was held in IWM across it. Nothing
+      // else in this market is missing or stale, so the run is clean outright - the prong stays measured.
+      expect(r.navDistortingSessions).not.toContain(omitted);
+      expect(r.navDistortingSessions).toEqual([]);
     });
 
     it("ignores a gap in a universe instrument the candidate never held", () => {
