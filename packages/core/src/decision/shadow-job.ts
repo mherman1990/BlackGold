@@ -114,10 +114,14 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
 
       const pit = new PointInTimeRepository(ctx.db, { processingDelayOverrides: processingDelayOverridesMs(config.sources) });
       const entityMap = new EntityMap(ctx.db);
-      const identity = (symbol: string): SymbolIdentity => ({
-        identifiers: [symbol],
-        entityId: entityMap.resolve(symbol, session, { knownAt: decisionAt }),
-      });
+      // Identity carries the entity's FULL ticker history known by the decision instant, not just today's
+      // symbol (Codex P1): the compliance engine matches restricted-list entries by identifier, and a list
+      // keyed by an issuer's old ticker must still catch it after a symbol change.
+      const identity = (symbol: string): SymbolIdentity => {
+        const entityId = entityMap.resolve(symbol, session, { knownAt: decisionAt });
+        const aliases = entityId === undefined ? [] : entityMap.symbolsFor(entityId, { knownAt: decisionAt });
+        return { identifiers: [...new Set([symbol, ...aliases])].sort(), entityId };
+      };
       const lookThrough = storedLookThroughResolver(pit, membership.value, restricted.value, {
         decisionAt,
         lookThroughScope: charter.universe.look_through_flagged,
@@ -136,16 +140,21 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
         lookThrough,
       });
 
+      // Seal all arms and the ledger event in ONE transaction (Codex P1): the scheduler claims the
+      // (jobId, scheduledFor) key up front, so a crash between the first insert and the second would otherwise
+      // leave one arm permanently missing with no retry. Atomicity makes the run all-or-nothing; the
+      // already-sealed skip below then covers an instant sealed by some OTHER writer, not a partial self.
       const sealed: { arm: string; hash: string; newRiskAllowed: boolean }[] = [];
       const alreadySealed: string[] = [];
+      ctx.db.transaction(() => {
       for (const record of records) {
         try {
           const { hash } = appendDecisionRecord(ctx.db, record);
           sealed.push({ arm: record.arm, hash, newRiskAllowed: record.gate.newRiskAllowed });
         } catch (err) {
           if (err instanceof DecisionAlreadySealedError) {
-            // A prior run (e.g. before a crash mid-loop) sealed this arm; the instant is immutable, so record
-            // the skip and continue with the remaining arms rather than failing the whole run.
+            // The instant is immutable: something already sealed this arm (e.g. an operator run). Record the
+            // skip and continue with the remaining arms rather than failing the whole run.
             alreadySealed.push(record.arm);
             continue;
           }
@@ -169,6 +178,7 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
         },
         ctx.now,
       );
+      });
     },
   });
 }

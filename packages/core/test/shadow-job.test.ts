@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { parse, stringify } from "yaml";
 import { addMs, isoDate, sha256Hex, type Db, type UtcInstant } from "@blackgold/shared";
 import { Ledger, NyseCalendar, Scheduler, openCoreDb } from "../src/index.ts";
+import { EntityMap } from "../src/market/entity-map.ts";
 import { parseAppConfig } from "../src/config/load.ts";
 import type { AppConfig } from "../src/config/schema.ts";
 import { isWeeklyDecisionSession, registerShadowDecisionJob, SHADOW_DECISION_SEALED } from "../src/decision/shadow-job.ts";
@@ -162,6 +163,57 @@ describe("shadow_decision job", () => {
     if (!ev) throw new Error("no sealed event");
     expect(ev.alreadySealed).toEqual(["B0_PASSIVE"]);
     expect(ev.sealed.map((s) => s.arm)).toEqual(["B1_DETERMINISTIC"]);
+  });
+});
+
+describe("shadow_decision job: identity and atomicity", () => {
+  const recordJson = (db: Db, arm: string): string =>
+    (db.prepare("SELECT record_json FROM decision_records WHERE arm = ?").get(arm) as { record_json: string }).record_json;
+
+  it("blocks a restricted issuer listed under its OLD ticker after a symbol change (Codex P1)", async () => {
+    // The restricted list names the historical ticker; today's holdings trade under the new one. Identity must
+    // carry the entity's full known ticker history or the rename silently un-restricts the issuer.
+    const withAlias = setup("SHADOW");
+    writeFileSync(join(withAlias.policyDir, "restricted-list.yaml"), stringify({ asOf: "2026-03-01", names: ["OLDQQQ"] }));
+    const map = new EntityMap(withAlias.db);
+    map.register({ symbol: "OLDQQQ", entityId: "QQQ_TRUST", effectiveFrom: D("2020-01-02"), effectiveTo: D("2025-12-31"), source: "test" });
+    map.register({ symbol: "QQQ", entityId: "QQQ_TRUST", effectiveFrom: D("2026-01-01"), source: "test" });
+    await withAlias.scheduler.tick(afterClose("2026-03-06", 150));
+    const blocked = JSON.parse(recordJson(withAlias.db, "B1_DETERMINISTIC")) as { gate: { newRiskAllowed: boolean; blockedBy: string[] } };
+    expect(blocked.gate.newRiskAllowed).toBe(false);
+    expect(blocked.gate.blockedBy.join(" ")).toContain("RESTRICTED_NAME: QQQ");
+
+    // Control (the fixture spans the dimension): the same restricted list WITHOUT the entity-map history does
+    // not connect OLDQQQ to QQQ, so B1 is not blocked by it.
+    const noAlias = setup("SHADOW");
+    writeFileSync(join(noAlias.policyDir, "restricted-list.yaml"), stringify({ asOf: "2026-03-01", names: ["OLDQQQ"] }));
+    await noAlias.scheduler.tick(afterClose("2026-03-06", 150));
+    const clear = JSON.parse(recordJson(noAlias.db, "B1_DETERMINISTIC")) as { gate: { blockedBy: string[] } };
+    expect(clear.gate.blockedBy.join(" ")).not.toContain("RESTRICTED_NAME");
+  });
+
+  it("seals all arms and the ledger event atomically: a failure mid-run leaves no partial records (Codex P1)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bg-shadowjob-"));
+    const db = openCoreDb({ dbPath: join(dir, "s.sqlite") }).db;
+    buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-03-13"), db });
+    const charterPath = writeShadowCharter(dir);
+    writePolicyDir(dir);
+    const config = parseAppConfig({ mode: "SHADOW", shadow: { charterPath, policyDir: dir } });
+    // A ledger whose sealed-event append throws stands in for a crash after the record inserts: without the
+    // transaction, the two decision records would stay committed while the run is recorded failed and the
+    // scheduler's claimed (jobId, scheduledFor) key prevents any retry - a permanently half-sealed instant.
+    class FailingLedger extends Ledger {
+      override append(kind: string, payload: unknown, at?: never): ReturnType<Ledger["append"]> {
+        if (kind === SHADOW_DECISION_SEALED) throw new Error("simulated crash before the sealed event");
+        return super.append(kind, payload, at);
+      }
+    }
+    const scheduler = new Scheduler({ db, ledger: new FailingLedger(db), calendar: cal, dueLookbackMs: 4 * 3_600_000, missedLookbackMs: 48 * 3_600_000 });
+    registerShadowDecisionJob(scheduler, { config, calendar: cal });
+    const outcomes = await scheduler.tick(afterClose("2026-03-06", 150));
+    expect(outcomes.find((o) => o.jobId === "shadow_decision")?.status).toBe("failed");
+    // All-or-nothing: no record survives the failed run.
+    expect(decisionRecordCount(db)).toBe(0);
   });
 });
 
