@@ -8,6 +8,7 @@ import { PointInTimeRepository } from "./data/pit/repository.ts";
 import { DEFAULT_BARS_SOURCE_ID } from "./market/series.ts";
 import { parseIngestArgs, runIngest } from "./ingest/run.ts";
 import { charterUniverseMembers, loadCharterFile } from "./strategy/charter.ts";
+import { registerShadowDecisionJob } from "./decision/shadow-job.ts";
 import { runHealth, type HealthReport } from "./health/health.ts";
 import { runFullVerification } from "./health/integrity.ts";
 import { buildStatusReport } from "./status/model.ts";
@@ -161,6 +162,10 @@ export function registerPhase0Jobs(scheduler: Scheduler, deps?: { config: AppCon
       },
     });
   }
+
+  // The mode-gated prospective shadow decision job (D-53 slice 2c). Registers itself only when a shadow
+  // charter is configured AND the mode seals prospective decisions; see decision/shadow-job.ts.
+  if (deps !== undefined) registerShadowDecisionJob(scheduler, deps);
 }
 
 /**

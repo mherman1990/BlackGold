@@ -106,6 +106,20 @@ const AppConfigInput = z.object({
       artifactBudgetBytes: z.number().int().positive().default(40 * 1024 * 1024 * 1024),
     })
     .default({ autoIngestActions: "none", processingDelays: {}, artifactBudgetBytes: 40 * 1024 * 1024 * 1024 }),
+  /**
+   * The mode-gated prospective shadow decision job (D-53 slice 2c). `charterPath` is opt-in: unset (the
+   * default), the job is never registered. `policyDir` is the fixed directory the operative policy files are
+   * baked into the image at (risk.yaml, restricted-list.yaml, theme-membership.yaml); the tracked examples are
+   * fake, so a run without the owner's real content still fails closed for B1 new risk. Both are
+   * environment-only (BLACKGOLD_SHADOW_CHARTER / BLACKGOLD_POLICY_DIR, compose-level); neither is admitted to
+   * secrets.env. The job additionally requires a sealing mode (SHADOW/PAPER), which is itself env-only.
+   */
+  shadow: z
+    .object({
+      charterPath: z.string().min(1).optional(),
+      policyDir: z.string().min(1).default("config/examples"),
+    })
+    .default({ policyDir: "config/examples" }),
   sleeveAccount: z
     .object({
       role: z.literal(SLEEVE_ROLE),

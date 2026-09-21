@@ -1,0 +1,177 @@
+import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parse, stringify } from "yaml";
+import { addMs, isoDate, sha256Hex, type Db, type UtcInstant } from "@blackgold/shared";
+import { Ledger, NyseCalendar, Scheduler, openCoreDb } from "../src/index.ts";
+import { parseAppConfig } from "../src/config/load.ts";
+import type { AppConfig } from "../src/config/schema.ts";
+import { isWeeklyDecisionSession, registerShadowDecisionJob, SHADOW_DECISION_SEALED } from "../src/decision/shadow-job.ts";
+import { appendDecisionRecord, decisionRecordCount, DECISION_RECORD_VERSION } from "../src/decision/decision-record.ts";
+import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
+
+const cal = new NyseCalendar();
+const afterClose = (session: string, mins: number): UtcInstant => addMs(cal.sessionClose(isoDate(session)), mins * 60_000);
+
+/**
+ * The registered charter, shrunk to the shadow-decision fixture's shape (same edits as shadow-decision.test.ts)
+ * and written back to disk, because the job loads a charter FILE. The parse -> edit -> stringify round trip
+ * keeps it a valid document under the real schema.
+ */
+function writeShadowCharter(dir: string): string {
+  const src = fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url));
+  const doc = parse(readFileSync(src, "utf8")) as Record<string, unknown>;
+  const universe = doc["universe"] as Record<string, unknown>;
+  universe["risk_etfs"] = ["VTI", "QQQ", "IWM", "VTV", "VUG", "XLK", "XLV", "XLU"];
+  universe["conditional"] = [];
+  universe["look_through_flagged"] = [];
+  (doc["sizing"] as Record<string, unknown>)["clusters"] = [];
+  const features = doc["features"] as Record<string, unknown>;
+  Object.assign(features, { momentum_lookback_sessions: 20, momentum_skip_sessions: 4, trend_sma_sessions: 10, volatility_sessions: 15, adv_sessions: 5, min_adv_usd: "1000000" });
+  // Unlike the in-memory fixtures, a charter FILE goes through full validation: factor assignments must cover
+  // only universe members, and the registered feature point must be a member of the sensitivity grid.
+  const factors = doc["factors"] as { assignments: Record<string, unknown> };
+  const keep = new Set([...(universe["risk_etfs"] as string[]), universe["cash_etf"] as string]);
+  factors.assignments = Object.fromEntries(Object.entries(factors.assignments).filter(([sym]) => keep.has(sym)));
+  const grid = doc["sensitivity_grid"] as Record<string, unknown>;
+  grid["momentum"] = [{ lookback_sessions: 20, skip_sessions: 4 }, { lookback_sessions: 40, skip_sessions: 4 }];
+  grid["trend_sma_sessions"] = [10, 15];
+  grid["volatility_sessions"] = [15];
+  const path = join(dir, "charter.yaml");
+  writeFileSync(path, stringify(doc));
+  return path;
+}
+
+/** The baked policy directory: a relaxed risk.yaml, a clean restricted list, and a covering theme membership. */
+function writePolicyDir(dir: string): void {
+  writeFileSync(
+    join(dir, "risk.yaml"),
+    stringify({
+      positionLimits: { maxSingleEtfWeightPct: "1.00", maxOpenPositions: 50 },
+      concentration: { maxSectorWeightPct: "1.00", maxThemeWeightPct: "1.00", maxFactorWeightPct: "1.00", maxCorrelatedClusterWeightPct: "1.00" },
+      exposure: { minCashPct: "0.00" },
+    }),
+  );
+  writeFileSync(join(dir, "restricted-list.yaml"), stringify({ asOf: "2026-03-01", themes: ["soybean_processing"] }));
+  writeFileSync(
+    join(dir, "theme-membership.yaml"),
+    stringify({ asOf: "2026-03-01", maxAggregateThemeWeightPct: "0.10", maxHoldingsAgeDays: 7, issuers: [{ symbols: ["PROC"], themes: ["soybean_processing"] }] }),
+  );
+}
+
+const PATHS: PricePath[] = [
+  { entityId: "VTI", start: N("200"), perSession: N("1.0010"), volumeShares: 4_000_000n, wobble: N("0.003") },
+  { entityId: "QQQ", start: N("400"), perSession: N("1.0018"), volumeShares: 5_000_000n, wobble: N("0.005") },
+  { entityId: "IWM", start: N("180"), perSession: N("1.0006"), volumeShares: 3_000_000n, wobble: N("0.004") },
+  { entityId: "VTV", start: N("150"), perSession: N("1.0004"), volumeShares: 2_000_000n, wobble: N("0.002") },
+  { entityId: "VUG", start: N("300"), perSession: N("1.0014"), volumeShares: 3_500_000n, wobble: N("0.004") },
+  { entityId: "XLK", start: N("200"), perSession: N("1.0016"), volumeShares: 4_500_000n, wobble: N("0.005") },
+  { entityId: "XLV", start: N("140"), perSession: N("1.0008"), volumeShares: 2_500_000n, wobble: N("0.003") },
+  { entityId: "XLU", start: N("70"), perSession: N("0.9994"), volumeShares: 2_000_000n, wobble: N("0.002") },
+  { entityId: "BIL", start: N("91"), perSession: N("1.00008"), volumeShares: 900_000n },
+  { entityId: "SPY", start: N("500"), perSession: N("1.0010"), volumeShares: 6_000_000n, wobble: N("0.003") },
+];
+
+type Env = { db: Db; scheduler: Scheduler; config: AppConfig; charterPath: string; policyDir: string };
+
+function setup(mode: "SHADOW" | "RESEARCH", withCharterPath = true): Env {
+  const dir = mkdtempSync(join(tmpdir(), "bg-shadowjob-"));
+  const db = openCoreDb({ dbPath: join(dir, "s.sqlite") }).db;
+  buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-03-13"), db });
+  const charterPath = writeShadowCharter(dir);
+  writePolicyDir(dir);
+  const config = parseAppConfig({ mode, shadow: { ...(withCharterPath ? { charterPath } : {}), policyDir: dir } });
+  const scheduler = new Scheduler({ db, ledger: new Ledger(db), calendar: cal, dueLookbackMs: 4 * 3_600_000, missedLookbackMs: 48 * 3_600_000 });
+  registerShadowDecisionJob(scheduler, { config, calendar: cal });
+  return { db, scheduler, config, charterPath, policyDir: dir };
+}
+
+const jobIds = (s: Scheduler): string[] => s.registeredJobs().map((j) => j.jobId);
+
+function sealedEvents(db: Db): { session: string; decisionAt: string; policyHashes: Record<string, string>; sealed: { arm: string; newRiskAllowed: boolean }[]; alreadySealed: string[] }[] {
+  const rows = db.prepare("SELECT payload FROM ledger_events WHERE kind = ?").all(SHADOW_DECISION_SEALED) as { payload: string }[];
+  return rows.map((r) => JSON.parse(r.payload) as ReturnType<typeof sealedEvents>[number]);
+}
+
+describe("registerShadowDecisionJob gating", () => {
+  it("registers only when a shadow charter is configured AND the mode seals prospective decisions", () => {
+    expect(jobIds(setup("SHADOW").scheduler)).toContain("shadow_decision");
+    // RESEARCH may not seal a prospective decision record; the job must not even exist in that process.
+    expect(jobIds(setup("RESEARCH").scheduler)).not.toContain("shadow_decision");
+    // No charter configured: opt-in default is off.
+    expect(jobIds(setup("SHADOW", false).scheduler)).not.toContain("shadow_decision");
+  });
+});
+
+describe("shadow_decision job", () => {
+  // 2026-03-06 is a Friday (the weekly decision session); 2026-03-04 a Wednesday.
+  it("seals both arms at the charter's decision instant on a weekly decision session, with the policy hashes in the ledger", async () => {
+    const env = setup("SHADOW");
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    expect(decisionRecordCount(env.db)).toBe(2);
+
+    const events = sealedEvents(env.db);
+    expect(events).toHaveLength(1);
+    const ev = events[0];
+    if (!ev) throw new Error("no sealed event");
+    expect(ev.session).toBe("2026-03-06");
+    // The decision instant is the charter's registered close + decision_offset_minutes (60), not the run time.
+    expect(ev.decisionAt).toBe(afterClose("2026-03-06", 60));
+    expect(ev.sealed.map((s) => s.arm).sort()).toEqual(["B0_PASSIVE", "B1_DETERMINISTIC"]);
+    // Each policy hash is the sha256 of the exact file bytes the run read.
+    for (const [key, file] of [
+      ["risk_yaml", "risk.yaml"],
+      ["restricted_list_yaml", "restricted-list.yaml"],
+      ["theme_membership_yaml", "theme-membership.yaml"],
+    ] as const) {
+      expect(ev.policyHashes[key]).toBe(`sha256:${sha256Hex(readFileSync(join(env.policyDir, file)))}`);
+    }
+  });
+
+  it("seals nothing on a non-decision session (the charter's weekly cadence, not the job's daily schedule)", async () => {
+    const env = setup("SHADOW");
+    await env.scheduler.tick(afterClose("2026-03-04", 150));
+    expect(decisionRecordCount(env.db)).toBe(0);
+    expect(sealedEvents(env.db)).toHaveLength(0);
+  });
+
+  it("skips an arm already sealed for the instant instead of overwriting or failing the run", async () => {
+    const env = setup("SHADOW");
+    // A prior run sealed B0 for this instant (e.g. it crashed mid-loop). The instant is immutable.
+    appendDecisionRecord(env.db, {
+      recordVersion: DECISION_RECORD_VERSION,
+      strategyId: "etf-trend-vol",
+      strategyVersion: "0.2.0",
+      charterHash: `sha256:${"0".repeat(64)}`,
+      arm: "B0_PASSIVE",
+      mode: "SHADOW",
+      decisionAt: afterClose("2026-03-06", 60),
+      sealedAt: afterClose("2026-03-06", 61),
+      snapshotIds: [],
+      targetWeights: [{ entityId: "VTI", weight: "1" }],
+      cashWeight: "0",
+      gate: { newRiskAllowed: true, haltState: "NORMAL", increasedRisk: [], blockedBy: [] },
+      constructionVersion: 1,
+      notes: [],
+    });
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    expect(decisionRecordCount(env.db)).toBe(2); // the pre-sealed B0 plus the run's B1
+    const ev = sealedEvents(env.db)[0];
+    if (!ev) throw new Error("no sealed event");
+    expect(ev.alreadySealed).toEqual(["B0_PASSIVE"]);
+    expect(ev.sealed.map((s) => s.arm)).toEqual(["B1_DETERMINISTIC"]);
+  });
+});
+
+describe("isWeeklyDecisionSession", () => {
+  it("is true only on the last session of the exchange week, including a holiday-shortened one", () => {
+    expect(isWeeklyDecisionSession(cal, D("2026-03-06"))).toBe(true); // Friday
+    expect(isWeeklyDecisionSession(cal, D("2026-03-04"))).toBe(false); // Wednesday
+    expect(isWeeklyDecisionSession(cal, D("2026-03-05"))).toBe(false); // Thursday of a full week
+    // Good Friday 2026 is April 3: Thursday April 2 ends that exchange week.
+    expect(isWeeklyDecisionSession(cal, D("2026-04-02"))).toBe(true);
+    expect(isWeeklyDecisionSession(cal, D("2026-04-03"))).toBe(false); // not a session at all
+  });
+});
