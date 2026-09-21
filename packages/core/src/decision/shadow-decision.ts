@@ -208,13 +208,16 @@ export function shadowDecisionRecords(charter: Charter, ctx: ShadowDecisionConte
   // `anchorFromData === false` is the zero-observation case (Codex P1, round 10): with NO admissible bar
   // anywhere, computeFeatures substitutes the decision session as a calendar fallback, so the date comparison
   // alone would read an empty database as fresh.
-  const staleMarket = books
-    .filter((b) => b.arm !== "B0_PASSIVE" && (!b.anchorFromData || b.anchorSession < decisionSession))
-    .map((b) =>
-      b.anchorFromData
-        ? `market_data_stale:${b.arm} anchored at ${b.anchorSession}, decision session ${decisionSession}`
-        : `market_data_stale:${b.arm} has no admissible market observations at ${decisionSession}`,
-    );
+  const staleMarket = books.flatMap((b) => {
+    if (b.arm === "B0_PASSIVE") return [];
+    if (!b.anchorFromData) return [`market_data_stale:${b.arm} has no admissible market observations at ${decisionSession}`];
+    const faults: string[] = [];
+    if (b.anchorSession < decisionSession) faults.push(`market_data_stale:${b.arm} anchored at ${b.anchorSession}, decision session ${decisionSession}`);
+    // A lagging CASH feed leaves the shared anchor current (Codex P1, round 11): the hurdle is withheld by
+    // computeFeatures, but withholding alone would seal a clean all-cash book - the stale leg must block.
+    if (!b.cashAtAnchor) faults.push(`market_data_stale:${b.arm} cash leg has no bar at anchor ${b.anchorSession}`);
+    return faults;
+  });
   const effCtx = staleMarket.length === 0 ? ctx : { ...ctx, staleInputs: [...(ctx.staleInputs ?? []), ...staleMarket] };
   return books.map((book) => recordFor(charter, effCtx, book, gateForArm(charter, effCtx, state, book)));
 }

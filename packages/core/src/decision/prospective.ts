@@ -38,6 +38,8 @@ export type ArmTargetBook = {
   anchorSession: IsoDate;
   /** False when the anchor is a calendar fallback with NO admissible observation behind it (see FeatureSet). */
   anchorFromData: boolean;
+  /** False when the cash leg has no bar at the anchor session, so the hurdle could not be priced (see FeatureSet). */
+  cashAtAnchor: boolean;
   /** Target risk weights as fractions of NAV, sorted by entityId. The cash leg is `cashWeight`. Never dollars. */
   targetWeights: ArmTargetWeight[];
   /** `1 - sum(targetWeights)`, held in cash. */
@@ -82,7 +84,7 @@ export function deterministicTargetBook(charter: Charter, deps: DecisionEngineDe
   const targets = constructTargets({ selected: candidates.selected, volatilities: vols, covariance: fs.covariance, params: sizingParamsFromCharter(charter) });
 
   const labels = [...new Set([...fs.labels, ...candidates.labels])].sort();
-  return { arm: "B1_DETERMINISTIC", decisionAt, anchorSession: fs.anchorSession, anchorFromData: fs.anchorFromData, targetWeights: sortedByEntity(targets.weights), cashWeight: targets.cashWeight, labels };
+  return { arm: "B1_DETERMINISTIC", decisionAt, anchorSession: fs.anchorSession, anchorFromData: fs.anchorFromData, cashAtAnchor: fs.cashAtAnchor, targetWeights: sortedByEntity(targets.weights), cashWeight: targets.cashWeight, labels };
 }
 
 /**
@@ -96,6 +98,7 @@ export function passiveTargetBook(charter: Charter, deps: DecisionEngineDeps, de
     decisionAt,
     anchorSession: deps.calendar.previousSession(decisionAt),
     anchorFromData: true, // no data read at all: the passive constant is not anchored to market observations
+    cashAtAnchor: true, // likewise: the passive comparator has no cash hurdle to price
     targetWeights: [{ entityId: charter.benchmarks.primary, weight: ONE }],
     cashWeight: ZERO,
     labels: [],

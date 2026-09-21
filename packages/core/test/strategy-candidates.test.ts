@@ -43,6 +43,7 @@ function featureSet(specs: Record<string, Spec>, cashMom = "0.01"): FeatureSet {
     decisionSession: ANCHOR,
     anchorSession: ANCHOR,
     anchorFromData: true,
+    cashAtAnchor: true,
     features,
     cashMom: cashMom === "" ? undefined : N(cashMom),
     cashEntityId: "BIL",

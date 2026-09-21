@@ -92,10 +92,19 @@ const PATHS: PricePath[] = [
 
 type Env = { db: Db; scheduler: Scheduler; config: AppConfig; charterPath: string; policyDir: string };
 
-function setup(mode: "SHADOW" | "RESEARCH", withCharterPath = true, opts: { registerExperiment?: boolean; approveRestrictedList?: boolean; marketTo?: string; noMarket?: boolean } = {}): Env {
+function setup(mode: "SHADOW" | "RESEARCH", withCharterPath = true, opts: { registerExperiment?: boolean; approveRestrictedList?: boolean; marketTo?: string; noMarket?: boolean; cashTo?: string } = {}): Env {
   const dir = mkdtempSync(join(tmpdir(), "bg-shadowjob-"));
   const db = openCoreDb({ dbPath: join(dir, "s.sqlite") }).db;
-  if (opts.noMarket !== true) buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D(opts.marketTo ?? "2026-03-13"), db });
+  if (opts.noMarket !== true) {
+    const cashTo = opts.cashTo;
+    if (cashTo === undefined) {
+      buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D(opts.marketTo ?? "2026-03-13"), db });
+    } else {
+      // A lagging cash feed: every risk path ingests to the full range, BIL stops earlier.
+      buildMarket({ paths: PATHS.filter((pp) => pp.entityId !== "BIL"), from: D("2026-01-02"), to: D(opts.marketTo ?? "2026-03-13"), db });
+      buildMarket({ paths: PATHS.filter((pp) => pp.entityId === "BIL"), from: D("2026-01-02"), to: D(cashTo), db });
+    }
+  }
   const charterPath = writeShadowCharter(dir);
   if (opts.registerExperiment !== false) registerExperimentFor(db, loadCharterFile(charterPath).charterHash);
   writePolicyDir(dir, opts);
@@ -205,6 +214,21 @@ describe("shadow_decision job", () => {
     expect(outcomes.find((o) => o.jobId === "shadow_decision")?.error).toContain("decision_offset_minutes changed");
     expect(decisionRecordCount(env.db)).toBe(0);
     expect(sealedEvents(env.db)).toHaveLength(0);
+  });
+
+  it("seals with new risk BLOCKED when only the CASH leg lacks the decision session's bar (Codex P1, round 11)", async () => {
+    // Risk ETFs are current, so the shared anchor IS the decision session; only BIL's feed lags. The hurdle
+    // must not be priced from an older cash bar, and the stale leg must block rather than seal a clean
+    // all-cash book (cashMom withheld -> CASH_HURDLE_UNAVAILABLE alone would look like a valid decision).
+    const env = setup("SHADOW", true, { cashTo: "2026-03-05" });
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    const rows = env.db.prepare("SELECT record_json FROM decision_records").all() as { record_json: string }[];
+    expect(rows.length).toBe(2);
+    for (const row of rows) {
+      const rec = JSON.parse(row.record_json) as { gate: { newRiskAllowed: boolean; blockedBy: string[] } };
+      expect(rec.gate.newRiskAllowed).toBe(false);
+      expect(rec.gate.blockedBy.join(" ")).toContain("cash leg has no bar at anchor");
+    }
   });
 
   it("seals nothing on a non-decision session (the charter's weekly cadence, not the job's daily schedule)", async () => {

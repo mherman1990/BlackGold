@@ -51,9 +51,12 @@ describe("EntityMap", () => {
     const knownAt = utc("2024-06-03T00:15:00Z");
     map.applyAction({ kind: "SYMBOL_CHANGE", entityId: "E1", oldSymbol: "OLD", newSymbol: "NEW", effective: d("2024-06-03") }, "corporate_action.SYMBOL_CHANGE", knownAt);
     expect(map.symbolsFor("E1")).toEqual(["NEW", "OLD"]); // restricted-list matching sees the historical ticker
-    // Only the day the action attests: the last old-symbol trading day. Earlier history is not invented.
+    // The whole pre-change history resolves (the range opens at the materialized floor): an admissible
+    // pre-change holdings snapshot must still resolve the old ticker (Codex P1, round 11). A recorded reuse by
+    // a different entity would conflict in register() and fail loudly instead.
     expect(map.resolve("OLD", d("2024-06-02"))).toBe("E1");
-    expect(map.resolve("OLD", d("2024-06-01"))).toBeUndefined();
+    expect(map.resolve("OLD", d("2024-06-01"))).toBe("E1");
+    expect(map.resolve("OLD", d("2020-01-02"))).toBe("E1");
     expect(map.resolve("OLD", d("2024-06-03"))).toBeUndefined();
     expect(map.resolve("NEW", d("2024-06-03"))).toBe("E1");
     // Bitemporal: the materialized range is knowable only from the action's own availability.

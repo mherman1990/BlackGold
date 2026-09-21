@@ -113,7 +113,14 @@ export type FeatureSet = {
    */
   anchorFromData: boolean;
   features: Map<string, EntityFeatures>;
-  /** Cash-leg momentum over the same window: the hurdle `mom_i > mom_cash`. */
+  /**
+   * True when the cash leg has a bar exactly at the anchor session. The per-entity STALE_ANCHOR check covers
+   * only risk entities, so a lagging cash feed would otherwise silently compute the hurdle from an older bar
+   * while every candidate is priced at the anchor (Codex P1, round 11); when false, `cashMom` is withheld
+   * (undefined -> CASH_HURDLE_UNAVAILABLE) rather than computed stale.
+   */
+  cashAtAnchor: boolean;
+  /** Cash-leg momentum over the same window: the hurdle `mom_i > mom_cash`. Undefined unless `cashAtAnchor`. */
   cashMom: Dec | undefined;
   cashEntityId: string;
   covariance: CovarianceWindow | undefined;
@@ -359,7 +366,10 @@ export function computeFeatures(deps: FeatureEngineDeps, input: ComputeFeaturesI
   // Cash leg: momentum only. It is the hurdle, never a ranked candidate.
   const cash = loaded.get(input.cashEntityId);
   const cashIdx = cash ? indexAsOf(cash.tr, anchor) : -1;
-  const cashMom = cash && cashIdx >= 0 ? momentum(cash.tr, cashIdx, params.momentumLookbackSessions, params.momentumSkipSessions) : undefined;
+  // The hurdle must be priced AT the anchor, like every ranked candidate: `indexAsOf` alone would silently
+  // take the cash leg's newest OLDER bar when its feed lags the anchor session (Codex P1, round 11).
+  const cashAtAnchor = cash !== undefined && cashIdx >= 0 && cash.tr[cashIdx]?.session === anchor;
+  const cashMom = cash && cashAtAnchor ? momentum(cash.tr, cashIdx, params.momentumLookbackSessions, params.momentumSkipSessions) : undefined;
   if (cash && cashIdx >= 0) returns.set(input.cashEntityId, logReturnMap(cash.tr));
 
   // Covariance window: the last `volatilitySessions` sessions for which every candidate entity has a
@@ -400,6 +410,7 @@ export function computeFeatures(deps: FeatureEngineDeps, input: ComputeFeaturesI
     decisionSession,
     anchorSession: anchor,
     anchorFromData: anchorSession !== undefined,
+    cashAtAnchor,
     features,
     cashMom,
     cashEntityId: input.cashEntityId,
