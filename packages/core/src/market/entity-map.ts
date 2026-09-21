@@ -77,6 +77,13 @@ function rowToRange(r: Row): SymbolRange {
 /** Sentinel for "all current knowledge"; sorts after every real instant. */
 const ALL_KNOWLEDGE = "9999-12-31T23:59:59.999Z";
 
+/**
+ * Opening date for a range materialized from a corporate action whose true start is unknown (predates every
+ * U.S. listing, so it means "as far back as this store can ask"). A materialized range still fails closed on
+ * contradiction: a recorded reuse of the symbol by a different entity conflicts in `register` and throws.
+ */
+const MATERIALIZED_RANGE_FLOOR = "1800-01-01" as IsoDate;
+
 const OPEN_AT = "(effective_to IS NULL OR effective_to >= ? OR close_known_from > ?) AND known_from <= ?";
 
 export class EntityMap {
@@ -191,16 +198,28 @@ export class EntityMap {
   /**
    * Apply one corporate action's identity effect, knowable from `knownAt` (default: the start of the action's
    * effective date). Actions with no identity effect are ignored. SYMBOL_CHANGE closes the old symbol the day
-   * before `effective` and opens the new one; MERGER and DELISTING close the target's symbols; SPINOFF opens
-   * the child's symbol from the ex-date.
+   * before `effective` and opens the new one; when no range links `oldSymbol` to the entity at all (an
+   * ingestion-only table with no seed), it materializes a closed range ending the day before `effective` and
+   * opening at {@link MATERIALIZED_RANGE_FLOOR} - the action attests the old symbol denoted the entity up to
+   * the change but not since when, and a range covering only the final day would leave an admissible
+   * pre-change holdings snapshot unable to resolve the old ticker, so a restricted issuer could clear
+   * look-through (Codex P1, rounds 6 and 11). A genuine earlier reuse of the ticker by another entity is
+   * recorded as its own range, which `register` detects: the conflict throws rather than silently rewriting
+   * history, and resolution over an ambiguous date fails closed. MERGER and DELISTING close the target's
+   * symbols; SPINOFF opens the child's symbol from the ex-date.
    */
   applyAction(action: CorporateAction, source = corporateActionSourceId(action.kind), knownAt: UtcInstant = dateStartUtc(actionEffectiveDate(action))): void {
     switch (action.kind) {
       case "SYMBOL_CHANGE": {
         this.db.transaction(() => {
-          for (const r of this.rangesForEntity(action.entityId)) {
-            if (r.symbol === action.oldSymbol && r.effectiveTo === null && r.effectiveFrom < action.effective) this.close(r.id, addDays(action.effective, -1), knownAt);
+          let oldSymbolKnown = false;
+          for (const r of this.rangesForSymbol(action.oldSymbol)) {
+            if (r.entityId !== action.entityId) continue;
+            oldSymbolKnown = true;
+            if (r.effectiveTo === null && r.effectiveFrom < action.effective) this.close(r.id, addDays(action.effective, -1), knownAt);
           }
+          const lastOldDay = addDays(action.effective, -1);
+          if (!oldSymbolKnown) this.register({ symbol: action.oldSymbol, entityId: action.entityId, effectiveFrom: MATERIALIZED_RANGE_FLOOR, effectiveTo: lastOldDay, source, knownFrom: knownAt });
           this.register({ symbol: action.newSymbol, entityId: action.entityId, effectiveFrom: action.effective, source, knownFrom: knownAt });
         });
         return;

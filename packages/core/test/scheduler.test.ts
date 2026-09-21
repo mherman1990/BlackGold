@@ -81,6 +81,17 @@ describe("Scheduler", () => {
     a.db.close();
   });
 
+  it("an after_close offset spanning several days still enumerates the originating session (Codex P2, round 7)", () => {
+    // Friday 2026-09-04 close (20:00Z, EDT) + 4350 min (72.5 h) = Monday 2026-09-07 20:30Z. The candidate
+    // session dates near that Monday never include the originating Friday unless the window is widened by the
+    // offset - the run would simply never be enumerated, so it could never fire at all.
+    const a = rig(NOW);
+    a.scheduler.register(job({ jobId: "post", schedule: { kind: "after_close", offsetMs: 4350 * 60_000 } }));
+    const due = a.scheduler.computeDueRuns(utc("2026-09-07T20:30:00Z")).map((r) => r.scheduledFor);
+    expect(due).toEqual(["2026-09-07T20:30:00.000Z"]);
+    a.db.close();
+  });
+
   it("a handler that exceeds its deadline is recorded as failed and the ledger says so", async () => {
     const a = rig(NOW);
     a.scheduler.register(
