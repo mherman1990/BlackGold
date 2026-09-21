@@ -173,10 +173,16 @@ describe("shadow_decision job", () => {
     });
   };
 
-  it("skips an arm already sealed for the instant UNDER THE SAME CONTEXT instead of overwriting or failing the run", async () => {
+  it("skips an arm already sealed with IDENTICAL content instead of overwriting or failing the run", async () => {
+    // A prior run of this exact charter and policy state sealed B0 for the instant (e.g. an operator run).
+    // Everything but sealedAt is deterministic, so a sibling environment with identical inputs derives the
+    // byte-identical record; pre-sealing that record must be treated as a safe skip, not a collision.
+    const sibling = setup("SHADOW");
+    await sibling.scheduler.tick(afterClose("2026-03-06", 150));
+    const priorRow = sibling.db.prepare("SELECT record_json FROM decision_records WHERE arm = 'B0_PASSIVE'").get() as { record_json: string };
+    const priorB0 = JSON.parse(priorRow.record_json) as Parameters<typeof appendDecisionRecord>[1];
     const env = setup("SHADOW");
-    // A prior run of THIS charter sealed B0 for this instant (e.g. it crashed mid-loop). The instant is immutable.
-    preSealB0(env, loadCharterFile(env.charterPath).charterHash);
+    appendDecisionRecord(env.db, priorB0);
     await env.scheduler.tick(afterClose("2026-03-06", 150));
     expect(decisionRecordCount(env.db)).toBe(2); // the pre-sealed B0 plus the run's B1
     const ev = sealedEvents(env.db)[0];
@@ -185,14 +191,15 @@ describe("shadow_decision job", () => {
     expect(ev.sealed.map((s) => s.arm)).toEqual(["B1_DETERMINISTIC"]);
   });
 
-  it("refuses to complete an arm pair when the pre-sealed arm was written under a DIFFERENT charter (Codex P2, round 7)", async () => {
+  it("refuses to complete an arm pair when the pre-sealed arm has DIFFERENT content (Codex P2, rounds 7-8)", async () => {
     const env = setup("SHADOW");
-    // Another writer sealed B0 under some other charter hash. Sealing B1 under the current charter would leave
-    // a "synchronized" pair whose arms describe different experiments; the run must fail and roll back instead.
+    // Another writer sealed B0 under some other charter hash (any content difference - a different charter, a
+    // different policy state, a different book - reads the same way). Sealing B1 under the current inputs would
+    // leave a "synchronized" pair whose arms describe different experiments; the run must fail and roll back.
     preSealB0(env, `sha256:${"0".repeat(64)}`);
     const outcomes = await env.scheduler.tick(afterClose("2026-03-06", 150));
     expect(outcomes.find((o) => o.jobId === "shadow_decision")?.status).toBe("failed");
-    expect(outcomes.find((o) => o.jobId === "shadow_decision")?.error).toContain("different context");
+    expect(outcomes.find((o) => o.jobId === "shadow_decision")?.error).toContain("different content");
     expect(decisionRecordCount(env.db)).toBe(1); // only the foreign B0; the transaction rolled back, no B1
     expect(sealedEvents(env.db)).toHaveLength(0); // and no event attributing the pair to the current charter
   });
@@ -251,6 +258,35 @@ describe("shadow_decision job: rung order and policy approval", () => {
       const rec = JSON.parse(row.record_json) as { gate: { newRiskAllowed: boolean; blockedBy: string[] } };
       expect(rec.gate.newRiskAllowed).toBe(false);
       expect(rec.gate.blockedBy.join(" ")).toContain("policy_unapproved:restricted-list.yaml");
+    }
+  });
+
+  it("treats a policy snapshot DATED after the decision instant as a stale input, even when duly signed (Codex P1, round 8)", async () => {
+    // An approved file whose asOf postdates the decision was not operative at the timestamp-locked instant:
+    // the compliance engine reads a future restricted list as fresh (negative age) and look-through consumes
+    // future membership content with no date check, so it must fail closed here. Both files span the dimension.
+    for (const file of ["restricted-list.yaml", "theme-membership.yaml"] as const) {
+      const env = setup("SHADOW");
+      const current = parse(readFileSync(join(env.policyDir, file), "utf8")) as Record<string, unknown>;
+      writeFileSync(join(env.policyDir, file), stringify({ ...current, ...APPROVAL, asOf: "2026-03-09" })); // decision is 2026-03-06
+      await env.scheduler.tick(afterClose("2026-03-06", 150));
+      const rows = env.db.prepare("SELECT record_json FROM decision_records").all() as { record_json: string }[];
+      expect(rows.length).toBe(2);
+      for (const row of rows) {
+        const rec = JSON.parse(row.record_json) as { gate: { newRiskAllowed: boolean; blockedBy: string[] } };
+        expect(rec.gate.newRiskAllowed).toBe(false);
+        expect(rec.gate.blockedBy.join(" ")).toContain(`policy_future_dated:${file}`);
+      }
+    }
+    // Control: asOf on the decision date itself is operative (the decision instant is after that day's close).
+    const env = setup("SHADOW");
+    const current = parse(readFileSync(join(env.policyDir, "restricted-list.yaml"), "utf8")) as Record<string, unknown>;
+    writeFileSync(join(env.policyDir, "restricted-list.yaml"), stringify({ ...current, ...APPROVAL, asOf: "2026-03-06" }));
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    const rows = env.db.prepare("SELECT record_json FROM decision_records").all() as { record_json: string }[];
+    for (const row of rows) {
+      const rec = JSON.parse(row.record_json) as { gate: { blockedBy: string[] } };
+      expect(rec.gate.blockedBy.join(" ")).not.toContain("policy_future_dated");
     }
   });
 

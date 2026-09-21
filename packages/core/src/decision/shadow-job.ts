@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { addDays, addMs, sha256Hex, type IsoDate } from "@blackgold/shared";
+import { addDays, addMs, canonicalJson, sha256Hex, type IsoDate } from "@blackgold/shared";
 import { processingDelayOverridesMs, RestrictedListConfigSchema, RiskConfigSchema, ThemeMembershipConfigSchema, type AppConfig } from "../config/schema.ts";
 import { parseYamlConfig } from "../config/load.ts";
 import type { ExchangeCalendar } from "../calendar/types.ts";
@@ -200,6 +200,16 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       if (!approved(risk.value)) unapprovedPolicies.push("policy_unapproved:risk.yaml");
       if (!approved(restricted.value)) unapprovedPolicies.push("policy_unapproved:restricted-list.yaml");
       if (!approved(membership.value)) unapprovedPolicies.push("policy_unapproved:theme-membership.yaml");
+      // A policy snapshot DATED after the decision instant was not operative at it (Codex P1, round 8): the
+      // compliance engine treats a future restricted-list asOf as fresh (a negative age never exceeds the
+      // maximum) and the look-through path consumes future-dated membership content with no date check of its
+      // own, so an accidental or staged future file could admit new risk on information the timestamp-locked
+      // decision could not have had. Either future date is a stale input like an unapproved file: the arms
+      // still seal, honestly blocked. (risk.yaml carries no asOf; its signature timestamp is checked above.)
+      const futureDated = (asOf: string): boolean => Date.parse(`${asOf}T00:00:00.000Z`) > decisionAtMs;
+      if (futureDated(restricted.value.asOf)) unapprovedPolicies.push("policy_future_dated:restricted-list.yaml");
+      if (futureDated(membership.value.asOf)) unapprovedPolicies.push("policy_future_dated:theme-membership.yaml");
+
 
       const records = shadowDecisionRecords(charter, {
         mode: config.mode,
@@ -228,18 +238,22 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
         } catch (err) {
           if (err instanceof DecisionAlreadySealedError) {
             // The instant is immutable: something already sealed this arm (e.g. an operator run). Skipping it
-            // is safe ONLY when the existing record was sealed under the same charter and mode (Codex P2,
-            // round 7) - otherwise completing the remaining arms would leave a "synchronized" pair whose arms
-            // describe different experiments while the ledger event attributes the run to the current charter
-            // alone. A mismatch fails the whole run (the transaction rolls back: no partial pair, no event).
+            // is safe ONLY when the existing record is CONTENT-IDENTICAL to the one this run just derived,
+            // `sealedAt` aside (Codex P2, rounds 7-8) - charter hash and mode alone are not enough, because the
+            // decision row does not persist policy hashes, so a same-charter run under different policy files
+            // would otherwise complete a "synchronized" pair whose arms saw different inputs while the ledger
+            // event attributes both to the current policies. Comparing the whole derived record covers every
+            // input that reaches the decision (gate verdict, blocked reasons - the policy approval labels
+            // included - target book, snapshot bindings). A mismatch fails the whole run (the transaction rolls
+            // back: no partial pair, no misattributing event).
             const existing = ctx.db
-              .prepare("SELECT charter_hash, mode FROM decision_records WHERE strategy_id = ? AND strategy_version = ? AND arm = ? AND decision_at = ?")
-              .get(record.strategyId, record.strategyVersion, record.arm, record.decisionAt) as { charter_hash: string; mode: string } | undefined;
-            if (existing?.charter_hash !== loaded.charterHash || existing.mode !== config.mode) {
+              .prepare("SELECT record_json FROM decision_records WHERE strategy_id = ? AND strategy_version = ? AND arm = ? AND decision_at = ?")
+              .get(record.strategyId, record.strategyVersion, record.arm, record.decisionAt) as { record_json: string } | undefined;
+            const contentOf = (r: object): string => canonicalJson({ ...(r as Record<string, unknown>), sealedAt: null });
+            if (existing === undefined || contentOf(JSON.parse(existing.record_json) as object) !== contentOf(record)) {
               throw new Error(
-                `arm ${record.arm} at ${record.decisionAt} is already sealed under a different context ` +
-                  `(charter ${existing?.charter_hash ?? "unknown"}, mode ${existing?.mode ?? "unknown"}; this run: ${loaded.charterHash}, ${config.mode}); ` +
-                  "refusing to complete a mismatched arm pair",
+                `arm ${record.arm} at ${record.decisionAt} is already sealed with different content ` +
+                  `(this run derived charter ${loaded.charterHash}, mode ${config.mode}); refusing to complete a mismatched arm pair`,
               );
             }
             alreadySealed.push(record.arm);
