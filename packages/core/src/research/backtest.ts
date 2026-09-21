@@ -9,7 +9,7 @@ import { candidateParamsFromCharter, selectCandidates, type CandidateParams, typ
 import { computeFeatures, featureParamsFromCharter, type FeatureParams } from "../strategy/features.ts";
 import { constructTargets, rebalanceOrders, shareTargets, sizingParamsFromCharter, type SizingParams, type TargetWeights } from "../strategy/construct.ts";
 import { instantKey, volatilityTargetedSeries, type AcquisitionInstant, type VolTargetActivation } from "./benchmarks.ts";
-import { dailyNavSeries, type PortfolioEvent } from "./nav.ts";
+import { dailyNavSeries, type NavPoint, type PortfolioEvent } from "./nav.ts";
 import { simulateFill, type CostModel } from "./simulator.ts";
 import type { LeakageAuditor } from "./leakage.ts";
 
@@ -92,7 +92,8 @@ export type DecisionRecord = {
 export type ArmResult = {
   arm: "B0_PASSIVE" | "B1_DETERMINISTIC";
   /** Daily NAV marked at raw closes. */
-  nav: { session: IsoDate; nav: Dec; cash: Dec; investedWeight: Dec }[];
+  /** The arm's NAV path, as `dailyNavSeries` produced it - including each session's held instruments. */
+  nav: NavPoint[];
   /** NAV as a total-return index, for the metric and benchmark engines. */
   index: TRSeries;
   fills: { session: IsoDate; entityId: string; side: "BUY" | "SELL"; quantity: Dec; price: Dec; fees: Dec }[];
@@ -744,34 +745,26 @@ export function runBacktest(input: BacktestInput): BacktestResult {
    *     end of the run window produces no label.
    *
    * Reading the bars directly closes all three. Restricted to sessions on which the instrument was actually
-   * HELD, reconstructed from the fills: a gap in an instrument the portfolio held none of cannot put a
-   * carried price into NAV. Both narrowings matter and for the same reason - this withholds a decisive
-   * prong, so every session it reports that did not really distort anything turns a `REJECT` the run earned
-   * into an `UNMEASURED` it did not. An earlier version scanned every session of any ever-filled
-   * instrument, including before its first buy and after its last sale (Codex, PR #94).
+   * HELD: a gap in an instrument the portfolio held none of cannot put a carried price into NAV. That
+   * narrowing matters as much as the widening does - this withholds a decisive prong, so every session it
+   * reports that did not really distort anything turns a `REJECT` the run earned into an `UNMEASURED` it
+   * did not. An earlier version scanned every session of any ever-filled instrument, including before its
+   * first buy and after its last sale (Codex, PR #94).
+   *
+   * The held set comes from `dailyNavSeries`' own replay - `NavPoint.held` - rather than being
+   * reconstructed here. Reconstructing it from the fills was the next defect (Codex, PR #96): the replay
+   * also applies SPLIT and DELISTING and orders a SPLIT before a same-day fill, so a fill-only count drifts
+   * the moment a holding splits, and a later gap in it would go unreported. Whatever NAV was marked on is
+   * what this has to examine, so it reads the same list NAV was marked from.
    */
-  const quantities = new Map<string, Dec>();
-  const fillsBySession = new Map<IsoDate, typeof fills>();
-  for (const f of fills) {
-    const at = fillsBySession.get(f.session) ?? [];
-    at.push(f);
-    fillsBySession.set(f.session, at);
-  }
   const barsBySession = new Map<string, Map<string, LoadedBar>>();
   for (const [entityId, entity] of series) barsBySession.set(entityId, new Map(entity.bars.map((b) => [b.session, b])));
 
   const navDistorting = new Set<IsoDate>();
-  for (const session of allSessions) {
-    // Apply the session's own fills first: a position bought today is marked at today's close, so today's
-    // bar matters for it. A position sold today is likewise still marked today at the closing quantity.
-    for (const f of fillsBySession.get(session) ?? []) {
-      const signed = f.side === "BUY" ? f.quantity : f.quantity.negated();
-      quantities.set(f.entityId, (quantities.get(f.entityId) ?? ZERO).plus(signed));
-    }
-    for (const [entityId, qty] of quantities) {
-      if (qty.isZero()) continue;
-      const bar = barsBySession.get(entityId)?.get(session);
-      if (bar === undefined || bar.flags.includes("STALE_BAR") || bar.flags.includes("GAP")) navDistorting.add(session);
+  for (const point of deterministic.points) {
+    for (const entityId of point.held) {
+      const bar = barsBySession.get(entityId)?.get(point.session);
+      if (bar === undefined || bar.flags.includes("STALE_BAR") || bar.flags.includes("GAP")) navDistorting.add(point.session);
     }
   }
   const navDistortingSessions = [...navDistorting].sort();

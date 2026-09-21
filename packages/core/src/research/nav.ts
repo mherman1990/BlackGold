@@ -240,7 +240,22 @@ export function eventDate(e: PortfolioEvent): IsoDate {
   }
 }
 
-export type NavPoint = { session: IsoDate; nav: Dec; cash: Dec; investedWeight: Dec };
+export type NavPoint = {
+  session: IsoDate;
+  nav: Dec;
+  cash: Dec;
+  investedWeight: Dec;
+  /**
+   * Instruments held with a non-zero quantity when this session was marked, after the session's own events.
+   *
+   * Exposed because a caller that needs to know what NAV was marked on must not reconstruct it. Replaying
+   * the fills alone is not the same thing: this replay also applies SPLIT and DELISTING, and orders a SPLIT
+   * before a same-day fill, so a fill-only reconstruction drifts the moment a holding splits - buy 100,
+   * split 2:1, sell 100, and the naive count reaches zero while the portfolio still holds 100. Codex caught
+   * exactly that on PR #96.
+   */
+  held: string[];
+};
 
 /**
  * Replay events in date order and mark NAV at each session close. Events dated on a session are applied
@@ -276,7 +291,9 @@ export function dailyNavSeries(input: {
       next++;
     }
     const prices = input.closes(session);
-    points.push({ session, nav: portfolio.nav(prices), cash: portfolio.cash, investedWeight: portfolio.investedWeight(prices) });
+    const held: string[] = [];
+    for (const [entityId, position] of portfolio.positions) if (!position.quantity.isZero()) held.push(entityId);
+    points.push({ session, nav: portfolio.nav(prices), cash: portfolio.cash, investedWeight: portfolio.investedWeight(prices), held });
   }
   return { points, portfolio };
 }

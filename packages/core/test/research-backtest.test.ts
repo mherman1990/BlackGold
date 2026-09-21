@@ -246,6 +246,30 @@ describe("runBacktest", () => {
       expect(r.navDistortingSessions).not.toContain(flat);
     });
 
+    it("still sees a holding that has split, where a fill-only count would lose it", () => {
+      // Codex P1 on PR #96. The NAV replay applies SPLIT and orders it before a same-day fill, so a
+      // fill-only reconstruction of "what is held" drifts the moment a holding splits: buy 100, split 2:1,
+      // sell 100, and the naive count reaches zero while the portfolio still holds 100. A later gap in that
+      // holding would then go unreported and both section 16.1 prongs would consume distorted NAV. The held
+      // set is therefore read from `dailyNavSeries`' own replay rather than rebuilt here.
+      const exDate = D("2026-04-06");
+      const gap = D("2026-04-17");
+      const m = buildMarket({
+        paths: PATHS,
+        from,
+        to,
+        actions: [{ action: { kind: "SPLIT", entityId: "VTI", ratio: N("2"), exDate } }],
+        omitSessions: { VTI: [gap] },
+      });
+      const r = runBacktest(setup({ pit: m.pit, calendar: m.calendar }).input);
+
+      // Premises, read from this run: VTI was traded, and it was still held when the gap landed.
+      expect((r.arms["B1_DETERMINISTIC"]?.fills ?? []).some((f) => f.entityId === "VTI")).toBe(true);
+      const atGap = r.arms["B1_DETERMINISTIC"]?.nav.find((p) => p.session === gap);
+      expect(atGap?.held).toContain("VTI");
+      expect(r.navDistortingSessions).toContain(gap);
+    });
+
     it("ignores a gap in a universe instrument the candidate never held", () => {
       // A gap somewhere the strategy never put money cannot move its NAV, and withholding on it would make
       // the prong unmeasurable on almost any real window.
