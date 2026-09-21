@@ -180,6 +180,36 @@ export function corporateActionSourceId(kind: CorporateActionKind): string {
   return `corporate_action.${kind}`;
 }
 
+/** The subset of a stored observation the corporate-action dedupe reads. */
+export type CorporateActionRow = { id: number; qualityFlags: readonly string[]; value: unknown };
+
+/**
+ * One corporate action per effective date within a single (entity, kind) read. The same event can be present
+ * from both the reconciled operator-curated file and the single-source Tiingo feed - different locators, same
+ * `corporate_action.<kind>` source, so `asOf` retains both, and crediting both double-counts the dividend or
+ * split in any total-return series built from the rows. Prefers the reconciled row (no
+ * UNVERIFIED_SINGLE_SOURCE) over the single-source one; on a tie the later row (greater id) wins.
+ *
+ * Labeling stays the caller's job and stays conservative: accumulate promotion-blocking quality flags over
+ * EVERY returned row before calling this, so the dedupe can never make a run look more citable than its store.
+ * Every consumer of `corporate_action.<kind>` rows that feeds a total-return series must go through this
+ * function - `loadExecutionSeries` (research/backtest.ts) and `loadEntity` (strategy/features.ts) both do; a
+ * new reader that skips it reintroduces the double-count the moment a reconciled file coexists with the feed.
+ */
+export function dedupeCorporateActionRows(rows: readonly CorporateActionRow[]): CorporateAction[] {
+  const chosen = new Map<string, { id: number; single: boolean; action: CorporateAction }>();
+  for (const row of rows) {
+    const action = corporateActionFromValue(row.value);
+    const single = row.qualityFlags.includes("UNVERIFIED_SINGLE_SOURCE");
+    const key = actionEffectiveDate(action);
+    const prev = chosen.get(key);
+    if (prev === undefined || (prev.single && !single) || (prev.single === single && row.id > prev.id)) {
+      chosen.set(key, { id: row.id, single, action });
+    }
+  }
+  return [...chosen.values()].map((c) => c.action);
+}
+
 /** The entity the action is recorded against (the parent for a spin-off, the target for a merger). */
 export function actionEntityId(a: CorporateAction): string {
   return a.kind === "SPINOFF" ? a.parent : a.entityId;

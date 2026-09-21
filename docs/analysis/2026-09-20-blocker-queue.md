@@ -118,8 +118,12 @@ evaluation universe (cheapest, no code change), a change to the taint rule (an
 evidence-standards decision, not a refactor), or a quarantine mechanism that
 does not exist. Costs are in `2026-09-13-path-to-citable-evidence.md`.
 
-**And a latent bug must be fixed before the curation, whichever remedy you
-pick.** `computeFeatures` (`strategy/features.ts`) does not dedupe corporate
+**~~And a latent bug must be fixed before the curation, whichever remedy you
+pick.~~ Fixed 2026-09-21** — the dedupe is now shared (`dedupeCorporateActionRows`
+in `market/types.ts`) and both `loadExecutionSeries` and `computeFeatures` call
+it; see `HANDOFF.md` §5. The paragraph below records what the bug was.
+
+**Was:** `computeFeatures` (`strategy/features.ts`) does not dedupe corporate
 actions, while `loadExecutionSeries` does — so a dividend present from both the
 reconciled file and the Tiingo feed is counted twice in momentum, trend and
 volatility, and once in execution. The 0.1.11 dedupe fixed the execution path
@@ -248,9 +252,8 @@ So a day is never lost waiting on an answer. Each is a bounded, reviewed PR.
 7. **Deferred Phase 4 limit engines** that need only price/ADV data already in
    the store: liquidity and order-level limits. Per-position risk budget and
    factor concentration wait on B-7.
-8. **Fix the `computeFeatures` corporate-action double-count** (see B-2). Small,
-   well-understood, financial-critical, and a prerequisite to B-2's curation
-   under every remedy. This is the one item here that should jump the queue.
+8. ~~**Fix the `computeFeatures` corporate-action double-count**~~ — **done
+   2026-09-21**, in the PR carrying `2026-09-21-rung5-decision-packet.md`.
 
 ## 5. Two things the refresh turned up
 

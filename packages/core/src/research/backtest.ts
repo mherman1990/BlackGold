@@ -3,7 +3,7 @@ import type { ExchangeCalendar } from "../calendar/types.ts";
 import type { ReadOnlyPointInTime } from "../data/pit/types.ts";
 import { blocksPromotionEvidence } from "../data/quality.ts";
 import { RawSeries, TotalReturnSeries, type LoadedBar, type TRPoint, type TRSeries } from "../market/series.ts";
-import { actionEffectiveDate, corporateActionFromValue, corporateActionSourceId, CORPORATE_ACTION_KINDS, type CorporateAction } from "../market/types.ts";
+import { corporateActionSourceId, CORPORATE_ACTION_KINDS, dedupeCorporateActionRows, type CorporateAction } from "../market/types.ts";
 import { admittedRiskEtfs, type Charter } from "../strategy/charter.ts";
 import { candidateParamsFromCharter, selectCandidates, type CandidateParams, type CandidateSet } from "../strategy/candidates.ts";
 import { computeFeatures, featureParamsFromCharter, type FeatureParams } from "../strategy/features.ts";
@@ -280,25 +280,12 @@ function loadExecutionSeries(input: BacktestInput, entityId: string, decisionAt:
       ...(input.snapshotId === undefined ? {} : { snapshotId: input.snapshotId }),
       ...(input.processingDelayMs === undefined ? {} : { processingDelayMs: input.processingDelayMs }),
     });
-    // Dedupe by effective date within this (entity, kind). The same event can be present from both the
-    // reconciled operator-curated file and the single-source Tiingo feed - different locators, same
-    // corporate_action.<kind> source, so asOf retains both. Crediting both would double-count the dividend or
-    // split in the total-return series. Keep one action per date, preferring the reconciled row (no
-    // UNVERIFIED_SINGLE_SOURCE) over the single-source one; on a tie the later row (greater id) wins.
-    const chosen = new Map<string, { id: number; single: boolean; action: CorporateAction }>();
+    // Labeling stays conservative: any single-source action present taints the run even when a reconciled
+    // action supersedes it in the dedupe, so the dedupe can never make a run look more citable than its store.
     for (const row of res.rows) {
-      // Labeling stays conservative: any single-source action present taints the run even when a reconciled
-      // action supersedes it below, so the dedupe can never make a run look more citable than its store does.
       for (const code of blocksPromotionEvidence(row.qualityFlags)) qualityLabels.add(code);
-      const action = corporateActionFromValue(row.value);
-      const single = row.qualityFlags.includes("UNVERIFIED_SINGLE_SOURCE");
-      const key = actionEffectiveDate(action);
-      const prev = chosen.get(key);
-      if (prev === undefined || (prev.single && !single) || (prev.single === single && row.id > prev.id)) {
-        chosen.set(key, { id: row.id, single, action });
-      }
     }
-    for (const { action } of chosen.values()) actions.push(action);
+    actions.push(...dedupeCorporateActionRows(res.rows));
   }
   return { bars: raw.bars, actions, tr: TotalReturnSeries.build(raw.bars, actions, entityId), qualityLabels: [...qualityLabels] };
 }
