@@ -37,6 +37,19 @@ describe("themeMembershipOf", () => {
     expect(membership({ symbol: "UNRELATED" })).toEqual([]);
   });
 
+  it("matches in the holdings decoder's canonical form: a lowercase or padded config ticker still identifies the constituent (Codex P1, round 4)", () => {
+    const sloppy = themeMembershipOf(
+      ThemeMembershipConfigSchema.parse({
+        asOf: "2026-09-01",
+        maxAggregateThemeWeightPct: "0.10",
+        maxHoldingsAgeDays: 7,
+        issuers: [{ symbols: [" proc "], themes: ["soybean_processing"] }],
+      }),
+    );
+    // Holdings symbols arrive trimmed-uppercase from decodeSsgaHoldings; the sloppy entry must still match.
+    expect(sloppy({ symbol: "PROC" })).toEqual(["soybean_processing"]);
+  });
+
   it("unions themes when a constituent matches more than one entry", () => {
     // AGRI by symbol plus PROC_CORP by entity id: the union, not either entry alone.
     expect(membership({ symbol: "AGRI", entityId: "PROC_CORP" })).toEqual(["crop_inputs", "soybean_processing"]);

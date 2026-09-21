@@ -19,7 +19,18 @@ import { lookThroughResolver, type EtfHoldings, type LookThroughParams, type The
  * turns into `UNKNOWN_LOOK_THROUGH` and blocks for new risk.
  */
 
-/** Build the `ThemeMembership` matcher from the owner-authored config. Matching is case-sensitive and exact. */
+/** The canonical ticker form the holdings decoder emits: trimmed, uppercase. */
+function canonicalSymbol(s: string): string {
+  return s.trim().toUpperCase();
+}
+
+/**
+ * Build the `ThemeMembership` matcher from the owner-authored config. Symbols are matched in the holdings
+ * decoder's canonical form (trimmed, uppercase) on both sides, so a lowercase or whitespace-padded ticker in
+ * the owner's file still identifies the constituent (Codex P1, round 4: exact matching silently dropped the
+ * entry, and a restricted issuer's weight read as zero). Entity ids stay exact - they are owner-defined
+ * identifiers, not exchange tickers.
+ */
 export function themeMembershipOf(cfg: ThemeMembershipConfig): ThemeMembership {
   const bySymbol = new Map<string, Set<string>>();
   const byEntity = new Map<string, Set<string>>();
@@ -29,13 +40,13 @@ export function themeMembershipOf(cfg: ThemeMembershipConfig): ThemeMembership {
     map.set(key, set);
   };
   for (const issuer of cfg.issuers) {
-    for (const s of issuer.symbols) add(bySymbol, s, issuer.themes);
+    for (const s of issuer.symbols) add(bySymbol, canonicalSymbol(s), issuer.themes);
     if (issuer.entityId !== undefined) add(byEntity, issuer.entityId, issuer.themes);
   }
   return (constituent) => {
     // Union of symbol and entity-id matches: a constituent matching several entries carries every theme any
     // of them names, so an incomplete alias list can only under-identify one entry, never erase another's.
-    const themes = new Set<string>(bySymbol.get(constituent.symbol) ?? []);
+    const themes = new Set<string>(bySymbol.get(canonicalSymbol(constituent.symbol)) ?? []);
     if (constituent.entityId !== undefined) for (const t of byEntity.get(constituent.entityId) ?? []) themes.add(t);
     return [...themes].sort();
   };
