@@ -57,6 +57,15 @@ describe("themeMembershipOf", () => {
 });
 
 describe("ThemeMembershipConfigSchema", () => {
+  it("rejects a symbol that canonicalizes to an invalid ticker - an unreachable entry is not coverage (Codex P1, round 5)", () => {
+    const base = { asOf: "2026-09-01", maxAggregateThemeWeightPct: "0.10", maxHoldingsAgeDays: 7 };
+    for (const bad of [" ", "1BAD", "TOOLONGTICKER", "BA$D"]) {
+      expect(() => ThemeMembershipConfigSchema.parse({ ...base, issuers: [{ symbols: [bad], themes: ["soybean_processing"] }] })).toThrow();
+    }
+    // The canonicalizable forms the decoder can emit still parse.
+    expect(() => ThemeMembershipConfigSchema.parse({ ...base, issuers: [{ symbols: [" brk.b "], themes: ["soybean_processing"] }] })).not.toThrow();
+  });
+
   it("rejects an omitted issuers list - missing owner content is not an empty policy (Codex P1)", () => {
     expect(() => ThemeMembershipConfigSchema.parse({ asOf: "2026-09-01", maxAggregateThemeWeightPct: "0.10", maxHoldingsAgeDays: 7 })).toThrow();
   });

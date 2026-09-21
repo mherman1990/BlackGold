@@ -385,7 +385,18 @@ export const ThemeMembershipConfigSchema = z.object({
   issuers: z
     .array(
       z.object({
-        symbols: z.array(z.string().min(1)).min(1),
+        // Must canonicalize (trim + uppercase) to a ticker the SSGA holdings decoder can emit
+        // (`TICKER_RE` in data/adapters/ssga-holdings.ts, kept in sync here): a symbol the decoder can never
+        // produce is an unreachable membership entry whose themes would still count as covered, silently
+        // dropping the restricted issuer's weight (Codex P1, round 5).
+        symbols: z
+          .array(
+            z
+              .string()
+              .min(1)
+              .refine((v) => /^[A-Z][A-Z.-]{0,9}$/.test(v.trim().toUpperCase()), "must canonicalize to a valid ticker (letters, dots, dashes; max 10 chars)"),
+          )
+          .min(1),
         entityId: z.string().min(1).optional(),
         themes: z.array(z.string().min(1)).min(1),
       }),
