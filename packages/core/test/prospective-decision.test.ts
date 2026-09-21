@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { fileURLToPath } from "node:url";
 import { ONE, ZERO } from "@blackgold/shared";
-import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
+import { type Charter } from "../src/strategy/charter.ts";
 import { backtestParamsFromCharter, costsFromCharter, runBacktest, type BacktestInput } from "../src/research/backtest.ts";
 import { deterministicTargetBook, passiveTargetBook, prospectiveTargetBooks, type ArmTargetWeight } from "../src/decision/prospective.ts";
-import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
+import { buildMarket, fixtureCharter, D, N, type PricePath } from "./strategy-fixture.ts";
 
 // A charter with short feature windows so a few hundred fixture sessions exercise the same code the registered
 // 252/200/63 windows do (mirrors research-backtest.test.ts). Only window lengths change.
 function shortCharter(): Charter {
-  const base = loadCharterFile(fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url))).charter;
-  const c = structuredClone(base);
+  const c = fixtureCharter();
   c.universe.risk_etfs = ["VTI", "QQQ", "IWM", "VTV", "VUG", "XLK", "XLV", "XLU"];
   c.universe.conditional = [];
   c.universe.look_through_flagged = [];
@@ -32,29 +30,56 @@ const PATHS: PricePath[] = [
   { entityId: "SPY", start: N("500"), perSession: N("1.0010"), volumeShares: 6_000_000n, wobble: N("0.003") },
 ];
 
-function fixture() {
-  const charter = shortCharter();
-  const market = buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-06-30") });
-  const input: BacktestInput = {
-    charter,
-    charterHash: "sha256:" + "0".repeat(64),
-    pit: market.pit,
-    calendar: market.calendar,
-    from: D("2026-03-02"),
-    to: D("2026-06-30"),
-    initialCash: N("100000"),
-    costs: costsFromCharter(charter, "base"),
-    params: backtestParamsFromCharter(charter),
-  };
-  return { charter, market, input };
+/**
+ * The market, charter and backtest every case here compares against, built once.
+ *
+ * Each of these four tests reads only `decisions.at(0)`, and each was rebuilding the market and running a
+ * four-month backtest to get it. The market is read-only on this path (`runBacktest`, `deterministicTargetBook`
+ * and `passiveTargetBook` all take a `ReadOnlyPointInTime`), so sharing it cannot couple the cases, and the
+ * window now stops a fortnight after the backtest's `from` - far enough to produce that first decision,
+ * with the feature windows warming up over January and February as before.
+ */
+type Fixture = { charter: Charter; market: ReturnType<typeof buildMarket>; input: BacktestInput };
+let built: Fixture | undefined;
+
+function fixture(): Fixture {
+  if (built === undefined) {
+    const charter = shortCharter();
+    const market = buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-03-13") });
+    built = {
+      charter,
+      market,
+      input: {
+        charter,
+        charterHash: "sha256:" + "0".repeat(64),
+        pit: market.pit,
+        calendar: market.calendar,
+        from: D("2026-03-02"),
+        to: D("2026-03-13"),
+        initialCash: N("100000"),
+        costs: costsFromCharter(charter, "base"),
+        params: backtestParamsFromCharter(charter),
+      },
+    };
+  }
+  return built;
 }
 
 const asPairs = (weights: ArmTargetWeight[]): [string, string][] => weights.map((w) => [w.entityId, w.weight.toFixed()]);
 
+/**
+ * The backtest's first B1 decision. Memoised alongside the fixture: `runBacktest` is pure over a read-only
+ * store, so every case in this file was computing the same decision from the same reads.
+ */
+let firstDecision: ReturnType<typeof runBacktest>["decisions"][number] | undefined;
+
 function firstBacktestDecision(input: BacktestInput) {
-  const first = runBacktest(input).decisions.at(0);
-  if (first === undefined) throw new Error("fixture produced no backtest decision");
-  return first;
+  if (firstDecision === undefined) {
+    const first = runBacktest(input).decisions.at(0);
+    if (first === undefined) throw new Error("fixture produced no backtest decision");
+    firstDecision = first;
+  }
+  return firstDecision;
 }
 
 describe("prospective deterministic target book matches the backtest (anti-drift)", () => {
@@ -67,6 +92,8 @@ describe("prospective deterministic target book matches the backtest (anti-drift
 
     expect(book.arm).toBe("B1_DETERMINISTIC");
     expect(book.anchorSession).toBe(first.anchorSession);
+    // The first decision must actually select something, or the weight comparison below is two empty lists.
+    expect(book.targetWeights.length).toBeGreaterThan(0);
     // The sealed number that matters: the target weights, byte-for-byte via decimal .toFixed().
     const backtestWeights = [...first.targets.weights]
       .map(([entityId, weight]) => ({ entityId, weight }))

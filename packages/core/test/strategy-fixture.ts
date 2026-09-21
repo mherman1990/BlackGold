@@ -1,8 +1,10 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Dec, ONE, addDays, isoDate, sha256Hex, utc, type Db, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import { NyseCalendar } from "../src/calendar/nyse.ts";
+import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
 import { openCoreDb } from "../src/db/open.ts";
 import { PointInTimeRepository } from "../src/data/pit/repository.ts";
 import { DEFAULT_BARS_SOURCE_ID } from "../src/market/series.ts";
@@ -43,6 +45,20 @@ export type FixtureMarket = {
   weeklyDecisionSessions(): IsoDate[];
   closeOf(entityId: string, session: IsoDate): Dec | undefined;
 };
+
+/**
+ * The registered charter, read and validated once, handed out as a fresh deep clone.
+ *
+ * Every heavy suite starts from this one file and then shortens its feature windows, so the YAML read and
+ * the schema parse behind `loadCharterFile` were paid dozens of times per run for a document that cannot
+ * change between two tests. Loading and validating a charter is covered by strategy-charter.test.ts; here it
+ * is fixture plumbing. The clone is what callers get, so a suite is still free to mutate its own copy.
+ */
+let parsedCharter: Charter | undefined;
+export function fixtureCharter(): Charter {
+  parsedCharter ??= loadCharterFile(fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url))).charter;
+  return structuredClone(parsedCharter);
+}
 
 export function fixtureDb(): Db {
   const dir = mkdtempSync(join(tmpdir(), "bg-strategy-"));
@@ -91,74 +107,81 @@ export function buildMarket(opts: BuildMarketOptions): FixtureMarket {
   const delay = opts.publishDelayMs ?? BARS_PUBLISH_DELAY_MS;
   const closes = new Map<string, Map<string, Dec>>();
 
-  for (const p of opts.paths) {
-    const omitted = new Set(opts.omitSessions?.[p.entityId] ?? []);
-    const perEntity = new Map<string, Dec>();
-    closes.set(p.entityId, perEntity);
-    const stale = new Set(opts.staleSessions?.[p.entityId] ?? []);
-    for (let i = 0; i < sessions.length; i++) {
-      const session = sessions[i];
-      if (session === undefined || omitted.has(session)) continue;
-      const close = pathClose(p, i);
-      perEntity.set(session, close);
-      const ratio = opts.openRatio?.[p.entityId];
-      const open = ratio === undefined ? close : close.times(ratio);
-      const bar: RawBar = {
-        symbol: p.entityId,
-        session,
-        open,
-        high: open.gt(close) ? open : close,
-        low: open.lt(close) ? open : close,
-        close,
-        volume: p.volumeShares,
-        venue: "iex",
-      };
-      const availableAt = utc(Date.parse(calendar.sessionClose(session)) + delay);
-      const obs: PointInTimeObservation<Record<string, unknown>> = {
-        sourceId: DEFAULT_BARS_SOURCE_ID,
-        sourceLocator: `${DEFAULT_BARS_SOURCE_ID}/${p.entityId}/${session}`,
-        entityId: p.entityId,
-        effectiveAt: utc(`${session}T00:00:00Z`),
-        availableAt,
-        ingestedAt,
-        rawContentHash: `sha256:${sha256Hex(`${p.entityId}:${session}:${open.toFixed()}:${close.toFixed()}`)}`,
-        adapterVersion: ADAPTER_VERSION,
-        parserVersion: ADAPTER_VERSION,
-        value: rawBarToValue(bar),
-        qualityFlags: [],
-      };
-      pit.append(obs);
-      if (stale.has(session)) {
-        pit.append(
-          corporateActionObservation(
-            { kind: "STALE_BAR", entityId: p.entityId, session, reason: "provider repeated the prior close" },
-            {
-              sourceLocator: `fixture/stale/${p.entityId}/${session}`,
-              availableAt,
-              ingestedAt,
-              rawContentHash: `sha256:${sha256Hex(`stale:${p.entityId}:${session}`)}`,
-              adapterVersion: ADAPTER_VERSION,
-              parserVersion: ADAPTER_VERSION,
-            },
-          ),
-        );
+  // One transaction for the whole seed, not one per row. `openDatabase` runs SQLite at `synchronous = FULL`,
+  // so a bare `pit.append` is its own commit and its own fsync; a six-month ten-symbol fixture is ~1250 of
+  // them and paid over a second for the durability of a temp file the test deletes. `Db.transaction` is
+  // savepoint-aware, so the repository's own per-append transaction nests inside this one and the append
+  // path under test is unchanged. Halves the build cost of every fixture market in the suite.
+  db.transaction(() => {
+    for (const p of opts.paths) {
+      const omitted = new Set(opts.omitSessions?.[p.entityId] ?? []);
+      const perEntity = new Map<string, Dec>();
+      closes.set(p.entityId, perEntity);
+      const stale = new Set(opts.staleSessions?.[p.entityId] ?? []);
+      for (let i = 0; i < sessions.length; i++) {
+        const session = sessions[i];
+        if (session === undefined || omitted.has(session)) continue;
+        const close = pathClose(p, i);
+        perEntity.set(session, close);
+        const ratio = opts.openRatio?.[p.entityId];
+        const open = ratio === undefined ? close : close.times(ratio);
+        const bar: RawBar = {
+          symbol: p.entityId,
+          session,
+          open,
+          high: open.gt(close) ? open : close,
+          low: open.lt(close) ? open : close,
+          close,
+          volume: p.volumeShares,
+          venue: "iex",
+        };
+        const availableAt = utc(Date.parse(calendar.sessionClose(session)) + delay);
+        const obs: PointInTimeObservation<Record<string, unknown>> = {
+          sourceId: DEFAULT_BARS_SOURCE_ID,
+          sourceLocator: `${DEFAULT_BARS_SOURCE_ID}/${p.entityId}/${session}`,
+          entityId: p.entityId,
+          effectiveAt: utc(`${session}T00:00:00Z`),
+          availableAt,
+          ingestedAt,
+          rawContentHash: `sha256:${sha256Hex(`${p.entityId}:${session}:${open.toFixed()}:${close.toFixed()}`)}`,
+          adapterVersion: ADAPTER_VERSION,
+          parserVersion: ADAPTER_VERSION,
+          value: rawBarToValue(bar),
+          qualityFlags: [],
+        };
+        pit.append(obs);
+        if (stale.has(session)) {
+          pit.append(
+            corporateActionObservation(
+              { kind: "STALE_BAR", entityId: p.entityId, session, reason: "provider repeated the prior close" },
+              {
+                sourceLocator: `fixture/stale/${p.entityId}/${session}`,
+                availableAt,
+                ingestedAt,
+                rawContentHash: `sha256:${sha256Hex(`stale:${p.entityId}:${session}`)}`,
+                adapterVersion: ADAPTER_VERSION,
+                parserVersion: ADAPTER_VERSION,
+              },
+            ),
+          );
+        }
       }
     }
-  }
 
-  for (const entry of opts.actions ?? []) {
-    pit.append(
-      corporateActionObservation(entry.action, {
-        sourceLocator: entry.sourceLocator ?? `fixture/action/${entry.action.kind}/${JSON.stringify(entry.action).length}`,
-        availableAt: entry.availableAt ?? utc(`${actionDate(entry.action)}T00:00:00Z`),
-        ingestedAt,
-        rawContentHash: `sha256:${sha256Hex(`action:${JSON.stringify(entry.action)}`)}`,
-        adapterVersion: ADAPTER_VERSION,
-        parserVersion: ADAPTER_VERSION,
-        ...(entry.qualityFlags === undefined ? {} : { qualityFlags: [...entry.qualityFlags] }),
-      }),
-    );
-  }
+    for (const entry of opts.actions ?? []) {
+      pit.append(
+        corporateActionObservation(entry.action, {
+          sourceLocator: entry.sourceLocator ?? `fixture/action/${entry.action.kind}/${JSON.stringify(entry.action).length}`,
+          availableAt: entry.availableAt ?? utc(`${actionDate(entry.action)}T00:00:00Z`),
+          ingestedAt,
+          rawContentHash: `sha256:${sha256Hex(`action:${JSON.stringify(entry.action)}`)}`,
+          adapterVersion: ADAPTER_VERSION,
+          parserVersion: ADAPTER_VERSION,
+          ...(entry.qualityFlags === undefined ? {} : { qualityFlags: [...entry.qualityFlags] }),
+        }),
+      );
+    }
+  });
 
   return {
     db,
