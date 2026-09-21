@@ -154,14 +154,12 @@ describe("shadow_decision job", () => {
     expect(sealedEvents(env.db)).toHaveLength(0);
   });
 
-  it("skips an arm already sealed for the instant instead of overwriting or failing the run", async () => {
-    const env = setup("SHADOW");
-    // A prior run sealed B0 for this instant (e.g. it crashed mid-loop). The instant is immutable.
+  const preSealB0 = (env: Env, charterHash: string): void => {
     appendDecisionRecord(env.db, {
       recordVersion: DECISION_RECORD_VERSION,
       strategyId: "etf-trend-vol",
       strategyVersion: "0.2.0",
-      charterHash: `sha256:${"0".repeat(64)}`,
+      charterHash,
       arm: "B0_PASSIVE",
       mode: "SHADOW",
       decisionAt: afterClose("2026-03-06", 60),
@@ -173,12 +171,30 @@ describe("shadow_decision job", () => {
       constructionVersion: 1,
       notes: [],
     });
+  };
+
+  it("skips an arm already sealed for the instant UNDER THE SAME CONTEXT instead of overwriting or failing the run", async () => {
+    const env = setup("SHADOW");
+    // A prior run of THIS charter sealed B0 for this instant (e.g. it crashed mid-loop). The instant is immutable.
+    preSealB0(env, loadCharterFile(env.charterPath).charterHash);
     await env.scheduler.tick(afterClose("2026-03-06", 150));
     expect(decisionRecordCount(env.db)).toBe(2); // the pre-sealed B0 plus the run's B1
     const ev = sealedEvents(env.db)[0];
     if (!ev) throw new Error("no sealed event");
     expect(ev.alreadySealed).toEqual(["B0_PASSIVE"]);
     expect(ev.sealed.map((s) => s.arm)).toEqual(["B1_DETERMINISTIC"]);
+  });
+
+  it("refuses to complete an arm pair when the pre-sealed arm was written under a DIFFERENT charter (Codex P2, round 7)", async () => {
+    const env = setup("SHADOW");
+    // Another writer sealed B0 under some other charter hash. Sealing B1 under the current charter would leave
+    // a "synchronized" pair whose arms describe different experiments; the run must fail and roll back instead.
+    preSealB0(env, `sha256:${"0".repeat(64)}`);
+    const outcomes = await env.scheduler.tick(afterClose("2026-03-06", 150));
+    expect(outcomes.find((o) => o.jobId === "shadow_decision")?.status).toBe("failed");
+    expect(outcomes.find((o) => o.jobId === "shadow_decision")?.error).toContain("different context");
+    expect(decisionRecordCount(env.db)).toBe(1); // only the foreign B0; the transaction rolled back, no B1
+    expect(sealedEvents(env.db)).toHaveLength(0); // and no event attributing the pair to the current charter
   });
 });
 
@@ -350,6 +366,28 @@ describe("shadow_decision job: identity and atomicity", () => {
     const ev = sealedEvents(db)[0];
     if (!ev) throw new Error("no sealed event");
     expect(ev.decisionAt).toBe(afterClose("2026-03-06", 300));
+  });
+
+  it("recovers the ORIGINATING session when the offset carries the run past later sessions' closes (Codex P2, round 7)", async () => {
+    // A schema-valid 4320-minute (3-day) decision offset: the run for Friday 2026-03-06 fires Monday evening,
+    // AFTER Monday's close. Reconstructing the session from the run time would land on Monday - a non-decision
+    // session - and silently drop the Friday decision forever. The session must be recovered by inverting the
+    // schedule (scheduledFor - jobOffset = the originating close).
+    const dir = mkdtempSync(join(tmpdir(), "bg-shadowjob-"));
+    const db = openCoreDb({ dbPath: join(dir, "s.sqlite") }).db;
+    buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-03-13"), db });
+    const charterPath = writeShadowCharter(dir, 4320);
+    registerExperimentFor(db, loadCharterFile(charterPath).charterHash);
+    writePolicyDir(dir);
+    const config = parseAppConfig({ mode: "SHADOW", shadow: { charterPath, policyDir: dir } });
+    const scheduler = new Scheduler({ db, ledger: new Ledger(db), calendar: cal, dueLookbackMs: 8 * 3_600_000, missedLookbackMs: 48 * 3_600_000 });
+    registerShadowDecisionJob(scheduler, { config, calendar: cal });
+    await scheduler.tick(afterClose("2026-03-06", 4350)); // Friday close + 4350 min = Monday 2026-03-09 evening
+    expect(decisionRecordCount(db)).toBe(2);
+    const ev = sealedEvents(db)[0];
+    if (!ev) throw new Error("no sealed event");
+    expect(ev.session).toBe("2026-03-06"); // the Friday that generated the run, not Monday
+    expect(ev.decisionAt).toBe(afterClose("2026-03-06", 4320));
   });
 
   it("seals all arms and the ledger event atomically: a failure mid-run leaves no partial records (Codex P1)", async () => {

@@ -98,7 +98,14 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       // itself refuses them, but a job must never rely on its registration site alone.
       if (!sealsProspectiveDecisions(config.mode)) return;
 
-      const session = calendar.previousSession(ctx.scheduledFor);
+      // The originating session is recovered by INVERTING the schedule, never reconstructed from the shifted
+      // timestamp (Codex P2, round 7): `scheduledFor` is exactly `sessionClose(session) + jobOffset`, so
+      // subtracting the offset lands on that close and `previousSession` (last session whose close <= instant)
+      // returns the session that generated the run. `previousSession(ctx.scheduledFor)` instead returns
+      // whatever session closed most recently before the RUN - for a schema-valid decision offset that carries
+      // the run past a later session's close (the offset is unbounded), that is the wrong session, and the
+      // weekly gate would silently drop the Friday decision forever.
+      const session = calendar.previousSession(addMs(ctx.scheduledFor, -jobOffsetMinutes * 60_000));
       if (!isWeeklyDecisionSession(calendar, session)) {
         // Not the charter's cadence: nothing to seal. Silent by design - a ledger row per non-decision session
         // would be noise; "zero missing decision records" is checked against the weekly schedule, not job runs.
@@ -220,8 +227,21 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
           sealed.push({ arm: record.arm, hash, newRiskAllowed: record.gate.newRiskAllowed });
         } catch (err) {
           if (err instanceof DecisionAlreadySealedError) {
-            // The instant is immutable: something already sealed this arm (e.g. an operator run). Record the
-            // skip and continue with the remaining arms rather than failing the whole run.
+            // The instant is immutable: something already sealed this arm (e.g. an operator run). Skipping it
+            // is safe ONLY when the existing record was sealed under the same charter and mode (Codex P2,
+            // round 7) - otherwise completing the remaining arms would leave a "synchronized" pair whose arms
+            // describe different experiments while the ledger event attributes the run to the current charter
+            // alone. A mismatch fails the whole run (the transaction rolls back: no partial pair, no event).
+            const existing = ctx.db
+              .prepare("SELECT charter_hash, mode FROM decision_records WHERE strategy_id = ? AND strategy_version = ? AND arm = ? AND decision_at = ?")
+              .get(record.strategyId, record.strategyVersion, record.arm, record.decisionAt) as { charter_hash: string; mode: string } | undefined;
+            if (existing?.charter_hash !== loaded.charterHash || existing.mode !== config.mode) {
+              throw new Error(
+                `arm ${record.arm} at ${record.decisionAt} is already sealed under a different context ` +
+                  `(charter ${existing?.charter_hash ?? "unknown"}, mode ${existing?.mode ?? "unknown"}; this run: ${loaded.charterHash}, ${config.mode}); ` +
+                  "refusing to complete a mismatched arm pair",
+              );
+            }
             alreadySealed.push(record.arm);
             continue;
           }

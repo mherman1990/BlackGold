@@ -149,8 +149,14 @@ export class Scheduler {
       }
       case "after_close":
       case "before_open": {
-        const from = addDays(dateOfInstantInZone(utc(startMs), this.calendar.timeZone), -1);
-        const to = addDays(dateOfInstantInZone(now, this.calendar.timeZone), 1);
+        // The candidate-session window must account for the offset (Codex P2, round 7): an after_close run
+        // scheduled offsetMs after its session's close originates from a session up to offsetMs BEFORE the
+        // window - a multi-day offset (e.g. a charter decision offset spanning a weekend) would otherwise
+        // never be enumerated at all. Symmetrically, a before_open run originates from a session after it.
+        const backMs = schedule.kind === "after_close" ? schedule.offsetMs : 0;
+        const fwdMs = schedule.kind === "before_open" ? schedule.offsetMs : 0;
+        const from = addDays(dateOfInstantInZone(utc(startMs - backMs), this.calendar.timeZone), -1);
+        const to = addDays(dateOfInstantInZone(utc(nowMs + fwdMs), this.calendar.timeZone), 1);
         for (const date of this.calendar.sessionDates(from, to)) {
           const t =
             schedule.kind === "after_close"
