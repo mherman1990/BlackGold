@@ -29,7 +29,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
 | Item | Value |
 |---|---|
 | Remote | `https://github.com/mherman1990/BlackGold` (public) |
-| `main` | At `cfef173` (PR #95, test-suite headroom; PR #94, D-51 step 2, merged just before it). Matt must still set `main` as the default branch and apply protection in GitHub settings — still not done as of 2026-09-20 |
+| `main` | At `e30e67b` (PR #96, the §16.1 gap-withhold repairs; PR #95, test-suite headroom, as `cfef173`; PR #94, D-51 step 2, as `17c787b`, merged just before it). Matt must still set `main` as the default branch and apply protection in GitHub settings — still not done as of 2026-09-21 |
 | Phase 1 PR | [PR #4](https://github.com/mherman1990/BlackGold/pull/4) merged to `main` 2026-09-07 12:56:35Z |
 | Phase 2 PRs | [PR #5](https://github.com/mherman1990/BlackGold/pull/5) merged 12:56:48Z into `claude/phase-01-research-kernel`, which PR #4 had already merged forward, so it never reached `main` (D-36). [PR #6](https://github.com/mherman1990/BlackGold/pull/6) carried the same tree to `main` and merged 13:24Z |
 | Phase 0 completion PR | [PR #8](https://github.com/mherman1990/BlackGold/pull/8) (release prep) merged 2026-09-07. [PR #9](https://github.com/mherman1990/BlackGold/pull/9) merged 2026-09-07 as `03bf580`: the scheduled daily ledger seal, the three guards that make automatic sealing safe, the ingest event-stamp fix, and the suite-wide test timeout |
