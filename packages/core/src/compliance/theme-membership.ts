@@ -1,6 +1,7 @@
 import { Dec, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import type { RestrictedListConfig, ThemeMembershipConfig } from "../config/schema.ts";
 import type { ReadOnlyPointInTime } from "../data/pit/types.ts";
+import type { EntityMap } from "../market/entity-map.ts";
 import { ssgaHoldingsSourceId, type SsgaHoldingsValue } from "../data/adapters/ssga-holdings.ts";
 import { lookThroughResolver, type EtfHoldings, type LookThroughParams, type ThemeMembership } from "./look-through.ts";
 
@@ -57,7 +58,25 @@ export type StoredHoldingsReadOptions = {
   decisionAt: UtcInstant;
   snapshotId?: string;
   processingDelayMs?: number;
+  /**
+   * Resolve a constituent's stable entity id from its ticker as of the holdings as-of date (Codex P1, PR
+   * #100): a holdings workbook can list an issuer under an alias or a changed symbol the owner's membership
+   * entry does not enumerate, and without the resolved identity the membership's `entityId` match is
+   * unreachable through this path - the aliased issuer would read as unrestricted. Pass
+   * {@link entityMapResolver} for the point-in-time entity map. Absent, lines match by ticker alone, which is
+   * only sound while the membership content enumerates every share class and alias itself.
+   */
+  resolveEntityId?: (symbol: string, asOf: IsoDate) => string | undefined;
 };
+
+/**
+ * Adapt the point-in-time {@link EntityMap} into {@link StoredHoldingsReadOptions.resolveEntityId}: each
+ * constituent resolves under the symbol's owner as of the holdings as-of date, using only ranges known by the
+ * decision instant (a symbol reassignment recorded later cannot reach back into this decision).
+ */
+export function entityMapResolver(map: EntityMap, decisionAt: UtcInstant): (symbol: string, asOf: IsoDate) => string | undefined {
+  return (symbol, asOf) => map.resolve(symbol, asOf, { knownAt: decisionAt });
+}
 
 /**
  * Read an ETF's newest admissible published holdings from the point-in-time store (`etf_holdings.ssga.<ETF>`,
@@ -84,10 +103,14 @@ export function storedHoldingsOf(pit: ReadOnlyPointInTime, opts: StoredHoldingsR
       }
     }
     if (best === undefined) return undefined;
+    const asOf = best.value.asOf;
     return {
       etf: best.value.etf,
-      asOf: best.value.asOf,
-      lines: best.value.lines.map((l) => ({ symbol: l.symbol, weight: new Dec(l.weight) })),
+      asOf,
+      lines: best.value.lines.map((l) => {
+        const entityId = opts.resolveEntityId?.(l.symbol, asOf);
+        return { symbol: l.symbol, ...(entityId === undefined ? {} : { entityId }), weight: new Dec(l.weight) };
+      }),
     };
   };
 }
@@ -95,18 +118,31 @@ export function storedHoldingsOf(pit: ReadOnlyPointInTime, opts: StoredHoldingsR
 /**
  * The complete wiring: point-in-time holdings + owner membership + restricted list -> the resolver
  * `ShadowDecisionContext.lookThrough` takes. Pure over its inputs; the caller (the serve job, slice 2c)
- * resolves the store, configs, and decision instant.
+ * resolves the store, configs, charter, and decision instant.
+ *
+ * `lookThroughScope` is the signed charter's `universe.look_through_flagged` - the ETFs the owner declared as
+ * carrying potential restricted-theme exposure and therefore requiring holdings look-through (Codex P1, PR
+ * #100: the store's only holdings source is SSGA, so evaluating every risk ETF against it would leave every
+ * non-SPDR member permanently `UNKNOWN_LOOK_THROUGH` and block the whole book). An ETF outside the scope
+ * resolves to `[]`: not a skipped check but the charter's own hash-covered declaration that no look-through is
+ * required for it - consuming owner policy, not authoring it. Inside the scope, unknowns stay unknown and
+ * block new risk as before.
  */
 export function storedLookThroughResolver(
   pit: ReadOnlyPointInTime,
   membership: ThemeMembershipConfig,
   restrictedList: RestrictedListConfig,
-  opts: StoredHoldingsReadOptions,
+  opts: StoredHoldingsReadOptions & {
+    /** `charter.universe.look_through_flagged`: the ETFs look-through applies to. */
+    lookThroughScope: readonly string[];
+  },
 ): (etf: string) => readonly string[] | undefined {
-  return lookThroughResolver(
+  const scope = new Set(opts.lookThroughScope);
+  const inScope = lookThroughResolver(
     storedHoldingsOf(pit, opts),
     themeMembershipOf(membership),
     lookThroughParamsOf(membership, restrictedList),
     opts.decisionAt,
   );
+  return (etf) => (scope.has(etf) ? inScope(etf) : []);
 }

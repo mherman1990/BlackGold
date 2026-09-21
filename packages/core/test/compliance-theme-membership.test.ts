@@ -6,7 +6,8 @@ import { isoDate, sha256Hex, utc, type UtcInstant } from "@blackgold/shared";
 import { PointInTimeRepository, openCoreDb } from "../src/index.ts";
 import { ssgaHoldingsSourceId, type SsgaHoldingsValue } from "../src/data/adapters/ssga-holdings.ts";
 import { ThemeMembershipConfigSchema, RestrictedListConfigSchema, type ThemeMembershipConfig, type RestrictedListConfig } from "../src/config/schema.ts";
-import { lookThroughParamsOf, storedHoldingsOf, storedLookThroughResolver, themeMembershipOf } from "../src/compliance/theme-membership.ts";
+import { entityMapResolver, lookThroughParamsOf, storedHoldingsOf, storedLookThroughResolver, themeMembershipOf } from "../src/compliance/theme-membership.ts";
+import { EntityMap } from "../src/market/entity-map.ts";
 
 const H = `sha256:${sha256Hex("holdings")}`;
 
@@ -55,9 +56,13 @@ describe("lookThroughParamsOf", () => {
 // Store-backed reads
 // ---------------------------------------------------------------------------------------------
 
-function repo(): PointInTimeRepository {
+function coreDb() {
   const dir = mkdtempSync(join(tmpdir(), "bg-theme-"));
-  return new PointInTimeRepository(openCoreDb({ dbPath: join(dir, "t.sqlite") }).db, { clock: () => Date.parse("2026-09-10T00:00:00Z") });
+  return openCoreDb({ dbPath: join(dir, "t.sqlite") }).db;
+}
+
+function repo(db = coreDb()): PointInTimeRepository {
+  return new PointInTimeRepository(db, { clock: () => Date.parse("2026-09-10T00:00:00Z") });
 }
 
 /** Append one holdings observation the way ssgaHoldingsObservations stamps it (fetch instant = availability = vintage). */
@@ -136,8 +141,9 @@ describe("storedLookThroughResolver", () => {
     ]);
     return pit;
   }
+  const SCOPE = ["XLI", "XLP", "XLE"]; // the charter's look_through_flagged set for these fixtures
   const resolve = (pit: PointInTimeRepository, at: UtcInstant) =>
-    storedLookThroughResolver(pit, MEMBERSHIP, RESTRICTED, { decisionAt: at, processingDelayMs: 0 });
+    storedLookThroughResolver(pit, MEMBERSHIP, RESTRICTED, { decisionAt: at, processingDelayMs: 0, lookThroughScope: SCOPE });
 
   it("blocks an ETF over the aggregate threshold with its present themes, clears one within it, fails closed on no holdings", () => {
     const pit = seeded();
@@ -157,8 +163,37 @@ describe("storedLookThroughResolver", () => {
   it("counts only themes on the restricted list", () => {
     const pit = seeded();
     const narrowed = RestrictedListConfigSchema.parse({ asOf: "2026-09-01", themes: ["crop_inputs"] });
-    const lookThrough = storedLookThroughResolver(pit, MEMBERSHIP, narrowed, { decisionAt: DECISION_AT, processingDelayMs: 0 });
+    const lookThrough = storedLookThroughResolver(pit, MEMBERSHIP, narrowed, { decisionAt: DECISION_AT, processingDelayMs: 0, lookThroughScope: SCOPE });
     // XLI's exposure is soybean_processing, which is off the list: aggregate 0 -> admissible.
     expect(lookThrough("XLI")).toEqual([]);
+  });
+
+  it("clears an ETF outside the charter's look_through_flagged scope without a holdings read (Codex P1)", () => {
+    const pit = seeded();
+    const lookThrough = resolve(pit, DECISION_AT);
+    // VTI is a charter risk ETF with no SSGA holdings source; the signed charter does not flag it for
+    // look-through, so it clears rather than blocking the whole book as UNKNOWN_LOOK_THROUGH...
+    expect(lookThrough("VTI")).toEqual([]);
+    // ...while a FLAGGED ETF with no stored holdings still fails closed - the scope never weakens in-scope checks.
+    expect(lookThrough("XLE")).toBeUndefined();
+  });
+
+  it("matches an aliased constituent through the point-in-time entity map (Codex P1)", () => {
+    const db = coreDb();
+    const pit = repo(db);
+    const map = new EntityMap(db, { clock: () => Date.parse("2026-09-10T00:00:00Z") });
+    // The workbook lists the restricted issuer under an alias the membership config does not enumerate;
+    // only the entity map knows PROCX belonged to PROC_CORP on the holdings as-of date.
+    map.register({ symbol: "PROCX", entityId: "PROC_CORP", effectiveFrom: isoDate("2026-01-01"), source: "test" });
+    appendHoldings(pit, "XLI", "2026-09-05", utc("2026-09-06T01:00:00Z"), [
+      { symbol: "PROCX", weight: "0.14" }, // over the 0.10 threshold, but only via the resolved entity id
+      { symbol: "CLEAN", weight: "0.86" },
+    ]);
+    const base = { decisionAt: DECISION_AT, processingDelayMs: 0, lookThroughScope: SCOPE } as const;
+    // Without identity resolution the alias reads as unrestricted (the documented ticker-only limitation)...
+    expect(storedLookThroughResolver(pit, MEMBERSHIP, RESTRICTED, base)("XLI")).toEqual([]);
+    // ...with the entity map wired, the aliased issuer is caught and the ETF blocks.
+    const withMap = storedLookThroughResolver(pit, MEMBERSHIP, RESTRICTED, { ...base, resolveEntityId: entityMapResolver(map, DECISION_AT) });
+    expect(withMap("XLI")).toEqual(["soybean_processing"]);
   });
 });
