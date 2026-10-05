@@ -65,7 +65,7 @@ describe("charter.yaml", () => {
     expect(c.pass_fail).toMatchObject({ primary_threshold: "0.10", bootstrap_block_sessions: 21, max_drawdown_ratio: "0.75", minimum_independent_decisions: 100 });
   });
 
-  it("carries the owner's 0.3.0 answers (D-55) into the fields the code executes", () => {
+  it("carries the owner's 0.3.0 answers (D-56) into the fields the code executes", () => {
     // The OD resolutions are prose a person reads; these fields are what the aggregate actually acts on. A
     // resolution with no executable counterpart would be a decision the code silently ignores.
     const c = loaded();
@@ -78,7 +78,7 @@ describe("charter.yaml", () => {
     expect(c.pass_fail.minimum_independent_decisions).toBe(100); // OD-8
     expect(c.benchmarks.secondary_2_readings).toEqual({ rescale: "WEEKLY_AT_DECISION_INSTANTS", ex_date_rebalance_income: "CASH_REALLOCATED_AT_OPEN" }); // OD-9
     expect(c.component_versions.features).toBe(2);
-    expect(c.approval.approval_ref).toBe("docs/DECISIONS.md#D-55");
+    expect(c.approval.approval_ref).toBe("docs/DECISIONS.md#D-56");
   });
 
   it("declares a 72-member sensitivity grid containing the registered point", () => {

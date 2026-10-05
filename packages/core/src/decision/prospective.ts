@@ -5,6 +5,7 @@ import { computeFeatures, featureParamsFromCharter } from "../strategy/features.
 import { candidateParamsFromCharter, selectCandidates } from "../strategy/candidates.ts";
 import { constructTargets, sizingParamsFromCharter } from "../strategy/construct.ts";
 import { admittedRiskEtfs, type Charter } from "../strategy/charter.ts";
+import type { LiquidityFacts } from "../risk/liquidity.ts";
 
 /**
  * Per-arm deterministic target book at one prospective decision instant (D-53 slice 2).
@@ -44,6 +45,12 @@ export type ArmTargetBook = {
   targetWeights: ArmTargetWeight[];
   /** `1 - sum(targetWeights)`, held in cash. */
   cashWeight: Dec;
+  /**
+   * Liquidity facts for each target line, from the same features (and so the same knowledge-scoped anchor) that
+   * sized it: 20-session dollar ADV and unadjusted close, both real USD from raw bars (D-55). The decision gate
+   * checks them for every holding taking new risk. Empty for the passive comparator, whose gate is halt-only.
+   */
+  liquidity: ReadonlyMap<string, LiquidityFacts>;
   labels: string[];
 };
 
@@ -83,8 +90,24 @@ export function deterministicTargetBook(charter: Charter, deps: DecisionEngineDe
   }
   const targets = constructTargets({ selected: candidates.selected, volatilities: vols, covariance: fs.covariance, params: sizingParamsFromCharter(charter) });
 
+  const liquidity = new Map<string, LiquidityFacts>();
+  for (const id of targets.weights.keys()) {
+    const f = fs.features.get(id);
+    liquidity.set(id, { advUsd: f?.adv, price: f?.px });
+  }
+
   const labels = [...new Set([...fs.labels, ...candidates.labels])].sort();
-  return { arm: "B1_DETERMINISTIC", decisionAt, anchorSession: fs.anchorSession, anchorFromData: fs.anchorFromData, cashAtAnchor: fs.cashAtAnchor, targetWeights: sortedByEntity(targets.weights), cashWeight: targets.cashWeight, labels };
+  return {
+    arm: "B1_DETERMINISTIC",
+    decisionAt,
+    anchorSession: fs.anchorSession,
+    anchorFromData: fs.anchorFromData,
+    cashAtAnchor: fs.cashAtAnchor,
+    targetWeights: sortedByEntity(targets.weights),
+    cashWeight: targets.cashWeight,
+    liquidity,
+    labels,
+  };
 }
 
 /**
@@ -101,6 +124,7 @@ export function passiveTargetBook(charter: Charter, deps: DecisionEngineDeps, de
     cashAtAnchor: true, // likewise: the passive comparator has no cash hurdle to price
     targetWeights: [{ entityId: charter.benchmarks.primary, weight: ONE }],
     cashWeight: ZERO,
+    liquidity: new Map(),
     labels: [],
   };
 }

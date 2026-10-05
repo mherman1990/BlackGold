@@ -263,6 +263,19 @@ describe("shadowDecisionRecords: gate composition", () => {
     expect(b1?.gate.newRiskAllowed).toBe(false);
     expect(b1?.gate.blockedBy.some((r) => r.includes("SINGLE_ETF_WEIGHT"))).toBe(true);
   });
+
+  it("B1 is blocked, and B0 is not, when a liquidity floor binds every new line (liquidity is wired into the gate, D-55)", () => {
+    const { charter } = fixture();
+    const risk = { ...relaxedRisk(), liquidity: { ...relaxedRisk().liquidity, minPriceUsd: "100000" } };
+    const [b0, b1] = shadowDecisionRecords(charter, baseContext({ lookThrough: () => [], risk }));
+    expect(b0?.gate.newRiskAllowed).toBe(true);
+    expect(b1?.gate.newRiskAllowed).toBe(false);
+    const increasing = b1?.gate.increasedRisk ?? [];
+    expect(increasing.length).toBeGreaterThan(0);
+    expect(b1?.gate.blockedBy).toHaveLength(increasing.length);
+    for (const [i, id] of increasing.entries()) expect(b1?.gate.blockedBy[i]).toMatch(new RegExp(`^liquidity MIN_PRICE: ${id} price \\S+ USD is below minPriceUsd 100000$`));
+    // Control: at the shipped floors the same book clears (the "B1 clears" case above), so the block is the floor.
+  });
 });
 
 describe("shadowDecisionRecords: persistence", () => {

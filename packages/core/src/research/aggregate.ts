@@ -36,7 +36,7 @@ import type { SplitKind } from "./walkforward.ts";
  *    and the error does not cancel between the strategy and its comparator.
  *
  * It also reads F2 at the same scope, because charter 0.3.0 makes F2 a co-gate on section 17's REGISTERED ->
- * ACTIVE transition (`pass_fail.promotion_co_gates`, D-55), and reports which of section 17's quantitative
+ * ACTIVE transition (`pass_fail.promotion_co_gates`, D-56), and reports which of section 17's quantitative
  * conditions the pooled set meets. The owner's written acceptance is the other condition, and it is never
  * computed.
  *
@@ -163,7 +163,7 @@ export type AggregateSecondary2 = {
  * times the primary benchmark's maximum drawdown".
  *
  * Each window is backtested from its own start, so "the" maximum drawdown across nine windows has to be
- * defined. Charter 0.3.0 defines it on the **chain-linked curve** (owner's choice, D-55): each split's levels
+ * defined. Charter 0.3.0 defines it on the **chain-linked curve** (owner's choice, D-56): each split's levels
  * rescaled to start where the previous split ended, for the candidate and for the primary benchmark alike.
  * That is the construction the second prong already uses for total returns, and unlike a worst-single-window
  * reading it catches a drawdown that runs across a split boundary.
@@ -274,7 +274,7 @@ export class AggregateScopeError extends Error {
  *
  * Both are implementations of a charter silence rather than of a charter instruction, which is the D-32
  * shape: Claude Code implemented a reading, and the owner confirms or overrules it before the number is
- * treated as decisive. The owner confirmed both on 2026-10-05 (D-55), and a charter that declares them
+ * treated as decisive. The owner confirmed both on 2026-10-05 (D-56), and a charter that declares them
  * (`benchmarks.secondary_2_readings`, 0.3.0) no longer carries these caveats. A charter that does not - 0.2.0
  * - still does, because the confirmation is part of the version that records it.
  *

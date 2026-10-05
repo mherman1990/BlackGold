@@ -21,9 +21,10 @@ import { classifyCandidateFactors } from "../strategy/factors.ts";
  * rejected), per-instrument weight, open-position count (the stricter of the risk.yaml and charter caps),
  * gross/net exposure, the cash floor, sector concentration, and correlated-cluster weight and membership.
  * Factor concentration (the broad
- * `market` tag is on every holding and needs a policy decision on which tags are cap-bearing), theme and
- * liquidity limits, order-level notional/quantity/turnover, and the per-position initial-risk budget are
- * deferred to follow-up limit engines that need order, price, or theme data this check does not take.
+ * `market` tag is on every holding and needs a policy decision on which tags are cap-bearing) and theme limits
+ * are deferred. Liquidity is `liquidity.ts` (composed into the decision gate) and order-level limits are
+ * `orders.ts` (D-55). The per-position initial-risk budget is not built: it is measured to an approved stop,
+ * and the charter has none.
  */
 
 export type LimitViolation = { code: string; detail: string };

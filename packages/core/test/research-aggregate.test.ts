@@ -29,7 +29,7 @@ function charter(mut: (c: Charter) => void = () => undefined): Charter {
   return c;
 }
 
-/** What charter 0.3.0 adds to the aggregate's inputs (D-55), on top of the small-minimum fixture charter. */
+/** What charter 0.3.0 adds to the aggregate's inputs (D-56), on top of the small-minimum fixture charter. */
 const V0_3_0 = (c: Charter): void => {
   c.pass_fail.minimum_independent_decisions = 2;
   c.pass_fail.promotion_co_gates = ["F2"];
@@ -557,7 +557,7 @@ describe("aggregateWalkForward: hash", () => {
   });
 });
 
-describe("aggregateWalkForward: F2 on the chain-linked curves (charter 0.3.0, D-55)", () => {
+describe("aggregateWalkForward: F2 on the chain-linked curves (charter 0.3.0, D-56)", () => {
   // Chosen so the chain-linked reading the owner picked and the worst-single-window alternative disagree:
   //   candidate  a: 1 -> 0.85   b: 1 -> 0.85   chain-linked -27.75%   worst window -15%
   //   primary    a: 1 -> 0.75   b: flat        chain-linked -25%      worst window -25%

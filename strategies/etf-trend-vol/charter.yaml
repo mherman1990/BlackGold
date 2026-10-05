@@ -6,7 +6,7 @@
 #
 # 0.3.0 is the one-batch cut the 2026-09-21 decision packet called for: every charter question that would
 # otherwise reset the prospective clock after registration, settled together before it. The owner answered
-# each on 2026-10-05; the answers are recorded as OD-5..OD-10 below and in docs/DECISIONS.md#D-55, and become
+# each on 2026-10-05; the answers are recorded as OD-5..OD-10 below and in docs/DECISIONS.md#D-56, and become
 # binding when he signs. In short: the Sharpe-difference primary metric is KEPT, and F2 becomes a co-gate on
 # section 17's REGISTERED -> ACTIVE step, read on chain-linked curves (OD-5, OD-6); a failed primary with
 # Secondary 2 beaten goes to owner review and never to ACTIVE (OD-7); section 14.3's minimum is restated as
@@ -40,8 +40,8 @@ approval:
   approved_by: null
   approval_date: null
   code_commit: null
-  approval_ref: "docs/DECISIONS.md#D-55"
-  decision_refs: [D-08, D-09, D-10, D-15, D-19, D-24, D-50, D-51, D-55]
+  approval_ref: "docs/DECISIONS.md#D-56"
+  decision_refs: [D-08, D-09, D-10, D-15, D-19, D-24, D-50, D-51, D-56]
   conditions: []
   # ALPHA_CHARTER.md section 24. Each needs a written resolution before registration.
   open_decisions:
@@ -83,7 +83,7 @@ approval:
         ADV cap no longer reads artificially low - ADV participation binds on full-tape volume, the intended
         behavior. This is a new strategy version (0.2.0) and does not inherit 0.1.0's evidence. Owner decision
         recorded on signing (D-50).
-    # OD-5..OD-10: the 0.3.0 bundle. Each resolution records the owner's answer of 2026-10-05 (D-55); the
+    # OD-5..OD-10: the 0.3.0 bundle. Each resolution records the owner's answer of 2026-10-05 (D-56); the
     # signature on this block is what makes them binding.
     - id: OD-5
       question: "B-1 / D-51: is the Sharpe-difference primary metric the right promotion gate for a strategy whose stated purpose is drawdown reduction?"
@@ -95,7 +95,7 @@ approval:
         metric, never instead of it: a conjunction can only make promotion harder, so this is not choosing the
         metric the strategy passes, and F2 and its 0.75 ratio were already registered (section 13 names 0.75 as
         the target), so no new threshold is introduced. Encoded as pass_fail.promotion_co_gates [F2]. Section
-        16.1's rejection rule is unchanged. Owner decision, 2026-10-05 (D-55).
+        16.1's rejection rule is unchanged. Owner decision, 2026-10-05 (D-56).
     - id: OD-6
       question: "F2 at the aggregate scope: each walk-forward window restarts from cash, so which maximum drawdown does the co-gate read?"
       resolution: >-
@@ -104,13 +104,13 @@ approval:
         The same construction the second section 16.1 prong uses for total returns, and unlike a worst-window
         reading it catches a drawdown that runs across a split boundary. A data gap in a held instrument
         withholds the co-gate in both directions, the owner's gap rule for both 16.1 prongs (D-51). Owner
-        decision, 2026-10-05 (D-55).
+        decision, 2026-10-05 (D-56).
     - id: OD-7
       question: "Sections 16.1 and 17 disagree when the primary metric fails and Secondary 2 is beaten. Which governs?"
       resolution: >-
         Section 16.1 governs rejection and section 17 governs promotion. The mixed case goes to owner review,
         and that review may end in REJECTED or in a new charter version - never in ACTIVE on a failed primary
-        metric. Encoded as pass_fail.mixed_verdict OWNER_REVIEW_NEVER_ACTIVE. Owner decision, 2026-10-05 (D-55).
+        metric. Encoded as pass_fail.mixed_verdict OWNER_REVIEW_NEVER_ACTIVE. Owner decision, 2026-10-05 (D-56).
     - id: OD-8
       question: "Section 14.3 sets a minimum of 150 monthly-equivalent out-of-sample blocks; the registered walk-forward schedule reaches 102. Which is wrong?"
       resolution: >-
@@ -123,7 +123,7 @@ approval:
         after the 2026-09-13 design run showed how the strategy did there. The clause requiring the set to span
         two VTI drawdowns of 20% or more becomes a disclosure, not a precondition: 2007-2009 falls in the first
         training window, 2011 and 2018 Q4 are each near the 20% line (unverified on the store), and 2020 and 2022
-        are in the sealed holdout. Owner decision, 2026-10-05 (D-55).
+        are in the sealed holdout. Owner decision, 2026-10-05 (D-56).
     - id: OD-9
       question: "Section 11 is silent on Secondary 2's re-scaling cadence and on ex-date income on a rebalance session. Confirm or overrule the implemented readings?"
       resolution: >-
@@ -131,14 +131,14 @@ approval:
         a session that is both an ex-date and a rebalance, the distribution is cash to the pre-open holder and is
         reallocated at the open with the rebalance. Encoded as benchmarks.secondary_2_readings, which also
         removes the open-reading caveat from every section 16.1 verdict under this version. Owner decision,
-        2026-10-05 (D-55).
+        2026-10-05 (D-56).
     - id: OD-10
       question: "Do prospective decisions count toward section 17's 26-week SHADOW -> PAPER and section 14.3's 52-week minimums from experiment registration, or from ACTIVE acceptance?"
       resolution: >-
         From experiment registration, as section 14.2 already says: every weekly decision sealed before the next
         open from registration onward counts. The decisions are sealed either way, so the stricter reading would
         delay evidence without adding safety; promotion past SHADOW still requires ACTIVE under section 17.
-        Owner decision, 2026-10-05 (D-55).
+        Owner decision, 2026-10-05 (D-56).
 
 universe:
   universe_id: etf_trend_vol_v0

@@ -447,7 +447,7 @@ describe("runEvaluation", () => {
     if (!agg.citableAsEvidence) expect(agg.citabilityReasons.length).toBeGreaterThan(0);
   });
 
-  // Charter 0.3.0 makes F2 a promotion co-gate on the chain-linked curves (D-55). A chain-linked curve holds
+  // Charter 0.3.0 makes F2 a promotion co-gate on the chain-linked curves (D-56). A chain-linked curve holds
   // each window's own curve, rescaled, so its drawdown is at least as deep as the deepest window's - for the
   // candidate and the primary benchmark separately. That pins the wiring: the aggregate reads the same two
   // level series the per-split F2 reads, each to its own side.
