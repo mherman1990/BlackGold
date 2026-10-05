@@ -2,6 +2,64 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.13
+
+Puts the D-53 shadow track and the corrected research evaluation on the Pi. Everything merged to `main` since
+0.1.12 (PRs #81-#104) ships here; nothing new is switched on by the update.
+
+**What changed**
+
+- **Prospective shadow track (D-53 slices 1, 2a, 2b, 2c, 3a-1, 3a-2, 3a-3, 3b).** Two new `after_close` serve
+  jobs: `shadow_decision` seals the weekly target book for both arms (B0 passive, B1 deterministic) through the
+  halt + limits + compliance gate, and `shadow_fill` fills each sealed decision with the internal simulator
+  against a synthetic shadow book, then reconciles the ledgers and records breaks as `shadow.incident` events.
+  No broker contact, no account, no real dollars. **Both jobs stay unregistered on this release's compose**:
+  they need `BLACKGOLD_MODE` set to `SHADOW` or `PAPER` *and* `BLACKGOLD_SHADOW_CHARTER` set, and the compose
+  ships `RESEARCH` with no charter. Even when enabled, sealing waits for a registered rung-1 experiment for the
+  exact charter hash, and the baked-in policy files (`/app/config/examples`) are fake and unapproved, so B1 new
+  risk fails closed until your signed restricted list and theme membership replace them.
+- **ETF theme look-through.** `ingest ssga-holdings --etfs XLI,XLP` fetches SSGA SPDR daily-holdings workbooks
+  into the point-in-time store (`etf_holdings.ssga.<ETF>`). Manual only; no schedule runs it.
+- **Research evaluation is corrected and extended.** `research evaluate` now computes ALPHA_CHARTER §13's
+  primary metric as a **difference of Sharpe ratios** (0.1.12 computed an information ratio), builds §11's
+  Secondary 2 (VTI vol-targeted to 10%, remainder BIL), and returns one §16.1 verdict over the pooled
+  walk-forward splits (`REJECT | OWNER_REVIEW | UNMEASURED`). A data gap in a held ETF withholds both prongs.
+- **Total-return double-count fixed in features.** A dividend present from both a reconciled file and the
+  Tiingo feed no longer counts twice in momentum, trend, and volatility. Inert on today's Pi store (no reconciled
+  file exists yet); `FEATURES_VERSION` is now 2 while the signed charter still declares `features: 1`, which is
+  an item for the 0.3.0 charter cut.
+- **Config.** New `theme-membership.yaml` schema (fake example tracked). `restricted-list.yaml` and
+  `theme-membership.yaml` carry `approvedBy`/`approvedAt` like `risk.yaml`; an unapproved file fails closed in
+  the shadow job. The emitted JSON schemas under `config/schema/` now reject negative decimals and out-of-range
+  ratios, matching what the runtime loader already refused.
+
+**Why it matters**
+
+- The shadow runner has to be on the Pi before the prospective clock can start. Shipping it now, inert, means
+  enabling it later is a compose change rather than a release on the critical path.
+- **Do not compare a 0.1.12 evaluation number with a 0.1.13 one.** `REPORT_VERSION` 1 -> 5, `EVALUATION_VERSION`
+  1 -> 4, `BACKTEST_VERSION` 1 -> 5, `FEATURES_VERSION` 1 -> 2. Every primary-metric figure from the 2026-09-13
+  runs is an information ratio and is superseded. Those runs were non-evidential anyway.
+
+**Required actions**
+
+- Take a verified backup (`backup`, then `verify-backup`), then update Black Gold in umbrelOS. No `secrets.env`
+  change is needed. Leave the mode at `RESEARCH`: turning the shadow track on is a separate owner decision, best
+  timed with experiment registration on the signed 0.3.0 charter.
+
+**Risk / migration / rollback**
+
+- Migrations `0008_decision_records` and `0009_shadow_fill_records` run on first start. Both are additive (two
+  new append-only tables, no change to an existing table or applied migration), and in `RESEARCH` mode nothing
+  writes to them.
+- One new outbound host, `www.ssga.com`, on the read-only ingest allowlist, reached only by the manual
+  `ingest ssga-holdings` command. One new runtime dependency, `read-excel-file` (read-only `.xlsx` decoder).
+- No live path, broker credential, gateway, mode, risk-limit, or authorization change. Live trading remains
+  disabled by construction.
+- Rollback: reinstall 0.1.12. The migration runner applies only the migrations it knows and ignores unknown
+  `schema_migrations` rows, and 0.1.12's seven migrations are byte-identical here, so 0.1.12 opens a migrated
+  database unchanged and leaves the two new tables untouched.
+
 ## 0.1.12
 
 Lets the nightly auto-ingest actually be turned on where the app-data `.env` is not injected (umbrelOS 1.x).

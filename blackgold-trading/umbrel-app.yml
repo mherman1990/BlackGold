@@ -2,7 +2,7 @@ manifestVersion: 1
 id: blackgold-trading
 category: finance
 name: Black Gold
-version: "0.1.12"
+version: "0.1.13"
 tagline: Evidence-first research and controlled execution for one ring-fenced sleeve
 icon: https://raw.githubusercontent.com/mherman1990/BlackGold/main/blackgold-trading/icon.svg
 description: >-
@@ -12,26 +12,20 @@ description: >-
   every number and every hard boundary. Live trading is absent by construction
   in this release. Not investment advice.
 releaseNotes: >-
-  0.1.0 covers Phases 0 through 2. Foundation: configuration schemas, SQLite
-  ledger with hash-chained events and daily seals, exchange calendar computed by
-  rule, deterministic scheduler, synthetic broker with fault injection, health
-  endpoint, release pipeline. Research kernel: point-in-time observation store
-  enforcing the decision-time rule, content-addressed artifact store, read-only
-  allowlisted adapters for SEC EDGAR, FRED/ALFRED, CFTC COT and daily market
-  bars, raw and total-return price series, date-effective universe snapshots,
-  experiment registry with a once-only holdout, decimal NAV accounting,
-  conservative fill simulator, benchmark engine. Deterministic strategy layer:
-  an executable Alpha Charter with a code-enforced approval gate, feature and
-  candidate engines, portfolio construction, leakage audit, coverage report,
-  walk-forward splits, robustness harness and result report.
+  0.1.13 ships the prospective shadow track: sealed weekly decision records,
+  simulated fills against a synthetic book, and a ledger reconciler, plus ETF
+  theme look-through from published SSGA holdings. All of it stays off on this
+  release's settings (research mode, no shadow charter configured). Research
+  evaluation now computes the charter's registered primary metric as a
+  difference of Sharpe ratios, builds the vol-targeted Secondary 2 comparator,
+  and returns one verdict over the pooled walk-forward splits; numbers from
+  0.1.12 are not comparable. Two additive database migrations run on first
+  start. Take a backup before updating; see CHANGELOG.md.
 
   What this release does NOT do. Live trading is absent by construction and no
-  broker credential exists anywhere in the project. No market data has been
-  ingested and no strategy result has been computed: the first Alpha Charter is
-  still a draft, and the code refuses to register an experiment against an
-  unapproved charter. The only interface is a read-only plain-text status and
-  health page on port 8479; reporting views arrive in a later phase. Not
-  investment advice.
+  broker credential exists anywhere in the project. The shadow jobs touch no
+  broker, account, or real dollar. No experiment is registered and no result is
+  citable as evidence. Not investment advice.
 developer: Matt Herman
 website: https://github.com/mherman1990/BlackGold
 dependencies: []
