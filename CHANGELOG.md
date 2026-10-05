@@ -51,6 +51,10 @@ Puts the D-53 shadow track and the corrected research evaluation on the Pi. Ever
 
 **Required actions**
 
+- **Wait until `main`'s compose pins 0.1.13 by digest** (`ghcr.io/mherman1990/blackgold:0.1.13@sha256:…`)
+  before refreshing the store. The release commit can only name the bare tag, because the digest does not
+  exist until `release.yml` publishes from `main`; a follow-up PR pins it. Until then a store refresh would
+  resolve a mutable tag.
 - Take a verified backup (`backup`, then `verify-backup`), then update Black Gold in umbrelOS. No `secrets.env`
   change is needed. Leave the mode at `RESEARCH`: turning the shadow track on is a separate owner decision, best
   timed with experiment registration on the signed 0.3.0 charter.
