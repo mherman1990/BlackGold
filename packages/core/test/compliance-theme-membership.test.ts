@@ -270,4 +270,21 @@ describe("storedLookThroughResolver", () => {
     const withMap = storedLookThroughResolver(pit, MEMBERSHIP, RESTRICTED, { ...base, resolveEntityId: entityMapResolver(map, DECISION_AT) });
     expect(withMap("XLI")).toEqual(["soybean_processing"]);
   });
+
+  it("resolves a PRE-CHANGE holdings snapshot through a ticker history materialized from the action alone (Codex P1, round 11)", () => {
+    const db = coreDb();
+    const pit = repo(db);
+    const map = new EntityMap(db, { clock: () => Date.parse("2026-09-10T00:00:00Z") });
+    // The ONLY identity evidence is the SYMBOL_CHANGE itself (no seed): the still-fresh holdings snapshot is
+    // dated BEFORE the change and lists the old ticker. The materialized range must cover that as-of date, or
+    // the restricted issuer contributes no theme weight and the ETF wrongly clears look-through.
+    map.applyAction({ kind: "SYMBOL_CHANGE", entityId: "PROC_CORP", oldSymbol: "PROCX", newSymbol: "PROC", effective: isoDate("2026-09-04") }, "corporate_action.SYMBOL_CHANGE", utc("2026-09-04T00:15:00Z"));
+    appendHoldings(pit, "XLI", "2026-09-01", utc("2026-09-02T01:00:00Z"), [
+      { symbol: "PROCX", weight: "0.14" },
+      { symbol: "CLEAN", weight: "0.86" },
+    ]);
+    const base = { decisionAt: DECISION_AT, processingDelayMs: 0, lookThroughScope: SCOPE } as const;
+    const withMap = storedLookThroughResolver(pit, MEMBERSHIP, RESTRICTED, { ...base, resolveEntityId: entityMapResolver(map, DECISION_AT) });
+    expect(withMap("XLI")).toEqual(["soybean_processing"]);
+  });
 });

@@ -19,12 +19,13 @@ import {
 
 function record(overrides: Partial<ProspectiveDecisionRecord> = {}): ProspectiveDecisionRecord {
   return {
-    recordVersion: 1,
+    recordVersion: 2,
     strategyId: "etf-trend-vol",
     strategyVersion: "0.2.0",
     charterHash: "sha256:" + "a".repeat(64),
     arm: "B1_DETERMINISTIC",
     mode: "SHADOW",
+    policyHashes: { risk_yaml: "sha256:" + "b".repeat(64) },
     decisionAt: utc("2026-09-11T20:00:00Z"),
     sealedAt: utc("2026-09-11T21:30:00Z"),
     snapshotIds: ["snap_prices_1"],

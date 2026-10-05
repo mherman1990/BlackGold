@@ -93,6 +93,7 @@ export function envToAppConfigInput(env: NodeJS.ProcessEnv): Record<string, unkn
       processingDelays: delays("PROCESSING_DELAYS"),
       artifactBudgetBytes: num("ARTIFACT_BUDGET_BYTES"),
     }),
+    shadow: stripUndefined({ charterPath: get("SHADOW_CHARTER"), policyDir: get("POLICY_DIR") }),
     sleeveAccount: stripUndefined({ role, accountRef: get("SLEEVE_ACCOUNT_REF") }),
   });
 }

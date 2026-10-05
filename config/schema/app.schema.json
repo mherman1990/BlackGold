@@ -161,6 +161,23 @@
         }
       }
     },
+    "shadow": {
+      "default": {
+        "policyDir": "config/examples"
+      },
+      "type": "object",
+      "properties": {
+        "charterPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "policyDir": {
+          "default": "config/examples",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "sleeveAccount": {
       "default": {
         "role": "blackgold_sleeve",

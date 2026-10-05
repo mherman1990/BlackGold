@@ -34,6 +34,9 @@ COPY --chown=1000:1000 strategies ./strategies
 USER 1000:1000
 VOLUME ["/data"]
 ENV BLACKGOLD_DATA_DIR=/data
+# The fixed baked-in policy directory the mode-gated shadow decision job reads (D-53 slice 2c). The tracked
+# example files are FAKE placeholders: without the owner's real content everything fails closed for new risk.
+ENV BLACKGOLD_POLICY_DIR=/app/config/examples
 # No default command: the compose file selects the role explicitly. An image started bare prints help and exits 2.
 ENTRYPOINT ["node"]
 CMD ["packages/core/dist/main.js", "help"]

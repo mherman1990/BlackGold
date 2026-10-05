@@ -106,6 +106,20 @@ const AppConfigInput = z.object({
       artifactBudgetBytes: z.number().int().positive().default(40 * 1024 * 1024 * 1024),
     })
     .default({ autoIngestActions: "none", processingDelays: {}, artifactBudgetBytes: 40 * 1024 * 1024 * 1024 }),
+  /**
+   * The mode-gated prospective shadow decision job (D-53 slice 2c). `charterPath` is opt-in: unset (the
+   * default), the job is never registered. `policyDir` is the fixed directory the operative policy files are
+   * baked into the image at (risk.yaml, restricted-list.yaml, theme-membership.yaml); the tracked examples are
+   * fake, so a run without the owner's real content still fails closed for B1 new risk. Both are
+   * environment-only (BLACKGOLD_SHADOW_CHARTER / BLACKGOLD_POLICY_DIR, compose-level); neither is admitted to
+   * secrets.env. The job additionally requires a sealing mode (SHADOW/PAPER), which is itself env-only.
+   */
+  shadow: z
+    .object({
+      charterPath: z.string().min(1).optional(),
+      policyDir: z.string().min(1).default("config/examples"),
+    })
+    .default({ policyDir: "config/examples" }),
   sleeveAccount: z
     .object({
       role: z.literal(SLEEVE_ROLE),
@@ -336,6 +350,12 @@ export type FinancialPictureConfig = z.output<typeof FinancialPictureConfigSchem
 
 export const RestrictedListConfigSchema = z.object({
   asOf: isoDateString,
+  /**
+   * Owner sign-off, mirroring risk.yaml (D-48): the shadow decision job treats an unapproved restricted list
+   * as missing owner content and fails closed for new risk. The tracked example stays unapproved on purpose.
+   */
+  approvedBy: z.string().nullable().default(null),
+  approvedAt: utcInstantString.nullable().default(null),
   coolingPeriodDays: z.number().int().nonnegative().default(30),
   names: z.array(z.string().min(1)).default([]),
   themes: z.array(z.string().min(1)).default([]),
@@ -369,6 +389,9 @@ export type RestrictedListConfig = z.output<typeof RestrictedListConfigSchema>;
 
 export const ThemeMembershipConfigSchema = z.object({
   asOf: isoDateString,
+  /** Owner sign-off, exactly as on the restricted list: unapproved content fails closed in the shadow job. */
+  approvedBy: z.string().nullable().default(null),
+  approvedAt: utcInstantString.nullable().default(null),
   /**
    * Max aggregate weight of restricted-theme issuers, as a fraction of ETF NAV, at or below which a
    * diversified ETF is admissible. Charter section 2.2 proposes "0.10"; the owner sets it.

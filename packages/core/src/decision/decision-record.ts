@@ -20,7 +20,7 @@ import type { RiskState } from "../risk/halt.ts";
  * canonical order when sealed (the producer sorts them), because the hash is taken over the bytes as given.
  */
 
-export const DECISION_RECORD_VERSION = 1;
+export const DECISION_RECORD_VERSION = 2;
 
 /**
  * The modes that may seal a prospective decision record: SHADOW and PAPER (and the two live modes, which are
@@ -65,6 +65,15 @@ export type ProspectiveDecisionRecord = {
   arm: Arm;
   /** The mode the record was sealed in. Must satisfy {@link sealsProspectiveDecisions}. */
   mode: Mode;
+  /**
+   * `sha256:<hex>` of each operative policy file the decision was made under, keyed by file (e.g. `risk_yaml`).
+   * Sealed INTO the record (recordVersion 2, Codex P2 round 9) so an arm is attributable to its exact policy
+   * byte-state on its own: a pre-sealed arm whose gate happens not to read a policy (the halt-only passive
+   * comparator) still differs from a re-derivation under replaced policy files, and a run completing a pair
+   * can prove both arms saw the same policies. Empty only where no policy file was read (e.g. direct research
+   * seals); the shadow job always supplies all three.
+   */
+  policyHashes: Record<string, string>;
   /** The timestamp-locked decision instant. Reads that formed the book were `asOf` this instant. */
   decisionAt: UtcInstant;
   /** When the record was sealed (>= decisionAt). */
