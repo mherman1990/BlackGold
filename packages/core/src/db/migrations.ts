@@ -293,4 +293,35 @@ CREATE TRIGGER decision_records_no_delete BEFORE DELETE ON decision_records
 BEGIN SELECT RAISE(ABORT, 'decision records are append-only'); END;
 `,
   },
+  {
+    id: "0009_shadow_fill_records",
+    up: `
+-- Append-only ledger of counterfactual fill records (D-53 slice 3b; AUTOMATION_AND_LIVE_GATES.md SHADOW:
+-- "compute counterfactual fills with the internal simulator"). One row per (strategy version, arm, decision
+-- instant): the deterministic simulator's outcome for the SEALED decision of that instant, against the
+-- synthetic shadow book. It carries simulated fills in synthetic units ONLY - never an order id, an account,
+-- a credential, a broker response, or a real dollar total. decision_record_hash binds the outcome to the
+-- exact sealed decision content it filled.
+CREATE TABLE shadow_fill_records (
+  id                   INTEGER PRIMARY KEY,
+  decision_at          TEXT NOT NULL,
+  computed_at          TEXT NOT NULL,
+  strategy_id          TEXT NOT NULL,
+  strategy_version     TEXT NOT NULL,
+  charter_hash         TEXT NOT NULL,
+  arm                  TEXT NOT NULL,
+  decision_record_hash TEXT NOT NULL,
+  record_json          TEXT NOT NULL,
+  record_hash          TEXT NOT NULL UNIQUE
+);
+-- One outcome per sealed decision: recomputing a recorded outcome into a different one is rejected, so a
+-- fill record, like the decision it fills, is immutable once written.
+CREATE UNIQUE INDEX shadow_fill_records_instant ON shadow_fill_records (strategy_id, strategy_version, arm, decision_at);
+CREATE INDEX shadow_fill_records_decision_at ON shadow_fill_records (decision_at);
+CREATE TRIGGER shadow_fill_records_no_update BEFORE UPDATE ON shadow_fill_records
+BEGIN SELECT RAISE(ABORT, 'shadow fill records are append-only'); END;
+CREATE TRIGGER shadow_fill_records_no_delete BEFORE DELETE ON shadow_fill_records
+BEGIN SELECT RAISE(ABORT, 'shadow fill records are append-only'); END;
+`,
+  },
 ];
