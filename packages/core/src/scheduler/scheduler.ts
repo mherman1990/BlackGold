@@ -46,6 +46,9 @@ export type JobDefinition = {
 
 export type DueRun = { jobId: string; scheduledFor: UtcInstant; idempotencyKey: string };
 
+/** The due window the long-running `serve` scheduler and the `run-jobs` CLI both use: a due run is still executed this late. */
+export const OPERATIONAL_DUE_LOOKBACK_MS = 24 * 3_600_000;
+
 export type RunStatus = "pending" | "running" | "succeeded" | "failed" | "missed" | "skipped_duplicate";
 
 export type RunOutcome = DueRun & { status: "succeeded" | "failed" | "skipped_duplicate"; error?: string };

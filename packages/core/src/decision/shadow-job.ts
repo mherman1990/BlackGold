@@ -4,7 +4,7 @@ import { addDays, addMs, canonicalJson, sha256Hex, type Db, type IsoDate, type U
 import { processingDelayOverridesMs, RestrictedListConfigSchema, RiskConfigSchema, ThemeMembershipConfigSchema, type AppConfig } from "../config/schema.ts";
 import { parseYamlConfig } from "../config/load.ts";
 import type { ExchangeCalendar } from "../calendar/types.ts";
-import type { Scheduler } from "../scheduler/scheduler.ts";
+import { OPERATIONAL_DUE_LOOKBACK_MS, type Scheduler } from "../scheduler/scheduler.ts";
 import { PointInTimeRepository } from "../data/pit/repository.ts";
 import { EntityMap } from "../market/entity-map.ts";
 import { loadCharterFile, type Charter } from "../strategy/charter.ts";
@@ -78,27 +78,54 @@ export function shadowJobOffsetMinutes(decisionOffsetMinutes: number): number {
   return Math.max(150, decisionOffsetMinutes + 30);
 }
 
+/** The arms a shadow decision seals; an instant is sealed only when every one is present (`prospectiveTargetBooks`). */
+const SHADOW_DECISION_ARMS = ["B0_PASSIVE", "B1_DETERMINISTIC"] as const;
+
+/** Scheduler run states after which the job will not run that instant again. */
+const FINISHED_RUN_STATES = new Set(["succeeded", "failed", "missed", "skipped_duplicate"]);
+
 /**
- * The shadow decision the job will seal next, as of `now`: the earliest weekly decision instant after the last
- * one sealed for this charter whose job run has not yet happened. Before a Friday close that is Friday's; between
- * Friday's decision instant and the delayed run it is still Friday's (sealed timestamp-locked to the instant).
+ * The shadow decision the job will seal next, as of `now`: the earliest weekly decision instant the job can still
+ * act on. An instant is finished only on PERSISTED evidence, never on the wall clock alone (Codex P2s, PR #108):
+ *
+ *  - every shadow arm is sealed at it (one sealed arm is not a finished decision - the job completes a half-sealed
+ *    pair by accepting the identical existing arm and sealing the other), or
+ *  - the scheduler has recorded a finished run for its job instant (succeeded - sealed or visibly skipped - failed,
+ *    missed, or a duplicate), or
+ *  - no run is recorded and the instant is already beyond the scheduler's due lookback, so no tick will run it.
+ *
+ * A run that is due but not yet ticked therefore stays upcoming: the scheduler executes it late, inside its
+ * lookback, timestamp-locked to the decision instant.
  */
 export function upcomingShadowDecision(
   db: Db,
   calendar: ExchangeCalendar,
-  args: { charterHash: string; decisionOffsetMinutes: number; now: UtcInstant },
+  args: { charterHash: string; decisionOffsetMinutes: number; now: UtcInstant; dueLookbackMs?: number },
 ): { decisionAt: UtcInstant; session: IsoDate } {
   const jobOffsetMs = shadowJobOffsetMinutes(args.decisionOffsetMinutes) * 60_000;
-  const last = (db.prepare("SELECT MAX(decision_at) AS at FROM decision_records WHERE charter_hash = ?").get(args.charterHash) as { at: UtcInstant | null }).at;
+  const dueLookbackMs = args.dueLookbackMs ?? OPERATIONAL_DUE_LOOKBACK_MS;
   const nowMs = Date.parse(args.now);
-  // Start early enough that a decision whose run is still ahead cannot be skipped, however large the offset.
-  const start = calendar.previousSession(addMs(args.now, -jobOffsetMs));
-  for (const session of calendar.sessionDates(start, addDays(start, 28 + Math.ceil(jobOffsetMs / 86_400_000)))) {
+  const sealed = new Set(
+    (
+      db
+        .prepare(`SELECT decision_at FROM decision_records WHERE charter_hash = ? AND arm IN (${SHADOW_DECISION_ARMS.map(() => "?").join(",")}) GROUP BY decision_at HAVING COUNT(DISTINCT arm) = ?`)
+        .all(args.charterHash, ...SHADOW_DECISION_ARMS, SHADOW_DECISION_ARMS.length) as { decision_at: UtcInstant }[]
+    ).map((r) => Date.parse(r.decision_at)),
+  );
+  const runs = new Map(
+    (db.prepare("SELECT scheduled_for, status FROM job_runs WHERE job_id = 'shadow_decision'").all() as { scheduled_for: string; status: string }[]).map((r) => [Date.parse(r.scheduled_for), r.status] as const),
+  );
+  // Start early enough that a run the scheduler can still execute late cannot be skipped, however large the offset.
+  const start = calendar.previousSession(addMs(args.now, -(jobOffsetMs + dueLookbackMs)));
+  for (const session of calendar.sessionDates(start, addDays(start, 28 + Math.ceil((jobOffsetMs + dueLookbackMs) / 86_400_000)))) {
     if (!isWeeklyDecisionSession(calendar, session)) continue;
     const close = calendar.sessionClose(session);
     const decisionAt = addMs(close, args.decisionOffsetMinutes * 60_000);
-    if (last !== null && Date.parse(decisionAt) <= Date.parse(last)) continue;
-    if (Date.parse(addMs(close, jobOffsetMs)) <= nowMs) continue;
+    if (sealed.has(Date.parse(decisionAt))) continue;
+    const runAtMs = Date.parse(addMs(close, jobOffsetMs));
+    const status = runs.get(runAtMs);
+    if (status !== undefined && FINISHED_RUN_STATES.has(status)) continue;
+    if (status === undefined && runAtMs + dueLookbackMs <= nowMs) continue;
     return { decisionAt, session };
   }
   throw new RangeError(`no upcoming weekly decision session found after ${start}`);

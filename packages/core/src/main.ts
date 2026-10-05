@@ -12,7 +12,7 @@ import { openCoreDb } from "./db/open.ts";
 import { backupDatabase, verifyRestore } from "./db/backup.ts";
 import { Ledger } from "./ledger/ledger.ts";
 import { NyseCalendar } from "./calendar/nyse.ts";
-import { Scheduler } from "./scheduler/scheduler.ts";
+import { OPERATIONAL_DUE_LOOKBACK_MS, Scheduler } from "./scheduler/scheduler.ts";
 import { runHealth } from "./health/health.ts";
 import { serve, registerPhase0Jobs } from "./serve.ts";
 import { CORE_PACKAGE_NAME, CORE_VERSION } from "./version.ts";
@@ -177,7 +177,7 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
         const ledger = new Ledger(db);
         // Phase 0: a single manual tick. The daily heartbeat may be caught up within the day, so the due
         // window is one day; anything older than that is reported as missed, never run late.
-        const scheduler = new Scheduler({ db, ledger, calendar, dueLookbackMs: 24 * 3_600_000, missedLookbackMs: 7 * 24 * 3_600_000 });
+        const scheduler = new Scheduler({ db, ledger, calendar, dueLookbackMs: OPERATIONAL_DUE_LOOKBACK_MS, missedLookbackMs: 7 * 24 * 3_600_000 });
         registerPhase0Jobs(scheduler, { config, calendar });
         const missed = scheduler.detectMissedRuns(now);
         const outcomes = await scheduler.tick(now);

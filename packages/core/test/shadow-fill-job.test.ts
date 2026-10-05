@@ -458,17 +458,38 @@ describe("reconciler breaks feed the next decision's halt (D-54)", () => {
     expect(events(env.db, SHADOW_HALT_REARM)).toEqual([{ charterHash, to: "HALT_NEW_RISK", actor: "Owner", reason: "reviewed", acknowledgedBreaks: [] }]);
   });
 
-  it("finds the decision the job will seal next: before the close, in the pending window, after the run, already sealed", async () => {
+  it("finds the decision the job will seal next from persisted run and seal state, not the wall clock (Codex P2s, PR #108)", () => {
     const env = setup("SHADOW");
     const charterHash = loadCharterFile(env.charterPath).charterHash;
     const next = (now: UtcInstant) => upcomingShadowDecision(env.db, cal, { charterHash, decisionOffsetMinutes: 60, now });
     const friday = { decisionAt: afterClose("2026-03-06", 60), session: "2026-03-06" };
     const nextFriday = { decisionAt: afterClose("2026-03-13", 60), session: "2026-03-13" };
+    const runAt = afterClose("2026-03-06", 150);
+
     expect(next("2026-03-06T15:00:00.000Z" as UtcInstant)).toEqual(friday); // Friday morning
     expect(next(afterClose("2026-03-06", 90))).toEqual(friday); // past the instant, before the delayed run
-    expect(next(afterClose("2026-03-06", 160))).toEqual(nextFriday); // the run has happened (here: skipped, nothing sealed)
-    await env.scheduler.tick(afterClose("2026-03-06", 150)); // seals Friday
-    expect(next(afterClose("2026-03-06", 90))).toEqual(nextFriday); // already sealed: never offered again
+    // Due but not yet ticked: the scheduler still runs it late, inside its 24 h lookback - still Friday's.
+    expect(next(afterClose("2026-03-06", 150 + 60))).toEqual(friday);
+    // Never recorded and beyond the lookback: no tick will run it.
+    expect(next(afterClose("2026-03-06", 150 + 25 * 60))).toEqual(nextFriday);
+
+    // One sealed arm is not a finished decision: the job completes the pair.
+    env.db
+      .prepare("INSERT INTO decision_records (decision_at, sealed_at, strategy_id, strategy_version, charter_hash, arm, mode, new_risk_allowed, halt_state, record_json, record_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+      .run(friday.decisionAt, friday.decisionAt, "etf-trend-vol", "0.2.0", charterHash, "B0_PASSIVE", "SHADOW", 1, "NORMAL", "{}", "sha256:partial");
+    expect(next(afterClose("2026-03-06", 90))).toEqual(friday);
+
+    // A finished run for the instant, even one that sealed nothing (e.g. a visible skip), moves on.
+    env.db.prepare("INSERT INTO job_runs (idempotency_key, job_id, scheduled_for, status) VALUES (?,?,?,?)").run("k-fri", "shadow_decision", runAt, "succeeded");
+    expect(next(afterClose("2026-03-06", 160))).toEqual(nextFriday);
+  });
+
+  it("treats an instant as finished once every shadow arm is sealed, whatever the run state", async () => {
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    await env.scheduler.tick(afterClose("2026-03-06", 150)); // seals both arms
+    env.db.prepare("DELETE FROM job_runs").run(); // only the seal remains as evidence
+    expect(upcomingShadowDecision(env.db, cal, { charterHash, decisionOffsetMinutes: 60, now: afterClose("2026-03-06", 90) })).toEqual({ decisionAt: afterClose("2026-03-13", 60), session: "2026-03-13" });
   });
 
   it("shadow status classifies breaks as the NEXT decision will, not as of the moment it runs (Codex P2, PR #108)", () => {
