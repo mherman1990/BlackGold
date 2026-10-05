@@ -15,6 +15,7 @@ import { appendDecisionRecord, DecisionAlreadySealedError } from "./decision-rec
 import { EMPTY_SHADOW_BOOK, shadowDecisionRecords, type ShadowBookState, type SymbolIdentity } from "./shadow-decision.ts";
 import { shadowFillRecords } from "./shadow-fills.ts";
 import { loadShadowReplayInputs, replayShadowArm, shadowBookStateAt } from "./shadow-book.ts";
+import { readShadowHaltInputs, shadowHaltContext } from "./shadow-halt.ts";
 
 /**
  * The mode-gated `after_close` shadow decision job (D-53 slice 2c): the scheduler seam that resolves what the
@@ -278,6 +279,12 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       const book = carriedShadowBook(ctx.db, { pit, calendar, charter, charterHash: loaded.charterHash, decisionAt, decisionSession: session, offsetMinutes: registeredOffsetMinutes });
       const staleInputs = [...unapprovedPolicies, ...book.staleInputs];
 
+      // The persisted halt context (D-54): the state the previous decision recorded (sticky), the owner re-arms
+      // issued since, and the reconciliation breaks unresolved past one session - all as of the decision
+      // instant. A break the reconciler has reported for more than a session holds the book (HOLD_ONLY) until
+      // the owner acknowledges it in a re-arm.
+      const halt = shadowHaltContext({ ...readShadowHaltInputs(ctx.db, loaded.charterHash, decisionAt), decisionAt, decisionSession: session });
+
       const records = shadowDecisionRecords(charter, {
         mode: config.mode,
         charterHash: loaded.charterHash,
@@ -290,6 +297,7 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
         state: book.state,
         identity,
         lookThrough,
+        halt,
         ...(staleInputs.length === 0 ? {} : { staleInputs }),
       });
 
@@ -346,6 +354,15 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
           // What the decision started from: the replayed sleeve book's holdings (entity ids only - weights are
           // on nothing a dollar can be read from), and any reason that book could not be trusted.
           startingBook: { held: [...book.state.currentWeights.keys()].sort(), staleInputs: book.staleInputs },
+          // The halt this decision escalated from and what moved it: the previous recorded state, the owner
+          // re-arms consumed (actor, target, instant), and the breaks that held it or were first seen today.
+          halt: {
+            from: halt.current,
+            reArmsApplied: halt.reArms.map((r) => ({ to: r.to, actor: r.actor, at: r.at })),
+            unresolvedBreaks: halt.unresolvedBreaks,
+            freshBreaks: halt.freshBreaks,
+            acknowledgedBreaks: halt.acknowledgedBreaks,
+          },
           policyVersions: { risk_yaml: risk.value.version },
           sealed,
           alreadySealed,

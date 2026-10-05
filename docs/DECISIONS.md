@@ -1269,6 +1269,58 @@ to pass its own preregistered gate — which per D-51 the current etf-trend-vol 
 live mode, a `LIVE_AUTHORIZATION`, or a broker credential; those remain the owner's acts that no autonomy
 reaches.
 
+## D-54 Reconciler breaks feed the shadow halt state; shadow halts are sticky and owner re-armed
+
+**Status:** Proposed 2026-10-05 by Claude Code, at Matt's request ("start on the reconciler-to-halt wiring").
+Built on the slice-3b repairs. Matt accepts, amends, or rejects; the readings flagged below are his.
+
+**Why.** Slice 3b recorded reconciliation breaks but did not act on them. Its own docs deferred that step to an
+explicitly reviewed change, because a feedback loop between the two shadow jobs is financial-critical. Wiring
+the breaks in naively would also have been wrong. The reconciler re-derives its breaks from the whole
+append-only ledger every run, so a break never clears on its own. And the shadow decision started every week
+from a fresh `NORMAL`, with no persisted halt state and no re-arm path. One missed week would therefore have
+held the shadow book forever, while every other halt the book could enter would have cleared on its own. That
+contradicts `docs/AUTOMATION_AND_LIVE_GATES.md` §7, which requires an owner action recorded in the ledger
+before any halt relaxes.
+
+**Decision.**
+
+1. **Sticky state.** Each shadow decision starts from the most restrictive halt state the previous sealed
+   decision of the same charter recorded. The halt machine escalates from there and never relaxes on its own.
+2. **Breaks → `HOLD_ONLY`, per §8 literally.** A break the reconciler has reported on a session before the
+   decision's, and still reports, sets `reconciliationUnresolved` and holds both arms. A break first reported on
+   the decision session itself is recorded on the ledger event but not yet acted on. Every input is
+   knowledge-scoped to the decision instant.
+3. **"Resolved" means acknowledged by the owner.** `shadow rearm --acknowledge <codes>` records the owner's
+   resolution (§9.2). An acknowledgement counts only for a break the reconciler had already reported when the
+   re-arm was issued, so nobody can pre-acknowledge a future fault. A break that genuinely disappears from the
+   latest reconcile stops counting without an acknowledgement.
+4. **Staged re-arm.** `shadow rearm --to …` writes `shadow.halt_rearm` with actor and reason. The next decision
+   applies each re-arm issued since the previous decision, in order, through `evaluateHaltState`: one step per
+   action, and an active fault still binds. Malformed re-arm events are dropped.
+5. **`HOLD_ONLY` freezes the synthetic book.** Exits are suppressed too, and recorded in `suppressedExits`
+   (`SHADOW_FILL_RECORD_VERSION` 3). §7 allows only owner-approved closes in that state, and none exist in
+   shadow.
+6. **Attribution.** Each record notes the breaks that held it and the re-arms it consumed. The
+   `shadow.decision_sealed` event carries the full halt context: the starting state, re-arms applied, and
+   unresolved, fresh and acknowledged breaks.
+
+**Readings for the owner to confirm or overrule.**
+
+- **(a) Every break kind holds the book.** That is §8's literal text. A per-kind mapping is defensible (for
+  example, a thin-volume `UNFILLED_REMAINDER` → `HALT_NEW_RISK`, `NEGATIVE_CASH` → `HOLD_ONLY`), but choosing
+  one is a policy call.
+- **(b) Stickiness now applies to the halts the shadow book already entered.** These are unapproved policy
+  files and stale market data, plus drawdown now that decisions read the carried book. After the owner's
+  signed `restricted-list.yaml` and `theme-membership.yaml` replace the placeholders, one `shadow rearm --to
+  NORMAL` is needed to clear the halt they caused.
+- **(c) Timing.** This changes what a shadow decision seals under a fault. No shadow evidence exists yet, so
+  nothing is lost. It belongs before registration, alongside the 0.3.0 charter questions, not after the
+  prospective clock starts.
+
+**What it does not do.** No order, broker, account, live mode, or `LIVE_AUTHORIZATION` is involved. The re-arm CLI
+writes one ledger event and is the owner's act; Claude Code builds it and does not run it on the Pi.
+
 ---
 
 ## Rejected

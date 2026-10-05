@@ -212,6 +212,50 @@ describe("shadowDecisionRecords: gate composition", () => {
     }
   });
 
+  it("holds both arms HOLD_ONLY while a reconciliation break is unresolved past one session, and names it (D-54)", () => {
+    const { charter } = fixture();
+    const brk = "MISSING_DECISION_RECORD:B1_DETERMINISTIC:2026-03-06";
+    const records = shadowDecisionRecords(charter, baseContext({ lookThrough: () => [], halt: { current: "NORMAL", reArms: [], unresolvedBreaks: [brk] } }));
+    for (const r of records) {
+      expect(r.gate.newRiskAllowed).toBe(false);
+      expect(r.gate.haltState).toBe("HOLD_ONLY");
+      expect(r.gate.blockedBy.some((b) => b.includes("RECONCILIATION_UNRESOLVED"))).toBe(true);
+      expect(r.notes).toEqual([`reconciliation_unresolved:${brk}`]);
+    }
+  });
+
+  it("is sticky: a recorded HOLD_ONLY persists with every fault gone and no owner re-arm (D-54)", () => {
+    const { charter } = fixture();
+    const records = shadowDecisionRecords(charter, baseContext({ lookThrough: () => [], halt: { current: "HOLD_ONLY", reArms: [], unresolvedBreaks: [] } }));
+    for (const r of records) {
+      expect(r.gate.haltState).toBe("HOLD_ONLY");
+      expect(r.gate.newRiskAllowed).toBe(false);
+    }
+  });
+
+  it("stages an owner re-arm one step per action: HOLD_ONLY -> HALT_NEW_RISK, then -> NORMAL (D-54)", () => {
+    const { charter, decisionAt } = fixture();
+    const toNormal = { to: "NORMAL" as const, actor: "Owner", at: decisionAt, reason: "reviewed", acknowledgedBreaks: [] };
+    const toHalt = { ...toNormal, to: "HALT_NEW_RISK" as const };
+    // One action asking for NORMAL from HOLD_ONLY lands one step down, not two.
+    const once = shadowDecisionRecords(charter, baseContext({ lookThrough: () => [], halt: { current: "HOLD_ONLY", reArms: [toNormal], unresolvedBreaks: [] } }));
+    for (const r of once) expect(r.gate.haltState).toBe("HALT_NEW_RISK");
+    expect(once[0]?.notes).toEqual([`owner_rearm:NORMAL:${decisionAt}`]);
+    // Two actions, both recorded, reach NORMAL - and the clean book then clears.
+    const twice = shadowDecisionRecords(charter, baseContext({ lookThrough: () => [], halt: { current: "HOLD_ONLY", reArms: [toHalt, toNormal], unresolvedBreaks: [] } }));
+    for (const r of twice) {
+      expect(r.gate.haltState).toBe("NORMAL");
+      expect(r.gate.newRiskAllowed).toBe(true);
+    }
+  });
+
+  it("clamps an owner re-arm to an active fault: an unresolved break still holds (D-54)", () => {
+    const { charter, decisionAt } = fixture();
+    const toHalt = { to: "HALT_NEW_RISK" as const, actor: "Owner", at: decisionAt, reason: "reviewed", acknowledgedBreaks: [] };
+    const records = shadowDecisionRecords(charter, baseContext({ lookThrough: () => [], halt: { current: "HOLD_ONLY", reArms: [toHalt], unresolvedBreaks: ["NEGATIVE_CASH:B1_DETERMINISTIC:2026-03-09"] } }));
+    for (const r of records) expect(r.gate.haltState).toBe("HOLD_ONLY");
+  });
+
   it("B1 is blocked when a per-instrument weight cap binds (limits are wired into the gate)", () => {
     const { charter } = fixture();
     const risk = { ...relaxedRisk(), positionLimits: { ...relaxedRisk().positionLimits, maxSingleEtfWeightPct: "0.01" } };

@@ -13,6 +13,7 @@ import { registerShadowFillJob, SHADOW_FILLS_RECORDED, SHADOW_INCIDENT, SHADOW_R
 import { appendShadowFillRecord, shadowFillRecords, SHADOW_FILL_RECORD_VERSION, type ShadowFillRecord } from "../src/decision/shadow-fills.ts";
 import { fillDueSession, fillOwedSession, fillWindowEndSession, reconcileShadow } from "../src/decision/shadow-reconcile.ts";
 import { loadCharterFile } from "../src/strategy/charter.ts";
+import { readShadowHaltInputs, recordShadowReArm, ShadowReArmError, SHADOW_HALT_REARM } from "../src/decision/shadow-halt.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
 
 const cal = new NyseCalendar();
@@ -341,6 +342,7 @@ describe("shadow loop repairs (Codex, PR #102 round 3)", () => {
       cashAtDecision: "100000",
       fills: [],
       suppressedEntries: [],
+      suppressedExits: [],
       unfilled: [],
       unpriced: [],
       executionShortfall: "0",
@@ -387,6 +389,86 @@ describe("shadow loop repairs (Codex, PR #102 round 3)", () => {
     const breaks = events(env.db, SHADOW_RECONCILED).at(-1)?.["breaks"] as string[];
     expect(breaks.some((b) => b.startsWith(`UNFILLED_REMAINDER:B0_PASSIVE:${afterClose("2026-03-06", 60)}`))).toBe(true);
     expect(breaks.some((b) => b.startsWith(`MISSING_FILL_RECORD:B0_PASSIVE:${afterClose("2026-03-06", 60)}`))).toBe(false);
+  });
+});
+
+describe("reconciler breaks feed the next decision's halt (D-54)", () => {
+  type HaltEvent = { session: string; halt: { from: string; reArmsApplied: { to: string }[]; unresolvedBreaks: string[]; freshBreaks: string[]; acknowledgedBreaks: string[] } };
+  const sealedOn = (db: Db, session: string): HaltEvent | undefined => (events(db, "shadow.decision_sealed") as unknown as HaltEvent[]).find((e) => e.session === session);
+  const recordsAt = (db: Db, session: string) =>
+    (db.prepare("SELECT arm, halt_state, record_json FROM decision_records WHERE decision_at = ?").all(afterClose(session, 60)) as { arm: string; halt_state: string; record_json: string }[]);
+
+  it("holds the book after a break outlives a session, freezes its fills, and steps down one level per owner re-arm", async () => {
+    // Thin VTI: B0's week-1 buy leaves a LIQUIDITY remainder, finalized at the window end (Friday 03-13) as an
+    // UNFILLED_REMAINDER break. The 03-13 decision ran before that reconcile, so it is unaffected; by the 03-20
+    // decision the break has been reported for more than a session.
+    const env = setup("SHADOW", true, { vtiVolumeShares: 12_000n });
+    for (const s of ["2026-03-06", "2026-03-09", "2026-03-13", "2026-03-16", "2026-03-20"]) await env.scheduler.tick(afterClose(s, 150));
+    const brk = `UNFILLED_REMAINDER:B0_PASSIVE:${afterClose("2026-03-06", 60)}:VTI`;
+
+    expect(recordsAt(env.db, "2026-03-13").every((r) => r.halt_state !== "HOLD_ONLY")).toBe(true);
+    const week3 = sealedOn(env.db, "2026-03-20");
+    expect(week3?.halt.unresolvedBreaks).toContain(brk);
+    const held = recordsAt(env.db, "2026-03-20");
+    expect(held).toHaveLength(2);
+    for (const r of held) {
+      expect(r.halt_state).toBe("HOLD_ONLY");
+      expect(r.record_json).toContain(`reconciliation_unresolved:${brk}`);
+    }
+
+    // HOLD_ONLY binds the outcome: the week-3 B1 decision trades nothing, exits included.
+    await env.scheduler.tick(afterClose("2026-03-23", 150));
+    const b1Week3 = fillRecordsOf(env.db).find((r) => r.arm === "B1_DETERMINISTIC" && r.decisionSession === "2026-03-20");
+    if (!b1Week3) throw new Error("no week-3 B1 fill record");
+    expect(b1Week3.fills).toEqual([]);
+
+    // The owner examines every reported break, acknowledges them, and re-arms toward NORMAL; the halt machine
+    // stages it to one step: HOLD_ONLY -> HALT_NEW_RISK.
+    const reported = (events(env.db, SHADOW_RECONCILED).at(-1)?.["breaks"] as string[] | undefined) ?? [];
+    expect(reported).toContain(brk);
+    recordShadowReArm(env.db, new Ledger(env.db), {
+      charterHash: loadCharterFile(env.charterPath).charterHash,
+      to: "NORMAL",
+      actor: "Test Owner",
+      reason: "thin-volume remainder in the synthetic book; examined, no data fault",
+      acknowledge: reported,
+      now: "2026-03-24T12:00:00.000Z" as UtcInstant,
+    });
+    await env.scheduler.tick(afterClose("2026-03-27", 150));
+    const week4 = sealedOn(env.db, "2026-03-27");
+    expect(week4?.halt.from).toBe("HOLD_ONLY");
+    expect(week4?.halt.reArmsApplied.map((r) => r.to)).toEqual(["NORMAL"]);
+    expect(week4?.halt.acknowledgedBreaks).toEqual([...new Set(reported)].sort());
+    expect(week4?.halt.unresolvedBreaks.filter((b) => reported.includes(b))).toEqual([]);
+    for (const r of recordsAt(env.db, "2026-03-27")) expect(r.halt_state).toBe("HALT_NEW_RISK");
+  });
+
+  it("refuses a re-arm that would do less than it says: bad state, blank actor or reason, an unreported break", () => {
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    const base = { charterHash, to: "HALT_NEW_RISK", actor: "Owner", reason: "reviewed", acknowledge: [] as string[], now: "2026-03-24T12:00:00.000Z" as UtcInstant };
+    const ledger = new Ledger(env.db);
+    expect(() => recordShadowReArm(env.db, ledger, { ...base, to: "EMERGENCY_FLATTEN_AUTHORIZED" })).toThrow(ShadowReArmError);
+    expect(() => recordShadowReArm(env.db, ledger, { ...base, actor: "  " })).toThrow(ShadowReArmError);
+    expect(() => recordShadowReArm(env.db, ledger, { ...base, reason: "" })).toThrow(ShadowReArmError);
+    expect(() => recordShadowReArm(env.db, ledger, { ...base, acknowledge: ["MISSING_DECISION_RECORD:B1_DETERMINISTIC:2026-03-27"] })).toThrow(/has not reported/);
+    expect(events(env.db, SHADOW_HALT_REARM)).toHaveLength(0);
+    // A well-formed one is recorded.
+    recordShadowReArm(env.db, ledger, base);
+    expect(events(env.db, SHADOW_HALT_REARM)).toEqual([{ charterHash, to: "HALT_NEW_RISK", actor: "Owner", reason: "reviewed", acknowledgedBreaks: [] }]);
+  });
+
+  it("drops a malformed re-arm written to the ledger directly: relaxing a halt needs a well-formed owner action", () => {
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    const ledger = new Ledger(env.db);
+    const at = "2026-03-24T12:00:00.000Z" as UtcInstant;
+    ledger.append(SHADOW_HALT_REARM, { charterHash, to: "BOGUS", actor: "Owner", reason: "x", acknowledgedBreaks: [] }, at);
+    ledger.append(SHADOW_HALT_REARM, { charterHash, to: "NORMAL", actor: " ", reason: "x", acknowledgedBreaks: [] }, at);
+    ledger.append(SHADOW_HALT_REARM, { charterHash, to: "NORMAL", actor: "Owner", reason: "", acknowledgedBreaks: [] }, at);
+    ledger.append(SHADOW_HALT_REARM, { charterHash, to: "HALT_NEW_RISK", actor: "Owner", reason: "ok", acknowledgedBreaks: ["x", 7] }, at);
+    const { reArms } = readShadowHaltInputs(env.db, charterHash, "2026-03-25T00:00:00.000Z" as UtcInstant);
+    expect(reArms).toEqual([{ to: "HALT_NEW_RISK", actor: "Owner", at, reason: "ok", acknowledgedBreaks: ["x"] }]);
   });
 });
 
