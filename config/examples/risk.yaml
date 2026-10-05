@@ -3,7 +3,7 @@
 # Percentages and money are DECIMAL STRINGS ("0.05" = 5%) so no binary float enters a limit.
 # Schema: config/schema/risk.schema.json
 version: "0.2.0"
-# UNSIGNED. 0.1.0 was owner-approved 2026-09-08 (D-48). 0.2.0 changes four values, each the owner's choice of
+# 0.1.0 was owner-approved 2026-09-08 (D-48). 0.2.0 changes four values, each the owner's choice of
 # 2026-10-05 folding D-55's conflicts 1 and 4 into charter 0.3.0 (D-56, OD-11 and OD-12):
 #   positionLimits.maxNewPositionsPerSession 3 -> 5, orderLimits.maxOrdersPerSession 4 -> 11,
 #   orderLimits.maxDailyTurnoverPctNav 0.25 -> 2.00 (gross), liquidity.maxAdvParticipationPct 0.01 -> 0.005.
