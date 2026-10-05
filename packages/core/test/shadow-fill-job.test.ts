@@ -542,6 +542,30 @@ describe("reconciler breaks feed the next decision's halt (D-54)", () => {
     expect(status.freshBreaks).toEqual([]);
   });
 
+  it("starts a decision only from records sealed by its instant: a late backfill cannot set the state (Codex P2, PR #108 round 6)", async () => {
+    // 03-13: B0 sealed on time (HALT_NEW_RISK), B1 backfilled after the 03-20 instant (HOLD_ONLY). 03-20: both arms
+    // backfilled after the 03-27 instant. Each decision sees only what existed when it was timestamp-locked.
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    const week1 = env.db.prepare("SELECT arm, record_json FROM decision_records").all() as { arm: string; record_json: string }[];
+    const seal = (arm: string, session: string, sealedAt: UtcInstant, haltState: "HALT_NEW_RISK" | "HOLD_ONLY") => {
+      const row = week1.find((r) => r.arm === arm);
+      if (!row) throw new Error(`no week-1 record for ${arm}`);
+      const rec = JSON.parse(row.record_json) as ProspectiveDecisionRecord;
+      appendDecisionRecord(env.db, { ...rec, decisionAt: afterClose(session, 60), sealedAt, gate: { newRiskAllowed: false, haltState, increasedRisk: [], blockedBy: ["test"] } });
+    };
+    seal("B0_PASSIVE", "2026-03-13", afterClose("2026-03-13", 61), "HALT_NEW_RISK");
+    seal("B1_DETERMINISTIC", "2026-03-13", afterClose("2026-03-20", 61), "HOLD_ONLY");
+    seal("B0_PASSIVE", "2026-03-20", afterClose("2026-03-27", 61), "HOLD_ONLY");
+    seal("B1_DETERMINISTIC", "2026-03-20", afterClose("2026-03-27", 61), "HOLD_ONLY");
+    const previousAt = (session: string) => readShadowHaltInputs(env.db, charterHash, afterClose(session, 60)).previous;
+    expect(previousAt("2026-03-20")).toEqual({ decisionAt: afterClose("2026-03-13", 60), haltStates: ["HALT_NEW_RISK"] });
+    expect(previousAt("2026-03-27")).toEqual({ decisionAt: afterClose("2026-03-13", 60), haltStates: ["HALT_NEW_RISK", "HOLD_ONLY"] });
+    // Control: once sealed before an instant, the backfill does count.
+    expect(previousAt("2026-03-30")).toEqual({ decisionAt: afterClose("2026-03-20", 60), haltStates: ["HOLD_ONLY", "HOLD_ONLY"] });
+  });
+
   it("drops a malformed re-arm written to the ledger directly: relaxing a halt needs a well-formed owner action", () => {
     const env = setup("SHADOW");
     const charterHash = loadCharterFile(env.charterPath).charterHash;

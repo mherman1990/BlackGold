@@ -116,13 +116,18 @@ export function readShadowHaltInputs(
   charterHash: string,
   decisionAt: UtcInstant,
 ): { previous: { decisionAt: UtcInstant; haltStates: RiskState[] } | undefined; reconciles: ReconcileObservation[]; reArms: ShadowReArm[] } {
-  const last = db.prepare("SELECT MAX(decision_at) AS at FROM decision_records WHERE charter_hash = ? AND decision_at < ?").get(charterHash, decisionAt) as { at: UtcInstant | null };
+  // Knowledge-scoped like the events below: a record sealed after the instant (a late backfill of a missed
+  // decision) did not exist when this decision was timestamp-locked, so it cannot set its starting state
+  // (Codex P2, PR #108 round 6).
+  const last = db.prepare("SELECT MAX(decision_at) AS at FROM decision_records WHERE charter_hash = ? AND decision_at < ? AND sealed_at <= ?").get(charterHash, decisionAt, decisionAt) as { at: UtcInstant | null };
   const previous =
     last.at === null
       ? undefined
       : {
           decisionAt: last.at,
-          haltStates: (db.prepare("SELECT halt_state FROM decision_records WHERE charter_hash = ? AND decision_at = ?").all(charterHash, last.at) as { halt_state: RiskState }[]).map((r) => r.halt_state),
+          haltStates: (
+            db.prepare("SELECT halt_state FROM decision_records WHERE charter_hash = ? AND decision_at = ? AND sealed_at <= ? ORDER BY arm").all(charterHash, last.at, decisionAt) as { halt_state: RiskState }[]
+          ).map((r) => r.halt_state),
         };
   const eventsOf = (kind: string): { at: UtcInstant; payload: Record<string, unknown> }[] =>
     (db.prepare("SELECT at, payload FROM ledger_events WHERE kind = ? AND json_extract(payload, '$.charterHash') = ? ORDER BY seq").all(kind, charterHash) as { at: UtcInstant; payload: string }[]).map((r) => ({
