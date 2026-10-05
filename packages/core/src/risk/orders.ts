@@ -1,0 +1,153 @@
+import { Dec, ZERO, sumDec } from "@blackgold/shared";
+import type { RiskConfig } from "../config/schema.ts";
+import type { Charter } from "../strategy/charter.ts";
+import type { LimitViolation, RiskVerdict } from "./limits.ts";
+import { instrumentLiquidityViolations } from "./liquidity.ts";
+
+/**
+ * The deterministic order-level guard (docs/PRODUCT_SPEC.md section 8, `risk.yaml` `orderLimits` and the
+ * order-time half of `liquidity`; the follow-up D-45 deferred, D-55).
+ *
+ * A PREDICATE over one session's proposed orders: it names every breach with a reason code and never re-sizes,
+ * splits, or drops an order. The charter (ALPHA_CHARTER.md section 10) says an order over a size cap "is split
+ * across sessions or rejected; it is never enlarged" - deciding between those is the consumer's job (a future
+ * slicer, or the paper rung's order builder), and this check is what tells it an order needs either. In
+ * particular a breaching EXIT must be sliced, never simply blocked: a size cap must not trap a position the
+ * book is leaving. Pure: no model, broker, clock, or network (T-05, under `risk/`).
+ *
+ * Every money input is real USD at order time. This engine is deliberately NOT wired into the shadow track yet:
+ * the shadow book is synthetic (`SHADOW_INITIAL_CASH` is not dollars), so a USD notional cap has no meaning
+ * against it until the owner decides what sleeve size the shadow book models (D-55).
+ *
+ * Checks, per order:
+ *  - `BAD_QUANTITY` (non-positive or fractional: `fractionalShares` is false) and `QTY_CAP` (`maxOrderQuantity`).
+ *  - `BAD_PRICE` (non-positive reference price: the notional is unknown) and `NOTIONAL_CAP` (`maxOrderNotionalUsd`).
+ *  - `ADV_UNKNOWN` and `ADV_PARTICIPATION`: notional at most the BINDING participation times 20-session dollar
+ *    ADV. Binding is the stricter of `risk.yaml` `maxAdvParticipationPct` and the charter's
+ *    `costs.max_participation_of_adv` - the cost model the backtest evidence assumed (the same stricter-of rule
+ *    `evaluateRiskLimits` applies to `max_positions`).
+ *  - Buys only (new risk): the shared instrument rule ({@link instrumentLiquidityViolations}: `MIN_ADV`,
+ *    `MIN_PRICE`), and the spread at order time - `SPREAD` over `maxSpreadBps` of the quote mid, `BAD_QUOTE` for
+ *    a crossed or non-positive quote, and `SPREAD_UNOBSERVED` when there is no quote (fails closed: end-of-day
+ *    data carries none, so nothing before the paper rung can clear a buy here).
+ *  - `SELL_EXCEEDS_HELD`: long-only, so the session's sells of an entity may not exceed the shares held.
+ *
+ * Per session:
+ *  - `MAX_ORDERS_PER_SESSION` (`maxOrdersPerSession`).
+ *  - `MAX_NEW_POSITIONS`: entities bought from flat, at most the stricter of `risk.yaml`
+ *    `maxNewPositionsPerSession` and the charter's `max_new_positions_per_decision`.
+ *  - `BAD_NAV` and `DAILY_TURNOVER`: gross traded notional (buys plus sells) over NAV, at most
+ *    `maxDailyTurnoverPctNav`. Gross is the stricter reading of a cap the policy does not define further.
+ */
+
+export type OrderQuote = { bid: Dec; ask: Dec };
+
+export type SessionOrder = {
+  entityId: string;
+  side: "BUY" | "SELL";
+  /** Whole shares, positive; the side carries the direction. */
+  quantity: Dec;
+  /** Reference price in USD: the limit price, or the adverse side of the quote for a market order. */
+  price: Dec;
+  /** 20-session average daily dollar volume (USD). */
+  advUsd: Dec | undefined;
+  /** The quote at order time, when a quote source exists. */
+  quote: OrderQuote | undefined;
+};
+
+export type OrderLimitsInput = {
+  policy: RiskConfig;
+  charter: Charter;
+  /** Sleeve NAV in USD before the session's orders: the turnover denominator. */
+  navUsd: Dec;
+  /** Whole-share holdings before the session's orders, keyed by entity id. */
+  held: ReadonlyMap<string, Dec>;
+  orders: readonly SessionOrder[];
+};
+
+const BPS = new Dec(10000);
+const TWO = new Dec(2);
+
+/** The ADV participation that binds: the stricter of the sleeve policy and the charter's cost model. */
+export function bindingAdvParticipation(policy: RiskConfig, charter: Charter): Dec {
+  return Dec.min(new Dec(policy.liquidity.maxAdvParticipationPct), new Dec(charter.costs.max_participation_of_adv));
+}
+
+/** The new-position cap that binds: the stricter of the sleeve policy and the charter. */
+export function bindingNewPositionsPerSession(policy: RiskConfig, charter: Charter): number {
+  return Math.min(policy.positionLimits.maxNewPositionsPerSession, charter.rules.max_new_positions_per_decision);
+}
+
+function spreadViolations(policy: RiskConfig, o: SessionOrder): LimitViolation[] {
+  const tag = `BUY ${o.entityId}`;
+  if (o.quote === undefined) return [{ code: "SPREAD_UNOBSERVED", detail: `${tag} has no quote at order time; the spread cannot be checked, so new risk fails closed` }];
+  const { bid, ask } = o.quote;
+  if (!bid.gt(0) || ask.lt(bid)) return [{ code: "BAD_QUOTE", detail: `${tag} quote bid ${bid.toFixed()} ask ${ask.toFixed()} is not a valid market` }];
+  const spreadBps = ask.minus(bid).div(ask.plus(bid).div(TWO)).times(BPS);
+  if (spreadBps.gt(new Dec(policy.liquidity.maxSpreadBps))) return [{ code: "SPREAD", detail: `${tag} spread ${spreadBps.toFixed(1)} bps exceeds maxSpreadBps ${policy.liquidity.maxSpreadBps}` }];
+  return [];
+}
+
+export function evaluateOrderLimits(input: OrderLimitsInput): RiskVerdict {
+  const p = input.policy;
+  const v: LimitViolation[] = [];
+  const qtyCap = new Dec(p.orderLimits.maxOrderQuantity);
+  const notionalCap = new Dec(p.orderLimits.maxOrderNotionalUsd);
+  const participation = bindingAdvParticipation(p, input.charter);
+  const orders = [...input.orders].sort((a, b) => (a.entityId !== b.entityId ? (a.entityId < b.entityId ? -1 : 1) : a.side < b.side ? -1 : a.side > b.side ? 1 : 0));
+
+  const notionals: Dec[] = [];
+  const sold = new Map<string, Dec>();
+  const entries = new Set<string>();
+  for (const o of orders) {
+    const tag = `${o.side} ${o.entityId}`;
+    if (!o.quantity.gt(0) || !o.quantity.isInteger()) v.push({ code: "BAD_QUANTITY", detail: `${tag} quantity ${o.quantity.toFixed()} is not a positive whole number of shares` });
+    else if (o.quantity.gt(qtyCap)) v.push({ code: "QTY_CAP", detail: `${tag} quantity ${o.quantity.toFixed()} exceeds maxOrderQuantity ${p.orderLimits.maxOrderQuantity}` });
+
+    const priceOk = o.price.gt(0);
+    const advOk = o.advUsd?.gt(0) === true;
+    if (!priceOk) {
+      v.push({ code: "BAD_PRICE", detail: `${tag} reference price ${o.price.toFixed()} is not positive; the notional is unknown` });
+    } else {
+      const notional = o.quantity.abs().times(o.price);
+      notionals.push(notional);
+      if (notional.gt(notionalCap)) v.push({ code: "NOTIONAL_CAP", detail: `${tag} notional ${notional.toFixed(2)} USD exceeds maxOrderNotionalUsd ${p.orderLimits.maxOrderNotionalUsd}` });
+      if (!advOk) v.push({ code: "ADV_UNKNOWN", detail: `${tag} has no usable ADV; participation cannot be checked` });
+      else if (o.advUsd !== undefined && notional.gt(participation.times(o.advUsd))) {
+        v.push({ code: "ADV_PARTICIPATION", detail: `${tag} notional ${notional.toFixed(2)} USD exceeds ${participation.toFixed()} of ADV ${o.advUsd.toFixed(0)} USD` });
+      }
+    }
+
+    if (o.side === "BUY") {
+      // Unknown ADV or price is already reported above; the shared rule then adds only the floors.
+      if (priceOk && advOk) v.push(...instrumentLiquidityViolations(p, o.entityId, { advUsd: o.advUsd, price: o.price }));
+      v.push(...spreadViolations(p, o));
+      if (!(input.held.get(o.entityId)?.gt(0) ?? false)) entries.add(o.entityId);
+    } else {
+      sold.set(o.entityId, (sold.get(o.entityId) ?? ZERO).plus(o.quantity.abs()));
+    }
+  }
+
+  for (const [id, qty] of [...sold].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const have = input.held.get(id) ?? ZERO;
+    if (qty.gt(have)) v.push({ code: "SELL_EXCEEDS_HELD", detail: `SELL ${id} totals ${qty.toFixed()} shares but ${have.toFixed()} are held; the book is long-only` });
+  }
+
+  if (orders.length > p.orderLimits.maxOrdersPerSession) {
+    v.push({ code: "MAX_ORDERS_PER_SESSION", detail: `${orders.length} orders exceed maxOrdersPerSession ${p.orderLimits.maxOrdersPerSession}` });
+  }
+  const maxNew = bindingNewPositionsPerSession(p, input.charter);
+  if (entries.size > maxNew) {
+    v.push({ code: "MAX_NEW_POSITIONS", detail: `${entries.size} new positions exceed the binding cap ${maxNew} (risk.yaml ${p.positionLimits.maxNewPositionsPerSession}, charter ${input.charter.rules.max_new_positions_per_decision})` });
+  }
+  if (!input.navUsd.gt(0)) {
+    v.push({ code: "BAD_NAV", detail: `NAV ${input.navUsd.toFixed()} USD is not positive; turnover cannot be measured` });
+  } else if (orders.length > 0) {
+    const turnover = sumDec(notionals).div(input.navUsd);
+    if (turnover.gt(new Dec(p.orderLimits.maxDailyTurnoverPctNav))) {
+      v.push({ code: "DAILY_TURNOVER", detail: `gross traded notional is ${turnover.toFixed(4)} of NAV, above maxDailyTurnoverPctNav ${p.orderLimits.maxDailyTurnoverPctNav}` });
+    }
+  }
+
+  return { admitted: v.length === 0, violations: v };
+}

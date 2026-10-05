@@ -175,9 +175,10 @@ function gateForArm(charter: Charter, ctx: ShadowDecisionContext, state: ShadowB
     return outcome({ newRiskAllowed: normal, haltState: decision.state, increasedRisk: [], blockedBy });
   }
 
-  // The real deterministic book runs the full gate: halt, every risk limit, and new-risk compliance with
-  // enforced coverage - exactly as the broker gateway re-checks it. A candidate is supplied for every target
-  // line, so every increasing holding is covered; held-flat lines carry a harmless extra candidate.
+  // The real deterministic book runs the full gate: halt, every risk limit, liquidity for every increasing line
+  // (D-55), and new-risk compliance with enforced coverage - exactly as the broker gateway re-checks it. A
+  // candidate is supplied for every target line, so every increasing holding is covered; held-flat lines carry a
+  // harmless extra candidate.
   const weights = new Map(book.targetWeights.map((w) => [w.entityId, w.weight]));
   const newRiskCandidates: Omit<ComplianceInput, "isNewRisk">[] = book.targetWeights.filter((w) => w.weight.gt(ZERO)).map((w) => candidateFor(ctx, w.entityId));
   const verdict = evaluateDecisionGate({
@@ -185,6 +186,7 @@ function gateForArm(charter: Charter, ctx: ShadowDecisionContext, state: ShadowB
     limits: { policy: ctx.risk, charter, weights, cashWeight: book.cashWeight },
     currentWeights: state.currentWeights,
     newRiskCandidates,
+    liquidity: book.liquidity,
   });
   return outcome(verdict);
 }

@@ -53,6 +53,8 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-51 | Reconsider the etf-trend-vol primary promotion metric: `net_sharpe_difference_vs_primary_benchmark` is nearly blind to the tail, but the strategy's thesis is drawdown reduction. Consider a Calmar/MAR- or Sortino-based gate, or an explicit max-drawdown constraint alongside the Sharpe test. Raised from the 2026-09-13 single-source machinery check (non-evidential). Any change is a new charter version | **Proposed** 2026-09-13 by Claude Code (owner to decide) | etf-trend-vol promotion criteria (charter version) |
 | D-52 | Optional file-based secrets fallback: `config/load.ts` reads a dotenv `${dataDir}/secrets.env` for a closed allowlist of credential keys (the data-source keys + `ANTHROPIC_API_KEY`) when the environment leaves them empty, because umbrelOS 1.x does not inject the app-data `.env` into the container while the data volume is reliably mounted. Environment always wins; the file can never set MODE, the sleeve role, or any behavioural config, so it cannot enable a live path | **Proposed** 2026-09-13 by Claude Code (owner to accept). Amended 0.1.12 (2026-09-13) to admit the two opt-in auto-ingest switches | unattended/autonomous ingest and the analyst key under the umbrelOS env gap |
 | D-53 | (Slices 1, 2a, 2b, 3a-1 and both halves of 3a-2 merged as PRs #81, #82, #83, #85, #86, #87; 3a-3 and 2c merged as PRs #100, #101; 3b built 2026-10-05; only 4 remains, blocked on the owner's paper keys + D-12.) Build the paper/shadow track toward live as bounded per-rung PRs (docs/AUTOMATION_AND_LIVE_GATES.md): (1) the sealed prospective decision record + append-only ledger + SHADOW/PAPER mode guard; (2) the shadow decision loop — 2a the pure per-arm target book, 2b the pure gate-and-seal function, 2c the mode-gated `after_close` job; (3) counterfactual fills + reconciler; (4) the Alpaca **paper** broker adapter + order lifecycle. Building the machinery does not climb the ladder: Rung-2 shadow **evidence** still cannot precede the Rung-1 experiment, and a strategy still has to pass its own gate (D-51). No live mode, `LIVE_AUTHORIZATION`, or broker credential is added by any slice; slice 4 needs the owner's paper keys and the D-12 sleeve decision | **Proposed** 2026-09-14 by Claude Code (owner chose the paper/shadow track this session) | prospective decision loop; PAPER rung needs paper Alpaca keys + D-12 |
+| D-54 | Reconciler breaks feed the shadow halt state: a break unresolved past one session holds both arms `HOLD_ONLY` (literal §8); shadow halts are sticky and relax only through a staged owner re-arm (`shadow rearm`), with each acknowledgement scoped to the break occurrence it resolves | **Proposed** 2026-10-05 by Claude Code; reading (a) owner-confirmed provisionally (Matt: "go with literal §8 for now"); readings (b) and (c) open | Experiment registration (reading (c)) |
+| D-55 | Liquidity and order-level limits. A decision-time liquidity check (ADV and price floors, fail-closed) is the decision gate's fourth verdict. A pure order-level predicate (size, ADV participation, spread, long-only, per-session counts, turnover) is built but not wired. The per-position initial-risk budget is not built, because the charter has no stop. Six conflicts between `risk.yaml`, the charter and the synthetic shadow book are the owner's | **Proposed** 2026-10-05 by Claude Code (Matt: "start on the liquidity and order-level limits") | Wiring the order-level predicate; experiment registration (conflict 1: the backtest does not model the order caps) |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -1323,6 +1325,97 @@ before any halt relaxes.
 
 **What it does not do.** No order, broker, account, live mode, or `LIVE_AUTHORIZATION` is involved. The re-arm CLI
 writes one ledger event and is the owner's act; Claude Code builds it and does not run it on the Pi.
+
+---
+
+## D-55 Liquidity and order-level limits: what is enforced now, and six conflicts the owner must resolve
+
+**Status:** Proposed 2026-10-05 by Claude Code, at Matt's request ("start on the liquidity and order-level
+limits"). These are the limit engines D-45 deferred.
+
+**What was built.**
+
+1. **Instrument liquidity, enforced at decision time** (`risk/liquidity.ts`, `evaluateLiquidityLimits`). Every
+   holding taking new or increased risk needs a 20-session dollar ADV of at least `minAdvUsd` and an
+   unadjusted price of at least `minPriceUsd`. Both come from raw bars, the charter's `adv_i` and `px_i`, so
+   they are real USD and the check means something even against the synthetic shadow book. A missing or
+   non-positive value fails closed (`LIQUIDITY_UNKNOWN`). Holds and reductions are never blocked, because
+   liquidity must not trap a position the book is leaving.
+2. **The decision gate's fourth verdict** (`decision/gate.ts`). New risk now needs halt, limits, liquidity and
+   compliance to clear. The liquidity input is required, not optional. The gate checks the increasing set it
+   derives itself, so a holding with no facts fails closed: coverage is enforced, not trusted. Shadow B1
+   supplies the facts from the same knowledge-scoped features that sized its book, so no new data read is
+   added. B0 stays halt-only.
+3. **Order-level limits as a predicate, not wired** (`risk/orders.ts`, `evaluateOrderLimits`). Over one
+   session's orders it names every breach and never re-sizes, splits or drops an order. Charter §10 says an
+   over-cap order "is split across sessions or rejected; it is never enlarged". Choosing between those is the
+   consumer's job, and a breaching exit must be sliced, never simply blocked.
+   - **Per order:** quantity, USD notional, and ADV participation, binding at the stricter of `risk.yaml` 1% and
+     the charter cost model's 0.5%.
+   - **Buys only:** the ADV and price floors, and the spread at order time, which fails closed when there is no
+     quote.
+   - **Long-only:** the session's sells of an entity may not exceed the shares held.
+   - **Per session:** order count; new positions, binding at the stricter of `risk.yaml` 3 and the charter's 5;
+     and gross turnover over NAV.
+
+   Nothing consumes it yet. Its consumer is the paper rung (D-53 slice 4) or a slicer, and its USD caps have no
+   meaning against the synthetic shadow book (conflict 3).
+4. **One shared instrument rule.** `instrumentLiquidityViolations` is used by both the gate path and the order
+   engine, so the two layers cannot disagree on it.
+
+28 tests. 25 mutations were run, one per guard, and every one was killed.
+
+**What was not built.**
+
+- **The per-position initial-risk budget** (`maxInitialRiskPerPositionPct` 0.35%, and `dailyNewRiskPctNav`,
+  which sums those budgets). Both are measured "from entry to approved stop distance" (PRODUCT_SPEC section 8).
+  This charter has no stop: §8 says "No price stop: volatility scaling and the trend flag are the loss
+  control". A volatility-based proxy would be a policy invention, not an implementation.
+- **A decision-time spread check.** End-of-day bars carry no quote, so the spread can only be checked at order
+  time.
+
+**Conflicts the owner must resolve.** Each item below is a verified fact. The decision in each is the owner's,
+not Claude Code's.
+
+1. **The order caps against the charter's weekly rebalance, and against the backtest evidence.** `risk.yaml`
+   allows 4 orders, 3 new positions and 25% gross turnover per session, and $1,500 notional per order. The
+   charter holds up to 5 positions, allows "at most 5" new positions per session ("a full turnover week is
+   allowed at this size"), and rebalances weekly in one pass. Building the book from cash takes up to five buys
+   of up to 20% each, which is already over the order, new-position and turnover caps in a single session.
+   `runBacktest` models none of the four caps. It models the charter's 5 entries and its 0.5% ADV pre-cap.
+   **So the evidence describes an execution the live caps would not allow in one session.** There are three
+   ways out:
+   - (i) revise `risk.yaml`'s order limits to fit the charter;
+   - (ii) execute a rebalance across sessions with a slicer, which §10 already names, and model that in the
+     backtest, which makes it a new strategy version;
+   - (iii) narrow the charter.
+
+   This belongs before registration, for the same reason as D-54(c).
+2. **The $1,500 notional cap against sleeve size.** A 20% position fits in one order only if the sleeve is at
+   most $7,500. At a sleeve of S dollars, an entry takes ceil(0.2·S / 1500) orders: about 7 at $50,000. Only
+   the owner knows the intended sleeve.
+3. **The USD size the shadow book models.** `SHADOW_INITIAL_CASH` (100,000) is synthetic, and USD caps need a
+   denomination. There are two options:
+   - (i) keep shadow scale-free with the USD caps unenforced there. That is a recorded fidelity gap, like the
+     ADV pre-cap note in `shadow-fills.ts`.
+   - (ii) configure a notional sleeve size for shadow, held in local config and never written into a record as a
+     household figure, and enforce the order predicate on it.
+4. **ADV participation.** `risk.yaml` says 1% (OD-3 resolved it "in favour of the file"). The charter's cost
+   model (`costs.max_participation_of_adv`) and its §10 prose both say 0.5%. The engine binds the stricter 0.5%.
+   In practice it never binds for this universe, because eligibility needs ADV of at least $50M and 0.5% of that
+   is $250,000 per order. The documents still disagree, which is the drift OD-3 warned about.
+5. **The turnover definition.** The policy says only "daily turnover % NAV". The engine reads it as gross
+   (buys plus sells), the stricter reading. One-way turnover would halve the measured figure.
+6. **The initial-risk budget without a stop.** One option is to declare it not applicable to a no-stop charter,
+   in `risk.yaml` or in the charter. The other is to define the proxy that stands in for a stop.
+
+**Recommendation (Claude Code's, not a decision).** Settle the intended sleeve size first, since conflicts 1 and
+2 both turn on it. With that number, set order caps that let the charter's weekly rebalance execute inside its
+delay window, so the backtested execution stays valid. If the caps have to stay tight, slicing is the
+alternative, but it is a new strategy version. On conflict 3, take (i) until the paper rung exists.
+
+**What it does not do.** No order, broker, account, credential, live mode or `LIVE_AUTHORIZATION` is involved. The
+order predicate forms and sends nothing. No `risk.yaml` or charter value is changed.
 
 ---
 

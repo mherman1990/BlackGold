@@ -1,15 +1,17 @@
 import { ZERO, type Dec } from "@blackgold/shared";
 import { evaluateHaltState, type HaltDecision, type HaltInput, type RiskState } from "../risk/halt.ts";
 import { evaluateRiskLimits, type RiskLimitsInput, type RiskVerdict } from "../risk/limits.ts";
+import { evaluateLiquidityLimits, type LiquidityFacts } from "../risk/liquidity.ts";
 import { evaluateCompliance, type ComplianceInput, type ComplianceVerdict } from "../compliance/engine.ts";
 
 /**
  * The deterministic decision gate (docs/PRODUCT_SPEC.md section 8; PLAN.md Phase 5 - "100% hard-rule
  * enforcement").
  *
- * This is the single place that composes the three independent verdicts into one go/no-go for NEW RISK:
+ * This is the single place that composes the four independent verdicts into one go/no-go for NEW RISK:
  *
  *   new risk may proceed  ==  halt state is NORMAL  AND  the proposed book respects every limit  AND
+ *                             every holding taking new or increased risk clears liquidity (D-55)  AND
  *                             every holding taking new or increased risk clears compliance
  *
  * It is fail-closed by construction: a single block from any engine makes `newRiskAllowed` false, and the
@@ -30,6 +32,9 @@ import { evaluateCompliance, type ComplianceInput, type ComplianceVerdict } from
  * (`MISSING_COMPLIANCE`): the gate must never admit new exposure it has not checked, and it cannot rely on the
  * caller to have remembered to submit it. Holdings that are held flat or reduced are not new risk and need no
  * candidate - that is what keeps a restricted position windable-down without tripping the new-risk gate.
+ *
+ * Liquidity coverage is enforced the same way: the gate passes the increasing set it derived, not a caller's
+ * list, so an increasing holding with no liquidity facts fails closed (`LIQUIDITY_UNKNOWN`).
  */
 
 export type CandidateCompliance = { symbol: string; verdict: ComplianceVerdict };
@@ -54,6 +59,12 @@ export type DecisionGateInput = {
    * canonical identity, never another holding it happens to list as an identifier.
    */
   newRiskCandidates: readonly Omit<ComplianceInput, "isNewRisk">[];
+  /**
+   * Liquidity facts (20-session dollar ADV and unadjusted price, USD) keyed as `limits.weights` is. Required, not
+   * optional: an absent map would be a silent skip. Every holding taking new or increased risk must have usable
+   * facts here or the gate fails closed; holds and reductions are not checked.
+   */
+  liquidity: ReadonlyMap<string, LiquidityFacts>;
 };
 
 export type DecisionGateVerdict = {
@@ -66,10 +77,12 @@ export type DecisionGateVerdict = {
   haltState: RiskState;
   halt: HaltDecision;
   limits: RiskVerdict;
+  /** The liquidity verdict over the holdings taking new or increased risk. */
+  liquidity: RiskVerdict;
   compliance: CandidateCompliance[];
   /** The holdings whose target weight exceeds their current weight: the set that must clear compliance. */
   increasedRisk: string[];
-  /** Every blocking reason across the three engines, flattened, for the decision ledger. Empty when allowed. */
+  /** Every blocking reason across the four engines, flattened, for the decision ledger. Empty when allowed. */
   blockedBy: string[];
 };
 
@@ -107,12 +120,13 @@ export function evaluateDecisionGate(input: DecisionGateInput): DecisionGateVerd
   }
   increasedRisk.sort();
   uncovered.sort();
+  const liquidity = evaluateLiquidityLimits({ policy: input.limits.policy, increasing: increasedRisk, facts: input.liquidity });
 
   // New risk requires the steady state: HALT_NEW_RISK, HOLD_ONLY, and EMERGENCY_FLATTEN all forbid it.
   const haltAllowsNewRisk = halt.state === "NORMAL";
   const complianceOk = compliance.every((c) => c.verdict.admitted);
   const coverageOk = uncovered.length === 0;
-  const newRiskAllowed = haltAllowsNewRisk && limits.admitted && complianceOk && coverageOk;
+  const newRiskAllowed = haltAllowsNewRisk && limits.admitted && liquidity.admitted && complianceOk && coverageOk;
 
   const blockedBy: string[] = [];
   if (!haltAllowsNewRisk) {
@@ -123,10 +137,11 @@ export function evaluateDecisionGate(input: DecisionGateInput): DecisionGateVerd
     else for (const f of halt.faults) blockedBy.push(`halt ${f.code}: ${f.detail}`);
   }
   for (const v of limits.violations) blockedBy.push(`limit ${v.code}: ${v.detail}`);
+  for (const v of liquidity.violations) blockedBy.push(`liquidity ${v.code}: ${v.detail}`);
   for (const c of compliance) for (const v of c.verdict.violations) blockedBy.push(`compliance ${c.symbol} ${v.code}: ${v.detail}`);
   for (const id of uncovered) {
     blockedBy.push(`compliance ${id} MISSING_COMPLIANCE: target weight increases but no new-risk compliance evaluation was supplied`);
   }
 
-  return { newRiskAllowed, haltState: halt.state, halt, limits, compliance, increasedRisk, blockedBy };
+  return { newRiskAllowed, haltState: halt.state, halt, limits, liquidity, compliance, increasedRisk, blockedBy };
 }
