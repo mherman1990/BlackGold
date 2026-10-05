@@ -22,6 +22,12 @@ const afterClose = (session: string, mins: number): UtcInstant => addMs(cal.sess
  * and written back to disk, because the job loads a charter FILE. The parse -> edit -> stringify round trip
  * keeps it a valid document under the real schema.
  */
+/**
+ * The tracked charter's version, which the shrunk test charter below keeps. Read rather than written as a literal,
+ * so cutting a new charter version does not silently empty every per-version query in this file.
+ */
+const CHARTER_VERSION = (parse(readFileSync(fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url)), "utf8")) as { charter_version: string }).charter_version;
+
 function writeShadowCharter(dir: string, decisionOffsetMinutes?: number): string {
   const src = fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url));
   const doc = parse(readFileSync(src, "utf8")) as Record<string, unknown>;
@@ -74,7 +80,7 @@ function writePolicyDir(dir: string, opts: { approveRestrictedList?: boolean } =
 function registerExperimentFor(db: Db, charterHash: string, registeredAt = "2026-03-01T00:00:00Z"): void {
   db.prepare(
     "INSERT INTO experiments (experiment_id, registered_at, registered_by, definition_json, definition_hash, labels_json) VALUES (?,?,?,?,?,?)",
-  ).run(`exp-${sha256Hex(charterHash).slice(0, 8)}`, registeredAt, "test", JSON.stringify({ charter: { strategy_id: "etf-trend-vol", charter_version: "0.2.0", charter_hash: charterHash } }), `sha256:${sha256Hex(charterHash)}`, "[]");
+  ).run(`exp-${sha256Hex(charterHash).slice(0, 8)}`, registeredAt, "test", JSON.stringify({ charter: { strategy_id: "etf-trend-vol", charter_version: CHARTER_VERSION, charter_hash: charterHash } }), `sha256:${sha256Hex(charterHash)}`, "[]");
 }
 
 const PATHS: PricePath[] = [
@@ -242,7 +248,7 @@ describe("shadow_decision job", () => {
     appendDecisionRecord(env.db, {
       recordVersion: DECISION_RECORD_VERSION,
       strategyId: "etf-trend-vol",
-      strategyVersion: "0.2.0",
+      strategyVersion: CHARTER_VERSION,
       charterHash,
       arm: "B0_PASSIVE",
       mode: "SHADOW",

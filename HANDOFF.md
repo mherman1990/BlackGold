@@ -7,7 +7,7 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 1057 tests (unit 990, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. If the count differs, trust the run and fix this line — it has been stale three times.
+4. `npm ci && npm run check`. All of lint, typecheck, 1085 tests (unit 1018, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. **Exception while 0.3.0 is unsigned:** the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs `charter.yaml`; any other failure is real. Do not "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
 
 ## 2. Repository guard
 
@@ -17,6 +17,8 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 **Newest first (2026-10-05).**
 
+- **`risk.yaml` 0.2.0 is drafted UNSIGNED alongside the charter (D-56 addendum, OD-11 to OD-13: D-55's conflicts 1, 4 and 6).** Its counts and turnover cap now admit the charter's one-pass weekly rebalance (11 orders, 5 new, 2.00 gross; the schema admits gross turnover up to 2), ADV participation is 0.5% in both files, and the stop-based risk budget is declared not applicable in the charter. Never restore the cleared approval and never set the two USD order caps: both are Matt's. `risk-orders.test.ts` fails if the operative file stops admitting the rebalance.
+- **The 0.3.0 charter is drafted and waits on Matt's signature (D-56); B-2 is decided (D-57).** Matt answered every charter-bundle and B-2 question, all with the recommended option. `charter.yaml` is 0.3.0 DRAFT, so **nothing is registrable** until he signs, and the strategy-charter tripwire is red until then. Signing is his act alone; never fill the approval block, even if asked to make it easier. What 0.3.0 changes: F2 is a promotion co-gate on chain-linked curves (`pass_fail.promotion_co_gates`), the mixed §16.1 case routes to owner review and never to ACTIVE (`pass_fail.mixed_verdict`), the §14.3 minimum is 100, the Secondary 2 readings are declared (`benchmarks.secondary_2_readings`), and the clock counts from registration. The three fields are optional with no defaults; **never add a `.default()` to a charter field**, because it injects a key into every parsed charter and moves every signed hash. The test pinning the signed 0.2.0 hash against a frozen fixture is the guard. After he signs, the registration procedure in §5 applies, from a **separate evaluation store** (D-57), not the current Pi store.
 - **D-55 is merged** (PR #109, `96394d2`). Its gateway follow-up is on the next PR: the hard caps now price a LIMIT sell at the higher of its limit and the bid, as the core order predicate does.
 
 - **D-54 is merged** (PR #108, `966fabf`). **D-55, the liquidity and order-level limits, is on the next PR.**

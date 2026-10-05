@@ -2,9 +2,17 @@
 # Engineering defaults, not investment advice. Matt must approve this file before Phase 1 implementation.
 # Percentages and money are DECIMAL STRINGS ("0.05" = 5%) so no binary float enters a limit.
 # Schema: config/schema/risk.schema.json
-version: "0.1.0"
-approvedBy: "Matt Herman"
-approvedAt: "2026-09-08T00:00:00Z"
+version: "0.2.0"
+# 0.1.0 was owner-approved 2026-09-08 (D-48). 0.2.0 changes four values, each the owner's choice of
+# 2026-10-05 folding D-55's conflicts 1 and 4 into charter 0.3.0 (D-56, OD-11 and OD-12):
+#   positionLimits.maxNewPositionsPerSession 3 -> 5, orderLimits.maxOrdersPerSession 4 -> 11,
+#   orderLimits.maxDailyTurnoverPctNav 0.25 -> 2.00 (gross), liquidity.maxAdvParticipationPct 0.01 -> 0.005.
+# The approval below was cleared, not carried, so the owner's name never stands on values he did not sign.
+# Until it is re-signed, the shadow track treats this file as a stale input and blocks new risk (fail closed).
+# To sign: set approvedBy and approvedAt. orderLimits.maxOrderNotionalUsd and maxOrderQuantity depend on the
+# sleeve size (D-55 conflict 2), which only the owner sets; set them here if they change, never in a prompt.
+approvedBy: Matt Herman
+approvedAt: 2026-10-05T00:00:00Z
 
 sleeve:
   maxPctOfLiquidInvestableAssets: "0.05"
@@ -24,7 +32,7 @@ positionLimits:
   maxSingleEtfWeightPct: "0.20"
   maxInitialRiskPerPositionPct: "0.0035"
   maxOpenPositions: 10
-  maxNewPositionsPerSession: 3
+  maxNewPositionsPerSession: 5 # the charter's max_new_positions_per_decision (OD-11)
   dailyNewRiskPctNav: "0.01"
 
 concentration:
@@ -46,7 +54,7 @@ volatility:
   lookbackDays: 63
 
 liquidity:
-  maxAdvParticipationPct: "0.01"
+  maxAdvParticipationPct: "0.005" # one number with the charter's cost model (OD-12); was 0.01
   minAdvUsd: "5000000"
   minPriceUsd: "5.00"
   maxSpreadBps: "50"
@@ -54,8 +62,8 @@ liquidity:
 orderLimits:
   maxOrderNotionalUsd: "1500"
   maxOrderQuantity: "1000"
-  maxOrdersPerSession: 4
-  maxDailyTurnoverPctNav: "0.25"
+  maxOrdersPerSession: 11 # 2 x max_positions + the cash leg: a one-pass weekly rebalance (OD-11)
+  maxDailyTurnoverPctNav: "2.00" # gross, buys plus sells: a full rotation sells and buys up to all of NAV (OD-11)
 
 eventBlackouts:
   earningsDaysBefore: 2

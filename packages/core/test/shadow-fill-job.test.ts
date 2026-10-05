@@ -22,6 +22,12 @@ const afterClose = (session: string, mins: number): UtcInstant => addMs(cal.sess
 
 // Fixture helpers mirror shadow-job.test.ts: the fill job composes with the decision job, so the environment
 // must be the one that seals real records (same shrunk charter, policies, experiment registration, market).
+/**
+ * The tracked charter's version, which the shrunk test charter below keeps. Read rather than written as a literal,
+ * so cutting a new charter version does not silently empty every per-version query in this file.
+ */
+const CHARTER_VERSION = (parse(readFileSync(fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url)), "utf8")) as { charter_version: string }).charter_version;
+
 function writeShadowCharter(dir: string, decisionOffsetMinutes?: number): string {
   const src = fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url));
   const doc = parse(readFileSync(src, "utf8")) as Record<string, unknown>;
@@ -70,7 +76,7 @@ function writePolicyDir(dir: string, opts: { approveRestrictedList?: boolean } =
 function registerExperimentFor(db: Db, charterHash: string): void {
   db.prepare(
     "INSERT INTO experiments (experiment_id, registered_at, registered_by, definition_json, definition_hash, labels_json) VALUES (?,?,?,?,?,?)",
-  ).run(`exp-${sha256Hex(charterHash).slice(0, 8)}`, "2026-03-01T00:00:00Z", "test", JSON.stringify({ charter: { strategy_id: "etf-trend-vol", charter_version: "0.2.0", charter_hash: charterHash } }), `sha256:${sha256Hex(charterHash)}`, "[]");
+  ).run(`exp-${sha256Hex(charterHash).slice(0, 8)}`, "2026-03-01T00:00:00Z", "test", JSON.stringify({ charter: { strategy_id: "etf-trend-vol", charter_version: CHARTER_VERSION, charter_hash: charterHash } }), `sha256:${sha256Hex(charterHash)}`, "[]");
 }
 
 const PATHS: PricePath[] = [
@@ -127,7 +133,7 @@ function setup(
 const events = (db: Db, kind: string): Record<string, unknown>[] =>
   (db.prepare("SELECT payload FROM ledger_events WHERE kind = ?").all(kind) as { payload: string }[]).map((r) => JSON.parse(r.payload) as Record<string, unknown>);
 
-const fillRecordsOf = (db: Db): ShadowFillRecord[] => shadowFillRecords(db, "etf-trend-vol", "0.2.0");
+const fillRecordsOf = (db: Db): ShadowFillRecord[] => shadowFillRecords(db, "etf-trend-vol", CHARTER_VERSION);
 
 describe("registerShadowFillJob gating", () => {
   it("registers only when a shadow charter is configured AND the mode seals prospective decisions", () => {
@@ -332,7 +338,7 @@ describe("shadow loop repairs (Codex, PR #102 round 3)", () => {
     appendShadowFillRecord(env.db, {
       recordVersion: SHADOW_FILL_RECORD_VERSION,
       strategyId: "etf-trend-vol",
-      strategyVersion: "0.2.0",
+      strategyVersion: CHARTER_VERSION,
       charterHash: loadCharterFile(env.charterPath).charterHash,
       arm: "B1_DETERMINISTIC",
       decisionAt: week1.decision_at,
@@ -513,7 +519,7 @@ describe("reconciler breaks feed the next decision's halt (D-54)", () => {
     // One sealed arm is not a finished decision: the job completes the pair.
     env.db
       .prepare("INSERT INTO decision_records (decision_at, sealed_at, strategy_id, strategy_version, charter_hash, arm, mode, new_risk_allowed, halt_state, record_json, record_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-      .run(friday.decisionAt, friday.decisionAt, "etf-trend-vol", "0.2.0", charterHash, "B0_PASSIVE", "SHADOW", 1, "NORMAL", "{}", "sha256:partial");
+      .run(friday.decisionAt, friday.decisionAt, "etf-trend-vol", CHARTER_VERSION, charterHash, "B0_PASSIVE", "SHADOW", 1, "NORMAL", "{}", "sha256:partial");
     expect(next(afterClose("2026-03-06", 90))).toEqual(friday);
 
     // A finished run for the instant, even one that sealed nothing (e.g. a visible skip), moves on.

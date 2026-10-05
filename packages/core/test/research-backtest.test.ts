@@ -221,6 +221,20 @@ describe("runBacktest", () => {
       expect(r.labels).not.toContain("STALE_BAR");
     });
 
+    // Codex P1, PR #111. The aggregate F2 reads the primary benchmark as a curve of its own, and
+    // `navDistortingSessions` sees only what the candidate held, so the benchmark's gaps need their own report.
+    // Omitted and stale are both seeded, and the recovery bar after the omission carries `GAP`, which must not
+    // appear: the same rule as `navDistortingSessions`.
+    it("reports the primary benchmark's own absent and stale sessions, whatever the candidate held", () => {
+      expect(reportBenchmarkSeries(setup().input).primaryDistortingSessions).toEqual([]);
+      const omitted = D("2026-04-17");
+      const stale = D("2026-05-15");
+      const m = buildMarket({ paths: PATHS, from, to, omitSessions: { VTI: [omitted] }, staleSessions: { VTI: [stale] } });
+      const input = setup({ pit: m.pit, calendar: m.calendar }).input;
+      expect(input.charter.benchmarks.primary).toBe("VTI");
+      expect(reportBenchmarkSeries(input).primaryDistortingSessions).toEqual([omitted, stale]);
+    });
+
     /** Net quantity of `entityId` at the close of `session`, from the run's own fills. */
     function quantityAt(r: ReturnType<typeof runBacktest>, entityId: string, session: IsoDate): Dec {
       let qty = ZERO;

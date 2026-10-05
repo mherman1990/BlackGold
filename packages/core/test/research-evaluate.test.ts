@@ -34,6 +34,11 @@ function evalCharter(mut: (c: Charter) => void = () => undefined): Charter {
     annual_volatility_target: ["0.10", "0.15"],
     rebalance_band_pct_points: ["2.0"],
   };
+  // Signed here, in memory, rather than inherited from the tracked file: these cases are about how an
+  // evaluation treats an APPROVED charter, and the tracked charter is unsigned whenever a new version awaits
+  // the owner's signature (0.3.0, from 2026-10-05). A test-only signer, never the owner's name; the case that
+  // needs a draft sets one explicitly.
+  c.approval = { ...c.approval, state: "APPROVED", approved_by: "Test Owner", approval_date: "2026-01-01", code_commit: "0123456789ab", approval_ref: "test" };
   mut(c);
   return c;
 }
@@ -440,6 +445,43 @@ describe("runEvaluation", () => {
     // verdict to be read as one. (Claude Code may not cite any run as promotion evidence in any case.)
     expect(typeof agg.citableAsEvidence).toBe("boolean");
     if (!agg.citableAsEvidence) expect(agg.citabilityReasons.length).toBeGreaterThan(0);
+  });
+
+  // Charter 0.3.0 makes F2 a promotion co-gate on the chain-linked curves (D-56). A chain-linked curve holds
+  // each window's own curve, rescaled, so its drawdown is at least as deep as the deepest window's - for the
+  // candidate and the primary benchmark separately. That pins the wiring: the aggregate reads the same two
+  // level series the per-split F2 reads, each to its own side.
+  it("reads F2 at the aggregate scope from the curves the per-split F2 reads", () => {
+    const c = walkForwardCharter();
+    sharedWalkForward ??= evaluateKinds(c, rollingMarket(), ["WALK_FORWARD"]);
+    const r = sharedWalkForward;
+    const dd = r.aggregate?.drawdown;
+    expect(dd).toBeDefined();
+    if (dd === undefined) return;
+    const perSplit = r.splits.map((s) => s.drawdown).filter((d) => d !== undefined);
+    expect(perSplit.length).toBe(r.splits.length);
+    const deepest = (xs: readonly string[]): Dec => xs.map((x) => new Dec(x)).reduce((a, b) => (b.lt(a) ? b : a));
+    const strategyDeepest = deepest(perSplit.map((d) => d.strategy));
+    const primaryDeepest = deepest(perSplit.map((d) => d.primaryBenchmark));
+    // Not vacuous only if the two legs' deepest windows differ, so a swapped wiring cannot satisfy both.
+    expect(strategyDeepest.eq(primaryDeepest)).toBe(false);
+    expect(new Dec(dd.candidateMaxDrawdown).lte(strategyDeepest)).toBe(true);
+    expect(new Dec(dd.primaryMaxDrawdown).lte(primaryDeepest)).toBe(true);
+    expect(dd.limitRatio).toBe(new Dec(c.pass_fail.max_drawdown_ratio).toFixed());
+  });
+
+  // Codex P1, PR #111: the benchmark's own gap has to reach the aggregate from the run, not only exist in
+  // `reportBenchmarkSeries`. The withheld reason is asserted by its text because only the benchmark report
+  // produces it; a candidate holding VTI that session would also withhold F2, through its NAV, for another reason.
+  it("withholds the aggregate F2 when the primary benchmark misses a session inside a walk-forward window", () => {
+    const c = walkForwardCharter();
+    const missing = D("2027-01-20");
+    const window = splitPlan(c).splits.find((s) => s.kind === "WALK_FORWARD" && s.evaluation.start <= missing && missing <= s.evaluation.end);
+    expect(window).toBeDefined();
+    const gapped = buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2027-03-31"), omitSessions: { VTI: [missing] } });
+    const dd = evaluateKinds(c, gapped, ["WALK_FORWARD"]).aggregate?.drawdown;
+    expect(dd?.clears).toBeUndefined();
+    expect(dd?.withheldBecause.join(" ")).toContain("primary benchmark's own bar");
   });
 
   it("produces no aggregate when no walk-forward split ran", () => {

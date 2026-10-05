@@ -1,39 +1,46 @@
 # Alpha Charter: `etf-trend-vol`
 
-> **⚠️ 0.2.0 revision pending owner signature (D-50, PR #57).** The prose below still describes the signed
-> **0.1.0** charter (APPROVED 2026-09-08, D-48). The proposed **0.2.0** revision — staged in `charter.yaml` as
-> DRAFT — **adopts Tiingo EOD daily bars (`tiingo.eod.bars.1d`) as the strategy's market-data source, replacing
-> the Alpaca IEX feed** (revises OD-4 / §6.2 and §24 item 4; Alpaca's free IEX feed does not reach the
-> 2007–2018 design window, Tiingo does). Adopting a new data source is a new strategy version, so 0.2.0 does
-> **not** inherit 0.1.0's evidence. Until the owner signs the 0.2.0 `approval:` block, the 0.1.0 charter below
-> remains binding; on signing, this prose is updated to 0.2.0 throughout.
+> **0.3.0 — DRAFT, awaiting owner signature (D-56).** This prose describes **0.3.0**, the one-batch cut that
+> settles every charter question before an experiment is registered: the Sharpe-difference primary metric is
+> **kept** and F2 becomes a **co-gate** on ACTIVE, read on chain-linked curves (§13, §16.2, §17; OD-5, OD-6); a
+> failed primary metric with Secondary 2 beaten goes to owner review and **never to ACTIVE** (§16.1, §17;
+> OD-7); §14.3's minimum is restated as the schedule's capacity, **100** blocks (OD-8); Secondary 2's two
+> readings are confirmed (§11; OD-9); the prospective clock runs **from registration** (§14.2; OD-10). Three of
+> D-55's conflicts are folded in: the operative `risk.yaml` must admit the one-pass weekly rebalance (§8; OD-11),
+> ADV participation is 0.5% in both files (§10; OD-12), and the stop-based initial-risk budget does not apply
+> (§8; OD-13). `config/examples/risk.yaml` 0.2.0 carries the policy side, **unsigned**, for the owner to sign
+> alongside this charter. Until the
+> owner signs the `approval:` block in `charter.yaml`, `assertRegistrable` refuses this version and **no version
+> is registrable** — 0.2.0 (signed 2026-09-12, D-50) is superseded in the tracked file and frozen at
+> `packages/core/test/fixtures/etf-trend-vol-charter-0.2.0-signed.yaml`. 0.3.0 inherits none of 0.2.0's
+> evidence, and 0.2.0 had none: nothing was registered and no run is citable.
 
-**Status: this specification is frozen** — its values are the ones in the owner-signed, executable `strategies/etf-trend-vol/charter.yaml` (APPROVED 2026-09-08, D-48), which is the binding approval and the only form the code executes. The `PROPOSED default` labels throughout this prose mark each value's origin as a Discovery proposal; all are now frozen into the signed charter, and changing any is a new charter version.
+**Status: this specification is a DRAFT of version 0.3.0.** Its values are the ones in `strategies/etf-trend-vol/charter.yaml`, the only form the code executes. The `PROPOSED default` labels throughout this prose mark each value's origin as a Discovery proposal; every value was frozen into the signed 0.1.0 and 0.2.0 charters, and those 0.3.0 changes are marked where they occur. Changing any value is a new charter version.
 
 | Field | Value |
 |---|---|
 | Strategy ID | `etf-trend-vol` |
-| Charter version | `0.1.0` (the executed `charter.yaml`; this prose file was drafted as `0.1.0-draft`) |
-| Companion schema | `strategies/etf-trend-vol/charter.yaml` (written and signed — the only form the code executes) |
+| Charter version | `0.3.0` (DRAFT). Prior: `0.2.0` signed 2026-09-12 (D-50); `0.1.0` signed 2026-09-08 (D-48) |
+| Companion schema | `strategies/etf-trend-vol/charter.yaml` (the only form the code executes) |
 | Owner | Matt Herman |
-| Author of draft | Black Gold Discovery Pack |
-| Approval state | APPROVED in `charter.yaml` (approved_by Matt Herman, 2026-09-08, D-48); D-32 owner-confirmed (§8). Registration hash assigned at experiment registration. |
+| Author of draft | Black Gold Discovery Pack (0.1.0); Claude Code prepared 0.2.0 and 0.3.0 for the owner's signature |
+| Approval state | DRAFT in `charter.yaml`; the 0.3.0 answers are the owner's (D-56, 2026-10-05) and bind when he signs. D-32 owner-confirmed (§8). Registration hash assigned at experiment registration. |
 | Intended phase | Phase 2 (first deterministic Alpha Charter), then Phase 5 shadow/paper |
 | Runtime LLM in signal | No |
 
-Every number in this document was a PROPOSED default and is now FROZEN into the owner-signed `charter.yaml` (D-48); the `PROPOSED` labels below mark origin, not that a value is still open. A change to any frozen value is a new charter version and a new experiment (see `docs/EXPERIMENT_PROTOCOL.md`), and may not be made to tune the strategy after a result is viewed.
+Every number in this document was a PROPOSED default, FROZEN into each owner-signed `charter.yaml`; the `PROPOSED` labels below mark origin, not that a value is still open. A change to any frozen value is a new charter version and a new experiment (see `docs/EXPERIMENT_PROTOCOL.md`), and may not be made to tune the strategy after a result is viewed.
 
 ## Owner approval block
 
-> **The binding approval is the signed `approval:` block in `charter.yaml`** — state `APPROVED`, approved_by `Matt Herman`, approval_date `2026-09-08`, code_commit `474d0dc`, approval_ref `docs/DECISIONS.md#D-39` (recorded as D-48). That block is the only form the code executes and the one `assertRegistrable` checks. The template below is a non-binding human mirror of that signature; Claude Code did not fill it in (signing is the owner's act), and the owner may countersign it here but need not.
+> **The binding approval is the `approval:` block in `charter.yaml`**, which for 0.3.0 is **unsigned**. The owner signs it by setting `state: APPROVED` and filling `approved_by`, `approval_date` and `code_commit`; `approval_ref` already points at `docs/DECISIONS.md#D-56`. That block is the only form the code executes and the one `assertRegistrable` checks. The template below is a non-binding human mirror; Claude Code did not fill it in (signing is the owner's act), and the owner may countersign it here but need not.
 
 ```
-Charter:        etf-trend-vol 0.1.0-draft
+Charter:        etf-trend-vol 0.3.0
 Approved by:    ______________________ (Matt Herman)
 Approval date:  ______________________ (UTC)
 Code commit:    ______________________
 Charter hash:   ______________________
-Decision refs:  docs/DECISIONS.md D-08 (mandate), D-09 (universe), D-10 (first charter), D-15 (risk budget), D-19 (data budget), D-24 (market data source)
+Decision refs:  docs/DECISIONS.md D-08 (mandate), D-09 (universe), D-10 (first charter), D-15 (risk budget), D-19 (data budget), D-24 (market data source), D-50 (Tiingo, 0.2.0), D-51 (primary metric), D-56 (the 0.3.0 bundle)
 Conditions:     ______________________
 ```
 
@@ -122,7 +129,7 @@ Adjusted series are used only for signals and total-return accounting. Unadjuste
 
 ### 6.2 Allowed data sources (candidates; each must be probed and recorded in `docs/CAPABILITY_REGISTER.md` before use)
 
-> **0.2.0 (pending signature):** the market-data source is **Tiingo EOD daily bars (`tiingo.eod.bars.1d`)**,
+> **0.2.0 (owner-signed 2026-09-12, D-50; unchanged in 0.3.0):** the market-data source is **Tiingo EOD daily bars (`tiingo.eod.bars.1d`)**,
 > replacing Alpaca IEX — the Alpaca free IEX feed only reaches ~2018, so the 2007–2018 design window cannot run
 > on it, while Tiingo covers the whole universe back past 2007 (verified: 96,288 bars, coverageRatio 0.9986 over
 > the design split). Corporate actions come from `ingest tiingo-actions` (D-49), flagged `UNVERIFIED_SINGLE_SOURCE`
@@ -166,11 +173,13 @@ Rule enforced in code and tested: no feature at `decisionAt` may read a bar whos
 | Entry rule | Rank eligible ETFs by `mom_i` descending. Enter any ETF ranked 1..5 that is not held. |
 | Hold rule (hysteresis) | Keep a held ETF while it remains eligible AND ranked 1..7. |
 | Book-slot priority | When the entry and hold rules together name more than 5 ETFs, every eligible held ETF ranked 1..7 keeps its book slot ahead of any newcomer and the lowest-ranked newcomers are left out until the book holds 5; this priority governs the book slot only and does not extend to the section 9 step 4 correlated-cluster cap, which stays strictly rank-ordered. |
-| Exit rule | Exit at the next decision if `trend_i = 0`, OR `mom_i <= mom_cash`, OR rank > 7, OR compliance restriction added, OR the charter is paused. No price stop: volatility scaling and the trend flag are the loss control. |
+| Exit rule | Exit at the next decision if `trend_i = 0`, OR `mom_i <= mom_cash`, OR rank > 7, OR compliance restriction added, OR the charter is paused. No price stop: volatility scaling and the trend flag are the loss control. **0.3.0 (OD-13):** so `risk.yaml`'s initial-risk budget, which is measured to a stop, does not apply to this strategy; its loss controls are volatility scaling, these exits, and the drawdown halts. |
 | Holding period | Not fixed; expected median 8 to 20 weeks, minimum one week by construction |
 | Rebalance rule | Compute targets weekly (section 9). Trade a line only if the absolute weight gap exceeds 2.0 percentage points of NAV, or on entry/exit. Cash leg absorbs residual. |
 | Maximum positions | 5 risk ETFs plus cash |
 | New positions per session | At most 5 (a full turnover week is allowed at this size) |
+
+**0.3.0 (OD-11): one-pass execution.** A weekly decision executes as one pass of orders within the execution delay, which is what the backtest simulates. The operative `risk.yaml` must therefore admit the widest rebalance this table allows: 2 x 5 + 1 = 11 orders (every held ETF out, five new ones in, and the cash leg), 5 new positions, and gross turnover of 2 x (1 - 0.02) = 1.96 of NAV. `risk.yaml` 0.2.0 sets 11, 5 and 2.00, and a CI test fails if it ever stops admitting this. The per-order dollar and share caps scale with sleeve size and are the owner's to set (D-55 conflict 2).
 
 The decision is fully determined by the frozen list, the rule table above, and point-in-time data. Two independent implementations from this document must produce identical target weights on identical data; that is an acceptance test.
 
@@ -189,7 +198,7 @@ Signal strength enters sizing only through `vol_i` and `cov`, never through mome
 ## 10. Capacity and liquidity constraints
 
 - Every universe member trades hundreds of millions to tens of billions USD per day. A sleeve at the proposed cap (5% of liquid household assets) is orders of magnitude below 0.1% ADV participation for every name.
-- Hard constraint in `risk.yaml`: any single order at or below 0.5% of 20-session ADV and at or below the maximum order notional. If either would be exceeded, the order is split across sessions or rejected; it is never enlarged.
+- Hard constraint in `risk.yaml`: any single order at or below 0.5% of 20-session ADV and at or below the maximum order notional. (0.3.0, OD-12: `risk.yaml` said 1% from 0.1.0 until 0.3.0, against this section's 0.5%; it now says 0.5%, the figure the cost model always used.) If either would be exceeded, the order is split across sessions or rejected; it is never enlarged.
 - The strategy has effectively unlimited capacity at household scale. Capacity is not a falsifier here; cost and whipsaw are.
 
 ## 11. Benchmarks
@@ -198,8 +207,8 @@ Signal strength enters sizing only through `vol_i` and `cov`, never through mome
 |---|---|---|
 | Primary | VTI total return, dividends reinvested | The mandate's passive alternative (`B0_PASSIVE`) |
 | Secondary 1 | Exposure-matched blend: `e * VTI + (1 - e) * BIL`, where `e` is the strategy's realized average equity weight in each calendar month, applied ex post | Separates "held less equity" from "held better equity" |
-| Secondary 2 | Static volatility-controlled VTI: VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator, remainder in BIL | Isolates what trend selection adds beyond volatility control alone |
-| Secondary 3 | Equal-weight of the 13 risk ETFs, rebalanced monthly | Isolates what selection adds beyond a naive diversified basket |
+| Secondary 2 | Static volatility-controlled VTI: VTI scaled to a 10% ex-ante volatility target with the same 63-day estimator, remainder in BIL. **0.3.0 (OD-9):** re-scaled weekly, at the strategy's own decision instants; on a session that is both an ex-date and a rebalance, the distribution is cash to the pre-open holder and is reallocated at the open with the rebalance | Isolates what trend selection adds beyond volatility control alone |
+| Secondary 3 | Equal-weight of the admitted risk ETFs (12 since OD-1 excluded XLE; this row said 13 before 0.3.0), rebalanced monthly | Isolates what selection adds beyond a naive diversified basket |
 | Secondary 4 | SPY total return | Familiar comparator only |
 | Attribution | Regression of monthly excess returns on market, size, value, momentum factors from a documented free factor library, if licence permits | Explain, not judge |
 
@@ -227,6 +236,8 @@ Results are reported gross and net at base, adverse and stress. A result that ch
 
 Pass threshold (PROPOSED): point estimate at least +0.10 and the bootstrap interval excludes zero on the aggregate walk-forward out-of-sample set. Failure to meet either is a fail, not "inconclusive but promising."
 
+**Promotion co-gate (0.3.0, OD-5).** The primary metric is unchanged. In addition, never instead, F2 (section 16.2) must clear on the aggregate walk-forward out-of-sample set before the charter may go to ACTIVE (section 17): the strategy's maximum drawdown at or below 0.75 times VTI's, both read on the chain-linked curves of the pooled windows (OD-6). The strategy's stated purpose is drawdown reduction, and this makes that purpose falsifiable on its own terms without softening the return hurdle. The 0.75 ratio was already this section's stated target, so no threshold is new.
+
 **Secondary risk metrics:** maximum drawdown and ratio to VTI maximum drawdown (target at or below 0.75); Calmar; CAGR; worst 21-session return; annualized one-way turnover; average equity exposure; months in cash above 50%; excess return versus Secondary 1 and Secondary 2; after-tax scenario CAGR; realized versus assumed cost in shadow/paper.
 
 ## 14. Evaluation design
@@ -248,10 +259,13 @@ Purging and embargo: momentum windows overlap, so yearly blocks are evaluated wi
 
 From registration, every weekly decision is written to the counterfactual ledger before the next open, for arms `B0_PASSIVE` and `B1_DETERMINISTIC`. There is no `C1_LLM_OVERLAY` arm for this charter. Prospective observations are scored with the same cost model and compared to the broker's paper fills once `PAPER` starts.
 
+**0.3.0 (OD-10):** these decisions count toward section 17's 26-week SHADOW to PAPER minimum and section 14.3's 52-week minimum **from registration**, not from the owner's ACTIVE acceptance. Promotion past SHADOW still requires ACTIVE.
+
 ### 14.3 Minimum useful number of independent decisions
 
-- Weekly decision dates in the registered history: about 990. Effective independent observations are far fewer because the 12-month signal overlaps; the charter counts non-overlapping monthly blocks: about 225 historically, about 155 in design and 72 in holdout.
-- Minimum historical: 150 monthly-equivalent out-of-sample blocks spanning at least two drawdowns of 20% or more in VTI. Met by the proposed dates.
+- Weekly decision dates in the registered history: about 990. Effective independent observations are far fewer because the 12-month signal overlaps; the charter counts non-overlapping 21-session blocks: 138 in design (2,917 sessions), 71 in holdout (1,510), and 102 in the registered walk-forward out-of-sample set (9 splits, 2,143 sessions, 2010-06-28 to 2018-12-31). Through 0.2.0 this line said "about 155 in design and 72 in holdout"; both were wrong against the exchange calendar.
+- Minimum historical (0.3.0, OD-8): **100** monthly-equivalent blocks in the aggregate walk-forward out-of-sample set. This is the registered schedule's capacity, stated as such, not an independent statistical requirement. Through 0.2.0 the minimum was 150, which no walk-forward schedule inside the design window can reach (the whole window is 138). Shortening the walk-forward window to bring 2008 into the set was declined: the 2026-09-13 design run had already shown how the strategy fared there.
+- Disclosure, not a precondition (0.3.0, OD-8): through 0.2.0 this minimum also required the set to span two drawdowns of 20% or more in VTI, and called that "met". It is not established. The 2007–2009 bear market falls in the first training window, outside the set; 2011 and 2018 Q4 are each near the 20% line, unverified on the store; 2020 and 2022 are in the sealed holdout. The aggregate reports VTI's own chain-linked maximum drawdown, so a reader can see what the set contains.
 - Minimum prospective before `PAPER` to `LIVE_MANUAL` may be considered: 52 weekly decisions (12 months) with zero hard-rule violations. This proves operations, not alpha. The charter states plainly that 12 months of weekly data cannot distinguish skill from noise for this strategy.
 - Minimum prospective before any `LIVE_LIMITED` request: 36 months of sealed observations, or a written owner decision that historical plus holdout evidence carries the weight.
 
@@ -276,10 +290,12 @@ Trial count: 2 x 2 x 1 x 3 x 3 x 2 = 72 grid members, plus the registered point 
 
 After realistic base costs, the strategy fails to improve the primary metric over VTI on the aggregate walk-forward out-of-sample set AND fails to beat Secondary 2 (static volatility-controlled VTI). If either passes, the charter goes to owner review; if both fail, the hypothesis is rejected and the charter is marked `REJECTED` with results preserved.
 
+**0.3.0 (OD-7): this section governs rejection and section 17 governs promotion.** When the primary metric fails and Secondary 2 is beaten, the charter goes to owner review, and that review may end in `REJECTED` or in a new charter version — never in `ACTIVE` on a failed primary metric. Through 0.2.0 this case was routed to owner review here and to `REJECTED` by section 17.
+
 ### 16.2 Additional falsification conditions
 
 - F1: Primary metric point estimate below +0.10 or interval includes zero.
-- F2: Maximum drawdown not below 0.75 x VTI maximum drawdown.
+- F2: Maximum drawdown not at or below 0.75 x VTI maximum drawdown. On the aggregate walk-forward out-of-sample set (0.3.0, OD-6) both drawdowns are read on chain-linked curves: each window's levels rescaled to start where the previous window's curve ended, so a drawdown that runs across a window boundary is measured whole. A data gap, in an instrument the strategy held or in the benchmark's own bars, withholds it in both directions. From 0.3.0, F2 is also a promotion co-gate (section 13).
 - F3: Sign of the primary metric flips under adverse costs or a one-session extra delay.
 - F4: Removing the single best 12-month window flips the sign (single-episode dependence).
 - F5: Fewer than 75% of grid members agree in sign.
@@ -308,8 +324,8 @@ Reported separately: 2007-2009 (GFC and 2009 rebound whipsaw), 2011, 2015-2016, 
 | Transition | Rule |
 |---|---|
 | DRAFT to REGISTERED | Owner approval block signed; charter hash and code commit recorded; holdout sealed; trial ledger opened. |
-| REGISTERED to ACTIVE (SHADOW) | Phase 2 research complete; leakage report clean; primary metric passed; owner accepts in writing. If the metric fails, the charter goes to REJECTED, never to ACTIVE. |
-| SHADOW to PAPER | 26 weekly sealed decisions with zero missing records and zero hard-rule violations. |
+| REGISTERED to ACTIVE (SHADOW) | Phase 2 research complete; leakage report clean; primary metric passed; F2 cleared on the aggregate walk-forward out-of-sample set (0.3.0, OD-5); owner accepts in writing. If the primary metric fails, the charter never goes to ACTIVE: it is REJECTED when Secondary 2 is not beaten either, and goes to owner review when it is, ending in REJECTED or a new charter version (section 16.1, OD-7). |
+| SHADOW to PAPER | 26 weekly sealed decisions, counted from registration (0.3.0, OD-10), with zero missing records and zero hard-rule violations. |
 | PAPER to LIVE_MANUAL | Section 14.3 prospective minimum; Phase 6 gateway complete; `LIVE_PROMOTION.md` and `LIVE_AUTHORIZATION` artifact; operational and investment scorecards reviewed. |
 | Downgrade | Any hard-rule violation, unresolved high-severity incident, cost calibration error above 2x assumed, unapproved version change, or expired authorization returns the strategy to SHADOW or PAPER (see `docs/AUTOMATION_AND_LIVE_GATES.md`). |
 | PAUSE | F6 triggers, data source outage above the staleness budget, or owner request. Positions move to HOLD_ONLY exits only. |
@@ -352,7 +368,18 @@ Trivial. Fourteen daily series, a 13x13 covariance, and a rank. Compute under on
 
 ## 24. Open decisions blocking registration
 
-1. Compliance policy on diversified-ETF look-through (decides XLE, flags XLI/XLP).
-2. Live cash instrument (BIL, SGOV, or plain cash).
-3. Approval of `risk.yaml` defaults referenced here (20% ETF cap, 2% minimum cash, 0.5% ADV participation, 10% vol target).
-4. Approval of the free data source after the capability probe.
+All thirteen carry a written resolution in `charter.yaml`. OD-1 to OD-4 were resolved for 0.1.0 (D-39, OD-4 revised for 0.2.0 under D-50); OD-5 to OD-13 are the owner's answers of 2026-10-05 (D-56) and bind when he signs 0.3.0.
+
+1. Compliance policy on diversified-ETF look-through (decides XLE, flags XLI/XLP). Look-through applies; XLE excluded.
+2. Live cash instrument (BIL, SGOV, or plain cash). BIL.
+3. Approval of `risk.yaml` defaults referenced here (20% ETF cap, 2% minimum cash, 1% ADV participation, 10% vol target). Approved as in the file; this item once said 0.5%, which did not match it (D-39).
+4. Approval of the free data source after the capability probe. Tiingo EOD daily bars from 0.2.0.
+5. Is the Sharpe-difference primary metric the right gate for a drawdown-reduction strategy? Kept, plus F2 as a promotion co-gate.
+6. Which maximum drawdown F2 reads across walk-forward windows that each restart from cash. The chain-linked curve.
+7. Sections 16.1 and 17 disagreed on a failed primary metric with Secondary 2 beaten. Owner review, never ACTIVE.
+8. Section 14.3's 150-block minimum against the schedule's 102. Restated as 100, the schedule's capacity.
+9. Secondary 2's re-scaling cadence and ex-date income on a rebalance session. Both confirmed as implemented.
+10. Whether prospective decisions count from registration or from ACTIVE. From registration.
+11. D-55 conflict 1: `risk.yaml`'s order caps against the one-pass weekly rebalance. The policy gives way: 11 orders, 5 new positions, 2.00 gross turnover.
+12. D-55 conflict 4: ADV participation 0.5% here, 1% in `risk.yaml`. 0.5% in both.
+13. D-55 conflict 6: the stop-based initial-risk budget for a charter with no stop. Not applicable to this strategy.

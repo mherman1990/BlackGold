@@ -1,5 +1,7 @@
-import { Dec, ONE, hashJson, type IsoDate } from "@blackgold/shared";
+import { Dec, ONE, ZERO, hashJson, type IsoDate } from "@blackgold/shared";
+import type { TRPoint } from "../market/series.ts";
 import type { Charter } from "../strategy/charter.ts";
+import { maxDrawdown } from "./benchmarks.ts";
 import { annualizedSharpeDifference, stationaryBootstrapPaired, type BootstrapResult } from "./stats.ts";
 import type { SharpeInputPoint } from "./report.ts";
 import type { SplitKind } from "./walkforward.ts";
@@ -33,12 +35,22 @@ import type { SplitKind } from "./walkforward.ts";
  *    product of the per-split total returns. Summing them is wrong by more than rounding over eight windows,
  *    and the error does not cancel between the strategy and its comparator.
  *
+ * It also reads F2 at the same scope, because charter 0.3.0 makes F2 a co-gate on section 17's REGISTERED ->
+ * ACTIVE transition (`pass_fail.promotion_co_gates`, D-56), and reports which of section 17's quantitative
+ * conditions the pooled set meets. The owner's written acceptance is the other condition, and it is never
+ * computed.
+ *
  * What it does NOT do: decide anything. A REJECT here is a computed reading of a preregistered rule, not an
- * owner decision, and section 16.1's conflict with section 17 is surfaced rather than resolved (CLAUDE.md,
- * "What standing authorization never covers").
+ * owner decision. Where sections 16.1 and 17 disagree, the conflict is surfaced unless the charter itself
+ * resolves it (`pass_fail.mixed_verdict`); this module never picks a side (CLAUDE.md, "What standing
+ * authorization never covers").
  */
 
-export const AGGREGATE_VERSION = 1;
+/** 2: aggregate F2, section 17's conditions, charter-declared mixed-verdict routing and Secondary 2 readings. */
+export const AGGREGATE_VERSION = 2;
+
+/** One point of a total-return level series. F2's chain-link reads nothing else. */
+export type IndexLevel = Pick<TRPoint, "session" | "trIndex">;
 
 /**
  * Section 16.1's three outcomes.
@@ -73,6 +85,20 @@ export type AggregateSplitInput = {
   secondary2TotalReturn: Dec | undefined;
   /** Why Secondary 2 was unusable on this split, when it was. */
   secondary2UnusableReason: string | undefined;
+  /**
+   * The candidate arm's and the primary benchmark's total-return levels over the split: the very series the
+   * per-split F2 (`drawdownCheck` in evaluate.ts) takes its maximum drawdowns from, so the aggregate F2 is the
+   * same statistic at a wider scope.
+   */
+  candidateIndex: readonly IndexLevel[];
+  primaryIndex: readonly IndexLevel[];
+  /**
+   * Sessions in the split where the primary benchmark's OWN bar was absent or carried forward
+   * (`reportBenchmarkSeries`). `navDistortingSessions` cannot carry these: it covers only what the candidate
+   * held, and the benchmark is a curve in its own right in F2. A missing or stale benchmark mark can only make
+   * its drawdown shallower, which makes F2 harder to clear - a co-gate failure the data did not earn.
+   */
+  primaryDistortingSessions: readonly IsoDate[];
   /**
    * Sessions where a HELD instrument's bar was absent or carried forward in this split's run
    * (`BacktestResult.navDistortingSessions`). Not the same thing as `promotionBlockingCodes`: a run carrying
@@ -139,6 +165,53 @@ export type AggregateSecondary2 = {
   beats: boolean;
 };
 
+/**
+ * F2 on the aggregate walk-forward out-of-sample set: "maximum drawdown not at or below max_drawdown_ratio
+ * times the primary benchmark's maximum drawdown".
+ *
+ * Each window is backtested from its own start, so "the" maximum drawdown across nine windows has to be
+ * defined. Charter 0.3.0 defines it on the **chain-linked curve** (owner's choice, D-56): each split's levels
+ * rescaled to start where the previous split ended, for the candidate and for the primary benchmark alike.
+ * That is the construction the second prong already uses for total returns, and unlike a worst-single-window
+ * reading it catches a drawdown that runs across a split boundary.
+ */
+export type AggregateDrawdown = {
+  /** Maximum drawdown of the candidate's chain-linked curve, non-positive. */
+  candidateMaxDrawdown: string;
+  /** Maximum drawdown of the primary benchmark's chain-linked curve, non-positive. */
+  primaryMaxDrawdown: string;
+  /** |candidate| / |primary|. `undefined` when the primary never drew down. */
+  ratio: string | undefined;
+  limitRatio: string;
+  /**
+   * F2 clears: |candidate| <= `max_drawdown_ratio` x |primary|, the per-split rule at the aggregate scope.
+   *
+   * Tri-state, and withheld in BOTH directions on a data gap. A carried-forward mark on a held instrument
+   * distorts the candidate's levels by an amount and sign that depend on where the gap falls, which is the
+   * owner's gap rule (D-51) for both section 16.1 prongs; a drawdown read off the same NAV is no sounder.
+   */
+  clears: boolean | undefined;
+  /** Why `clears` is `undefined`, when it is. */
+  withheldBecause: string[];
+};
+
+/**
+ * Section 17's REGISTERED -> ACTIVE conditions that a computation can speak to: the primary metric passed,
+ * and every co-gate the charter registers clears. Owner acceptance in writing is the remaining condition and
+ * is deliberately absent - no field here can stand in for it.
+ */
+export type AggregatePromotionConditions = {
+  primaryMetricPasses: boolean | undefined;
+  coGates: { id: string; clears: boolean | undefined }[];
+  /**
+   * Three-valued conjunction over a COMPLETE pool: `false` when any condition is known to fail, `true` only
+   * when every one is known to pass, `undefined` otherwise. A partial pool gives `undefined` both ways, for
+   * the reason a partial pool gets no section 16.1 verdict.
+   */
+  met: boolean | undefined;
+  reasons: string[];
+};
+
 export type AggregateWalkForward = {
   aggregateVersion: number;
   strategyId: string;
@@ -168,6 +241,10 @@ export type AggregateWalkForward = {
   primaryMetric: AggregatePrimaryMetric | undefined;
   /** Section 16.1's second prong. `undefined` when any pooled split lacked a usable Secondary 2. */
   secondary2: AggregateSecondary2 | undefined;
+  /** F2 at the aggregate scope. `undefined` when nothing was pooled. */
+  drawdown: AggregateDrawdown | undefined;
+  /** Section 17's computable REGISTERED -> ACTIVE conditions. */
+  promotion: AggregatePromotionConditions;
   /** Why the second prong is unmeasured, per split. Empty when it is measured. */
   secondary2UnmeasuredReasons: string[];
   verdict: Section161Verdict;
@@ -176,7 +253,8 @@ export type AggregateWalkForward = {
   /**
    * Set only in the one case where sections 16.1 and 17 disagree: the primary metric fails and Secondary 2
    * passes. Section 16.1 routes that to owner review; section 17 says "If the metric fails, the charter goes
-   * to REJECTED, never to ACTIVE." Surfaced, never resolved here - resolving it is a charter edit.
+   * to REJECTED, never to ACTIVE." Surfaced, never resolved here - resolving it is a charter edit, and a
+   * charter that makes it (`pass_fail.mixed_verdict`, 0.3.0) gets no conflict.
    */
   charterConflict: string | undefined;
   /** True only when every pooled split is citable AND the pool is the whole schedule. */
@@ -203,12 +281,43 @@ export class AggregateScopeError extends Error {
  *
  * Both are implementations of a charter silence rather than of a charter instruction, which is the D-32
  * shape: Claude Code implemented a reading, and the owner confirms or overrules it before the number is
- * treated as decisive. Remove an entry when `docs/DECISIONS.md` records the owner's answer to it.
+ * treated as decisive. The owner confirmed both on 2026-10-05 (D-56), and a charter that declares them
+ * (`benchmarks.secondary_2_readings`, 0.3.0) no longer carries these caveats. A charter that does not - 0.2.0
+ * - still does, because the confirmation is part of the version that records it.
+ *
+ * The second entry said the opposite of the code until 2026-10-05: it described close reinvestment, the
+ * index's convention, as what Secondary 2 does, when `legSplit` (benchmarks.ts) credits a rebalance-session
+ * distribution to the pre-open holder as cash and reallocates it at the open. Corrected rather than left,
+ * because this text rides on every verdict as a description of the comparator.
  */
 export const SECONDARY_2_OPEN_READINGS: readonly string[] = [
   "Secondary 2 re-scales weekly, at the strategy's own decision instants. Section 11 states the estimator, the target and the cash leg but not the cadence; re-scaling every session is equally literal and gives a different number (docs/analysis/2026-09-20-d51-primary-metric.md, section 2d).",
-  "Secondary 2 reinvests a distribution at the ex-date session's close, following the total-return index convention. Reinvesting at the open is defensible and would move the second prong.",
+  "On a session that is both an ex-date and a Secondary 2 rebalance, the distribution is credited to the pre-open holder as cash and reallocated at the open, with the rebalance. Section 11 is silent; the total-return index's close-reinvestment convention is the alternative and would move the second prong on exactly those sessions.",
 ];
+
+/**
+ * One continuous level series from per-split ones: each split's levels rescaled to start where the previous
+ * split's curve ended. Only each split's growth relative to its own first level carries over, because every
+ * window is backtested from its own start. The move from one split's last session to the next split's first
+ * belongs to neither window and is not invented here - the convention `linkTotalReturns` follows, since it
+ * links each window's first-to-last total return.
+ *
+ * `undefined` when a split's series does not start at a positive level, which no total-return index does.
+ */
+function chainLinkLevels(perSplit: readonly (readonly IndexLevel[])[]): { trIndex: Dec }[] | undefined {
+  const out: { trIndex: Dec }[] = [];
+  let carry = ONE;
+  for (const levels of perSplit) {
+    const base = levels[0]?.trIndex;
+    if (base === undefined) continue;
+    if (!base.gt(0)) return undefined;
+    const scale = carry.div(base);
+    for (const p of levels) out.push({ trIndex: p.trIndex.times(scale) });
+    const last = out[out.length - 1];
+    if (last !== undefined) carry = last.trIndex;
+  }
+  return out;
+}
 
 /** Chain-link total returns: (1 + r1)(1 + r2)... - 1. Each window is backtested from cash, so they multiply. */
 function linkTotalReturns(returns: readonly Dec[]): Dec {
@@ -392,6 +501,54 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
     };
   }
 
+  // ---- F2 on the chain-linked curves --------------------------------------------------------------
+  //
+  // Computed for every charter, because F2 is a section 16.2 falsifier whatever else a version registers;
+  // whether it gates promotion is `promotion_co_gates`' business, below.
+  let drawdown: AggregateDrawdown | undefined;
+  if (ordered.length > 0) {
+    const withheldBecause: string[] = [];
+    const missingLevels = ordered.filter((split) => split.candidateIndex.length === 0 || split.primaryIndex.length === 0);
+    if (missingLevels.length > 0) {
+      withheldBecause.push(
+        `no candidate or primary-benchmark levels for ${missingLevels.map((split) => split.splitId).join(", ")}; a curve missing a window is not the aggregate set`,
+      );
+    }
+    if (gappedSplits.length > 0) {
+      withheldBecause.push(
+        `${gappedSplits.length} of ${ordered.length} pooled split(s) carry a held instrument's absent or carried-forward bar, which distorts the candidate's levels by an amount and sign that depend on where the gap falls: ${gappedSplits.map((split) => split.splitId).join(", ")}`,
+      );
+    }
+    // The benchmark's own gaps (Codex P1, PR #111). Withheld both ways like the candidate's, per the owner's gap
+    // rule, though this one has a fixed direction: an absent or carried-forward mark can only shallow the
+    // benchmark's drawdown, so publishing would bias F2 toward failing.
+    const primaryGapped = ordered.filter((split) => split.primaryDistortingSessions.length > 0);
+    if (primaryGapped.length > 0) {
+      withheldBecause.push(
+        `the primary benchmark's own bar is absent or carried forward in ${primaryGapped.length} pooled split(s), which can only understate its drawdown: ${primaryGapped.map((split) => split.splitId).join(", ")}`,
+      );
+    }
+    const candidateCurve = chainLinkLevels(ordered.map((split) => split.candidateIndex));
+    const primaryCurve = chainLinkLevels(ordered.map((split) => split.primaryIndex));
+    if (candidateCurve === undefined || primaryCurve === undefined) {
+      withheldBecause.push("a split's level series does not start at a positive level, so it cannot be chain-linked");
+    }
+    const candidateMaxDrawdown = candidateCurve === undefined ? ZERO : maxDrawdown(candidateCurve);
+    const primaryMaxDrawdown = primaryCurve === undefined ? ZERO : maxDrawdown(primaryCurve);
+    const limitRatio = new Dec(c.pass_fail.max_drawdown_ratio);
+    const candidateAbs = candidateMaxDrawdown.abs();
+    const primaryAbs = primaryMaxDrawdown.abs();
+    drawdown = {
+      candidateMaxDrawdown: candidateMaxDrawdown.toFixed(8),
+      primaryMaxDrawdown: primaryMaxDrawdown.toFixed(8),
+      ratio: primaryAbs.isZero() ? undefined : candidateAbs.div(primaryAbs).toFixed(8),
+      limitRatio: limitRatio.toFixed(),
+      // The per-split rule, literally: triggered when |candidate| > limit x |primary| (`drawdownCheck`).
+      clears: withheldBecause.length > 0 ? undefined : !candidateAbs.gt(primaryAbs.times(limitRatio)),
+      withheldBecause,
+    };
+  }
+
   // ---- Section 16.1 -------------------------------------------------------------------------------
   //
   // Completeness is checked FIRST, before either prong is read. Section 16.1 is a statement about "the
@@ -435,9 +592,15 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
       );
       verdictReasons.push('section 16.1: "If either passes, the charter goes to owner review."');
       if (primaryPasses === false && secondary2Beats === true) {
-        charterConflict =
-          'Sections 16.1 and 17 disagree about this exact case. Section 16.1: "If either passes, the charter goes to owner review." Section 17: "If the metric fails, the charter goes to REJECTED, never to ACTIVE." The primary metric failed and Secondary 2 passed, so the two rules route the charter to different states. Which one governs is a charter question and therefore the owner\'s; it is not resolved here.';
-        verdictReasons.push("this is the case sections 16.1 and 17 disagree on; see `charterConflict`");
+        if (c.pass_fail.mixed_verdict === "OWNER_REVIEW_NEVER_ACTIVE") {
+          verdictReasons.push(
+            "the charter resolves this mixed case (pass_fail.mixed_verdict OWNER_REVIEW_NEVER_ACTIVE): owner review, which may end in REJECTED or a new charter version, never in ACTIVE on a failed primary metric",
+          );
+        } else {
+          charterConflict =
+            'Sections 16.1 and 17 disagree about this exact case. Section 16.1: "If either passes, the charter goes to owner review." Section 17: "If the metric fails, the charter goes to REJECTED, never to ACTIVE." The primary metric failed and Secondary 2 passed, so the two rules route the charter to different states. Which one governs is a charter question and therefore the owner\'s; it is not resolved here.';
+          verdictReasons.push("this is the case sections 16.1 and 17 disagree on; see `charterConflict`");
+        }
       }
     } else if (primaryPasses === false && secondary2Beats === false) {
       verdict = "REJECT";
@@ -462,6 +625,37 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
       }
     }
   }
+
+  // ---- Section 17's computable REGISTERED -> ACTIVE conditions -----------------------------------
+  //
+  // The primary metric, plus every co-gate the charter registers - never instead of it. Three-valued, like
+  // section 16.1: one known failure is enough to say the conditions are not met, while a pass needs every
+  // condition known to pass, which the withheld deflated-Sharpe adjustment keeps unreachable for now.
+  const coGates = (c.pass_fail.promotion_co_gates ?? []).map((id) => ({ id, clears: drawdown?.clears }));
+  const promotionReasons: string[] = [];
+  let promotionMet: boolean | undefined;
+  const conditions = [primaryMetric?.passes, ...coGates.map((g) => g.clears)];
+  if (!complete) {
+    promotionMet = undefined;
+    promotionReasons.push("the pool is not the whole walk-forward schedule, so no section 17 condition is read from it");
+  } else if (conditions.some((v) => v === false)) {
+    promotionMet = false;
+    if (primaryMetric?.passes === false) promotionReasons.push("the primary metric failed: section 17 admits no ACTIVE without it");
+    for (const g of coGates) if (g.clears === false) promotionReasons.push(`co-gate ${g.id} failed on the aggregate walk-forward set`);
+  } else if (conditions.every((v) => v === true)) {
+    promotionMet = true;
+    promotionReasons.push("the primary metric passed and every registered co-gate cleared; the owner's written acceptance is still required");
+  } else {
+    promotionMet = undefined;
+    if (primaryMetric?.passes === undefined) promotionReasons.push("the primary metric is unmeasured or withheld");
+    for (const g of coGates) if (g.clears === undefined) promotionReasons.push(`co-gate ${g.id} is unmeasured or withheld`);
+  }
+  const promotion: AggregatePromotionConditions = {
+    primaryMetricPasses: primaryMetric?.passes,
+    coGates,
+    met: promotionMet,
+    reasons: promotionReasons,
+  };
 
   // ---- Citability and caveats ---------------------------------------------------------------------
   const citabilityReasons: string[] = [];
@@ -499,7 +693,14 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
       `The pooled set holds ${independentDecisions} monthly-equivalent independent blocks against the charter's minimum of ${minimumIndependentDecisions} (section 14.3). Section 16.1 states no such precondition, so the verdict above is computed anyway - but the registered walk-forward schedule cannot on its own reach the count the charter calls a minimum useful number.`,
     );
   }
-  if (secondary2 !== undefined) for (const reading of SECONDARY_2_OPEN_READINGS) evidenceCaveats.push(reading);
+  if (drawdown !== undefined && ordered.length > 1) {
+    evidenceCaveats.push(
+      "F2 reads chain-linked curves, so the same restart from cash shapes them: during each window's warm-up the candidate holds cash and cannot draw down while the primary benchmark stays invested and can. The effect's direction is not fixed, but it acts at every boundary.",
+    );
+  }
+  if (secondary2 !== undefined && c.benchmarks.secondary_2_readings === undefined) {
+    for (const reading of SECONDARY_2_OPEN_READINGS) evidenceCaveats.push(reading);
+  }
 
   const citableAsEvidence = citabilityReasons.length === 0 && ordered.length > 0;
 
@@ -540,6 +741,8 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
     primaryMetric,
     secondary2,
     secondary2UnmeasuredReasons,
+    drawdown,
+    promotion,
     verdict,
     verdictReasons,
     charterConflict,

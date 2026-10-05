@@ -14,6 +14,7 @@ import {
   ModelManifestConfigSchema,
   processingDelayOverridesMs,
   ratioString,
+  grossTurnoverString,
   decString,
 } from "../src/index.ts";
 import { LIVE_MODES, MODES } from "@blackgold/shared";
@@ -100,6 +101,21 @@ describe("ratioString", () => {
     for (const f of ["risk.schema.json", "financial-picture.schema.json", "theme-membership.schema.json"]) {
       expect(readFileSync(`${ROOT}config/schema/${f}`, "utf8"), f).toContain(RATIO_PATTERN);
     }
+  });
+
+  // D-56, OD-11: gross turnover is buys plus sells over NAV, which a one-pass rebalance takes to nearly 2, so
+  // this one field is bounded at 2 rather than 1. Boundary both ways, and the bound must reach the emitted schema.
+  it("bounds gross turnover to 0-2, and the emitted risk schema carries the same bound", () => {
+    for (const bad of ["-0.1", "2.01", "2.5", "3"]) {
+      expect(() => grossTurnoverString.parse(bad), bad).toThrow();
+    }
+    for (const ok of ["0", "0.25", "1", "1.96", "2", "2.00"]) {
+      expect(() => grossTurnoverString.parse(ok), ok).not.toThrow();
+    }
+    const risk = (turnover: string) => RiskConfigSchema.safeParse({ orderLimits: { maxDailyTurnoverPctNav: turnover } }).success;
+    expect(risk("2.00")).toBe(true);
+    expect(risk("2.01")).toBe(false);
+    expect(readFileSync(`${ROOT}config/schema/risk.schema.json`, "utf8")).toContain("^([01](\\\\.\\\\d+)?|2(\\\\.0+)?)$");
   });
 });
 

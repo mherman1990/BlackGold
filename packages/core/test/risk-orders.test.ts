@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Dec } from "@blackgold/shared";
 import { RiskConfigSchema, type RiskConfig } from "../src/config/schema.ts";
+import { parseYamlConfig } from "../src/config/load.ts";
 import { loadCharterFile, type Charter } from "../src/strategy/charter.ts";
 import { bindingAdvParticipation, bindingNewPositionsPerSession, evaluateOrderLimits, type SessionOrder } from "../src/risk/orders.ts";
 
@@ -180,5 +182,64 @@ describe("evaluateOrderLimits: every breach is named, never resolved", () => {
     expect(v.admitted).toBe(false);
     expect(codes(v)).toEqual(["QTY_CAP", "NOTIONAL_CAP", "SPREAD_UNOBSERVED", "DAILY_TURNOVER"]);
     expect(orders[0]?.quantity.toFixed()).toBe("2000");
+  });
+});
+
+/**
+ * D-56, OD-11 and OD-12: the operative policy must admit the charter's one-pass weekly rebalance, because the
+ * backtest models none of the order caps and its evidence describes exactly that execution (D-55 conflict 1).
+ * Only the two sleeve-dependent USD caps are lifted here: they are D-55 conflict 2, set by the owner from a
+ * sleeve size that never reaches this repository's code or a model.
+ */
+describe("the operative risk.yaml admits the charter's one-pass weekly rebalance (D-56, OD-11)", () => {
+  const OPERATIVE: RiskConfig = parseYamlConfig(
+    readFileSync(fileURLToPath(new URL("../../../config/examples/risk.yaml", import.meta.url)), "utf8"),
+    RiskConfigSchema,
+    "risk.yaml",
+  );
+  const sleeveFree = (p: RiskConfig): RiskConfig => ({ ...p, orderLimits: { ...p.orderLimits, maxOrderNotionalUsd: "1000000000", maxOrderQuantity: "1000000" } });
+
+  // The widest rebalance the charter can ask for in one decision: every held ETF exits, five new ones enter,
+  // and the cash leg absorbs the difference - 2 x max_positions + 1 = 11 orders, 5 of them new positions, and
+  // gross turnover 0.98 + 0.90 + 0.08 = 1.96 of NAV.
+  const NAV = "100000";
+  const held = { XLK: "196", XLF: "196", XLV: "196", XLI: "196", XLP: "196", BIL: "20" };
+  const rotation = (): SessionOrder[] => [
+    ...["XLK", "XLF", "XLV", "XLI", "XLP"].map((e) => order(e, "SELL", "196", "100")),
+    ...["VTI", "IWM", "VTV", "XLU", "XLY"].map((e) => order(e, "BUY", "180", "100")),
+    order("BIL", "BUY", "80", "100"),
+  ];
+
+  it("states the bounds the charter implies, and the operative file meets them", () => {
+    expect(OPERATIVE.orderLimits.maxOrdersPerSession).toBeGreaterThanOrEqual(2 * CHARTER.rules.max_positions + 1);
+    expect(OPERATIVE.positionLimits.maxNewPositionsPerSession).toBeGreaterThanOrEqual(CHARTER.rules.max_new_positions_per_decision);
+    expect(new Dec(OPERATIVE.orderLimits.maxDailyTurnoverPctNav).gte(new Dec(2).times(new Dec(1).minus(CHARTER.sizing.min_cash_weight)))).toBe(true);
+    // OD-12: one ADV participation figure, so the backtested cap and the live cap cannot drift apart again.
+    expect(new Dec(OPERATIVE.liquidity.maxAdvParticipationPct).eq(CHARTER.costs.max_participation_of_adv)).toBe(true);
+    expect(bindingAdvParticipation(OPERATIVE, CHARTER).toFixed()).toBe("0.005");
+  });
+
+  it("admits the widest rotation, which the 0.1.0 caps refused on three counts", () => {
+    const orders = rotation();
+    expect(orders.length).toBe(11);
+    expect(run(orders, { navUsd: NAV, held, policy: sleeveFree(OPERATIVE) })).toEqual({ admitted: true, violations: [] });
+
+    // The same session under the 0.1.0 counts - why the backtested execution was not executable before.
+    const old = sleeveFree({
+      ...OPERATIVE,
+      positionLimits: { ...OPERATIVE.positionLimits, maxNewPositionsPerSession: 3 },
+      orderLimits: { ...OPERATIVE.orderLimits, maxOrdersPerSession: 4, maxDailyTurnoverPctNav: "0.25" },
+    });
+    expect(codes(run(orders, { navUsd: NAV, held, policy: old }))).toEqual(["MAX_ORDERS_PER_SESSION", "MAX_NEW_POSITIONS", "DAILY_TURNOVER"]);
+  });
+
+  it("still binds at its edges: a twelfth order, and gross turnover a cent past 2.00 of NAV", () => {
+    const policy = sleeveFree(OPERATIVE);
+    expect(codes(run([...rotation(), order("QQQ", "BUY", "1", "100")], { navUsd: NAV, held, policy }))).toContain("MAX_ORDERS_PER_SESSION");
+
+    // Exactly 2.00: sell the whole book and buy a whole new one. Admitted at the cap, refused one cent over.
+    const whole = { XLK: "1000" };
+    expect(codes(run([order("XLK", "SELL", "1000", "100"), order("VTI", "BUY", "1000", "100")], { navUsd: NAV, held: whole, policy }))).toEqual([]);
+    expect(codes(run([order("XLK", "SELL", "1000", "100"), order("VTI", "BUY", "1000", "100.00001")], { navUsd: NAV, held: whole, policy }))).toEqual(["DAILY_TURNOVER"]);
   });
 });

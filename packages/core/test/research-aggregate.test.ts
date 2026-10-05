@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Dec, hashJson, isoDate, type IsoDate } from "@blackgold/shared";
 import { fileURLToPath } from "node:url";
 import { charterHash, loadCharterFile, type Charter } from "../src/strategy/charter.ts";
-import { aggregateWalkForward, AggregateScopeError, SECONDARY_2_OPEN_READINGS, type AggregateSplitInput } from "../src/research/aggregate.ts";
+import { aggregateWalkForward, AggregateScopeError, SECONDARY_2_OPEN_READINGS, type AggregateSplitInput, type IndexLevel } from "../src/research/aggregate.ts";
 import { annualizedSharpe, annualizedSharpeDifference, stationaryBootstrapPaired } from "../src/research/stats.ts";
 import type { SharpeInputPoint } from "../src/research/report.ts";
 
@@ -16,12 +16,26 @@ import type { SharpeInputPoint } from "../src/research/report.ts";
  * test uses a pool that would otherwise reject, and the unmeasured-prong test uses one that would too.
  */
 
+/**
+ * The owner-signed 0.2.0 charter, frozen, not the tracked one. These cases were written against 0.2.0's
+ * semantics - the sections 16.1 / 17 conflict surfaced, Secondary 2's readings open - and the tracked
+ * charter has since been cut to 0.3.0, which resolves both. Reading a frozen version keeps each case meaning
+ * what it says; the 0.3.0 cases opt in through `V0_3_0` below.
+ */
 function charter(mut: (c: Charter) => void = () => undefined): Charter {
-  const base = loadCharterFile(fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url))).charter;
+  const base = loadCharterFile(fileURLToPath(new URL("./fixtures/etf-trend-vol-charter-0.2.0-signed.yaml", import.meta.url))).charter;
   const c = structuredClone(base);
   mut(c);
   return c;
 }
+
+/** What charter 0.3.0 adds to the aggregate's inputs (D-56), on top of the small-minimum fixture charter. */
+const V0_3_0 = (c: Charter): void => {
+  c.pass_fail.minimum_independent_decisions = 2;
+  c.pass_fail.promotion_co_gates = ["F2"];
+  c.pass_fail.mixed_verdict = "OWNER_REVIEW_NEVER_ACTIVE";
+  c.benchmarks.secondary_2_readings = { rescale: "WEEKLY_AT_DECISION_INSTANTS", ex_date_rebalance_income: "CASH_REALLOCATED_AT_OPEN" };
+};
 
 const RESAMPLES = 200;
 const SEED = 7;
@@ -53,6 +67,12 @@ function inputs(ss: readonly IsoDate[], legs: Legs): SharpeInputPoint[] {
 
 type SplitOverrides = Partial<AggregateSplitInput>;
 
+/** A level series over the split's first `values.length` sessions. */
+function levels(startDay: number, values: readonly string[]): IndexLevel[] {
+  const ss = sessions(startDay, values.length);
+  return values.map((v, i) => ({ session: ss[i] ?? isoDate("2026-01-01"), trIndex: new Dec(v) }));
+}
+
 function split(id: string, startDay: number, count: number, legs: Legs, over: SplitOverrides = {}): AggregateSplitInput {
   const ss = sessions(startDay, count);
   return {
@@ -63,6 +83,10 @@ function split(id: string, startDay: number, count: number, legs: Legs, over: Sp
     candidateTotalReturn: new Dec("0.10"),
     secondary2TotalReturn: new Dec("0.20"),
     secondary2UnusableReason: undefined,
+    // F2 clears on these by a wide margin (-5% against -20%), so a case that is not about F2 never trips it.
+    candidateIndex: levels(startDay, ["1", "0.95", "1.10"]),
+    primaryIndex: levels(startDay, ["1", "0.80", "1.10"]),
+    primaryDistortingSessions: [],
     navDistortingSessions: [],
     citableAsEvidence: true,
     citabilityReasons: [],
@@ -531,5 +555,152 @@ describe("aggregateWalkForward: hash", () => {
     expect(payload.charterHash).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(payload.secondary2?.candidateTotalReturn).toBeDefined();
     expect(typeof payload.citableAsEvidence).toBe("boolean");
+  });
+});
+
+describe("aggregateWalkForward: F2 on the chain-linked curves (charter 0.3.0, D-56)", () => {
+  // Chosen so the chain-linked reading the owner picked and the worst-single-window alternative disagree:
+  //   candidate  a: 1 -> 0.85   b: 1 -> 0.85   chain-linked -27.75%   worst window -15%
+  //   primary    a: 1 -> 0.75   b: flat        chain-linked -25%      worst window -25%
+  // The limit is 0.75 x 25% = 18.75%, so the chain-linked curve FAILS F2 and a worst-window reading would
+  // clear it. The candidate's drawdown runs across the boundary, which is the case the owner's choice exists
+  // to catch.
+  const spanningA = (over: SplitOverrides = {}): AggregateSplitInput =>
+    split("walk_forward/a", 2, 40, LOSING, { candidateIndex: levels(2, ["1", "1", "0.85"]), primaryIndex: levels(2, ["1", "1", "0.75"]), ...over });
+  const spanningB = (): AggregateSplitInput =>
+    split("walk_forward/b", 42, 40, LOSING, { candidateIndex: levels(42, ["1", "0.85", "0.85"]), primaryIndex: levels(42, ["1", "1", "1"]) });
+  const spanning = (): AggregateSplitInput[] => [spanningA(), spanningB()];
+
+  it("measures a drawdown that runs across a split boundary", () => {
+    const r = run(charter(V0_3_0), spanning());
+    expect(r.drawdown?.candidateMaxDrawdown).toBe("-0.27750000");
+    expect(r.drawdown?.primaryMaxDrawdown).toBe("-0.25000000");
+    expect(r.drawdown?.ratio).toBe("1.11000000");
+    expect(r.drawdown?.limitRatio).toBe("0.75");
+    expect(r.drawdown?.clears).toBe(false);
+    expect(r.drawdown?.withheldBecause).toEqual([]);
+  });
+
+  it("applies the per-split rule at its boundary: exactly the limit clears, a hair over does not", () => {
+    const at = run(charter(V0_3_0), [split("walk_forward/a", 2, 40, LOSING, { candidateIndex: levels(2, ["1", "0.8125"]), primaryIndex: levels(2, ["1", "0.75"]) })]);
+    expect(at.drawdown?.ratio).toBe("0.75000000");
+    expect(at.drawdown?.clears).toBe(true);
+    const over = run(charter(V0_3_0), [split("walk_forward/a", 2, 40, LOSING, { candidateIndex: levels(2, ["1", "0.8124"]), primaryIndex: levels(2, ["1", "0.75"]) })]);
+    expect(over.drawdown?.clears).toBe(false);
+  });
+
+  it("withholds F2 in BOTH directions on a data gap", () => {
+    const gap: SplitOverrides = { navDistortingSessions: [isoDate("2026-01-09")] };
+    const failingGapped = run(charter(V0_3_0), [spanningA(gap), spanningB()]);
+    expect(run(charter(V0_3_0), spanning()).drawdown?.clears).toBe(false);
+    expect(failingGapped.drawdown?.clears).toBeUndefined();
+
+    const clearingB = split("walk_forward/b", 42, 40, LOSING);
+    expect(run(charter(V0_3_0), [split("walk_forward/a", 2, 40, LOSING), clearingB]).drawdown?.clears).toBe(true);
+    const clearingGapped = run(charter(V0_3_0), [split("walk_forward/a", 2, 40, LOSING, gap), clearingB]);
+    expect(clearingGapped.drawdown?.clears).toBeUndefined();
+    expect(clearingGapped.drawdown?.withheldBecause.join(" ")).toContain("walk_forward/a");
+  });
+
+  it("withholds F2 when a split has no levels, rather than linking the windows that do", () => {
+    const r = run(charter(V0_3_0), [split("walk_forward/a", 2, 40, LOSING, { candidateIndex: [] }), split("walk_forward/b", 42, 40, LOSING)]);
+    expect(r.drawdown?.clears).toBeUndefined();
+    expect(r.drawdown?.withheldBecause.join(" ")).toContain("walk_forward/a");
+  });
+
+  // Codex P1, PR #111: a benchmark gap on a session the candidate does not hold the benchmark leaves
+  // `navDistortingSessions` empty, so only the benchmark's own report can withhold it.
+  it("withholds F2 on the primary benchmark's own gap, which the candidate's NAV cannot see", () => {
+    const primaryGap: SplitOverrides = { primaryDistortingSessions: [isoDate("2026-01-09")] };
+    const clearingB = split("walk_forward/b", 42, 40, LOSING);
+    expect(run(charter(V0_3_0), [split("walk_forward/a", 2, 40, LOSING), clearingB]).drawdown?.clears).toBe(true);
+    const clearingGapped = run(charter(V0_3_0), [split("walk_forward/a", 2, 40, LOSING, primaryGap), clearingB]);
+    expect(clearingGapped.drawdown?.clears).toBeUndefined();
+    expect(clearingGapped.drawdown?.withheldBecause.join(" ")).toContain("primary benchmark's own bar");
+
+    expect(run(charter(V0_3_0), spanning()).drawdown?.clears).toBe(false);
+    expect(run(charter(V0_3_0), [spanningA(primaryGap), spanningB()]).drawdown?.clears).toBeUndefined();
+  });
+
+  it("says the restart from cash shapes the curves only when there is a boundary", () => {
+    expect(run(charter(V0_3_0), spanning()).evidenceCaveats.join(" ")).toContain("F2 reads chain-linked curves");
+    expect(run(charter(V0_3_0), [spanningA()]).evidenceCaveats.join(" ")).not.toContain("F2 reads chain-linked curves");
+  });
+});
+
+describe("aggregateWalkForward: section 17's computable conditions", () => {
+  const clean = (legs: Legs): AggregateSplitInput[] => [split("walk_forward/a", 2, 40, legs), split("walk_forward/b", 42, 40, legs)];
+  const f2Failing = (legs: Legs): AggregateSplitInput[] => [
+    split("walk_forward/a", 2, 40, legs, { candidateIndex: levels(2, ["1", "1", "0.85"]), primaryIndex: levels(2, ["1", "1", "0.75"]) }),
+    split("walk_forward/b", 42, 40, legs, { candidateIndex: levels(42, ["1", "0.85", "0.85"]), primaryIndex: levels(42, ["1", "1", "1"]) }),
+  ];
+
+  it("is not met on a failed primary metric, however F2 reads", () => {
+    const r = run(charter(V0_3_0), clean(LOSING));
+    expect(r.drawdown?.clears).toBe(true);
+    expect(r.promotion.primaryMetricPasses).toBe(false);
+    expect(r.promotion.met).toBe(false);
+    expect(r.promotion.reasons.join(" ")).toContain("primary metric failed");
+  });
+
+  it("is not met when the registered co-gate fails, even with the primary metric unknown", () => {
+    // The first prong clears its threshold and is withheld (no deflation), so it is unknown; F2 is a known
+    // failure, and one known failure settles a conjunction.
+    const r = run(charter(V0_3_0), f2Failing(CLEARING));
+    expect(r.promotion.primaryMetricPasses).toBeUndefined();
+    expect(r.promotion.coGates).toEqual([{ id: "F2", clears: false }]);
+    expect(r.promotion.met).toBe(false);
+  });
+
+  it("does not let F2 decide anything on a charter that registers no co-gate", () => {
+    // The same F2 failure under 0.2.0, which registered none: the conditions stay undetermined, because the
+    // only registered condition is the withheld primary metric.
+    const r = run(charter(SMALL_MINIMUM), f2Failing(CLEARING));
+    expect(r.drawdown?.clears).toBe(false);
+    expect(r.promotion.coGates).toEqual([]);
+    expect(r.promotion.met).toBeUndefined();
+  });
+
+  it("stays undetermined while any condition is unknown and none has failed", () => {
+    const r = run(charter(V0_3_0), clean(CLEARING));
+    expect(r.drawdown?.clears).toBe(true);
+    expect(r.promotion.met).toBeUndefined();
+    expect(r.promotion.reasons.join(" ")).toContain("withheld");
+  });
+
+  it("reads nothing from part of the schedule", () => {
+    const r = run(charter(V0_3_0), clean(LOSING), ["walk_forward/a", "walk_forward/b", "walk_forward/c"]);
+    expect(r.promotion.primaryMetricPasses).toBe(false);
+    expect(r.promotion.met).toBeUndefined();
+  });
+});
+
+describe("aggregateWalkForward: what charter 0.3.0 resolves", () => {
+  it("routes the mixed case to owner review with no conflict, and never to ACTIVE", () => {
+    const mixed = [split("walk_forward/a", 2, 40, LOSING, BEATS_SECONDARY_2), split("walk_forward/b", 42, 40, LOSING, BEATS_SECONDARY_2)];
+    const resolved = run(charter(V0_3_0), mixed);
+    expect(resolved.verdict).toBe("OWNER_REVIEW");
+    expect(resolved.charterConflict).toBeUndefined();
+    expect(resolved.verdictReasons.join(" ")).toContain("never in ACTIVE on a failed primary metric");
+    expect(resolved.promotion.met).toBe(false);
+
+    // The same pool under 0.2.0, whose sections 16.1 and 17 still disagree, keeps surfacing the conflict.
+    expect(run(charter(SMALL_MINIMUM), mixed).charterConflict).toContain("never to ACTIVE");
+  });
+
+  it("drops Secondary 2's open readings once the charter declares them", () => {
+    const splits = [split("walk_forward/a", 2, 40, LOSING), split("walk_forward/b", 42, 40, LOSING)];
+    const declared = run(charter(V0_3_0), splits);
+    expect(declared.secondary2).toBeDefined();
+    for (const reading of SECONDARY_2_OPEN_READINGS) expect(declared.evidenceCaveats).not.toContain(reading);
+    const open = run(charter(SMALL_MINIMUM), splits);
+    for (const reading of SECONDARY_2_OPEN_READINGS) expect(open.evidenceCaveats).toContain(reading);
+  });
+
+  it("describes the ex-date reading the code implements, not its alternative", () => {
+    // Until 2026-10-05 this caveat said Secondary 2 reinvests at the close; `legSplit` credits the pre-open
+    // holder with cash and reallocates it at the open.
+    expect(SECONDARY_2_OPEN_READINGS[1]).toContain("reallocated at the open");
+    expect(SECONDARY_2_OPEN_READINGS[1]).not.toMatch(/^Secondary 2 reinvests a distribution at the ex-date session's close/);
   });
 });

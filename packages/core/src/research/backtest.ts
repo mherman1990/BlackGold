@@ -305,6 +305,22 @@ export function loadExecutionSeries(input: ExecutionSeriesInput, entityId: strin
 }
 
 /**
+ * Whether a session's bar leaves a level series marked on something other than that session's own close: the
+ * bar is absent, or present but carried forward (`STALE_BAR`). The one rule behind both `navDistortingSessions`
+ * and the primary benchmark's distorting sessions. A bar's `GAP` flag is deliberately not a trigger - see the
+ * derivation of `navDistortingSessions` in `runBacktest`.
+ */
+export function barDistortsLevel(bar: LoadedBar | undefined): boolean {
+  return bar === undefined || bar.flags.includes("STALE_BAR");
+}
+
+/** The sessions of `sessions` on which `bars` leaves its level series distorted, in the order given. */
+export function distortingSessions(bars: readonly LoadedBar[], sessions: readonly IsoDate[]): IsoDate[] {
+  const bySession = new Map(bars.map((b) => [b.session, b]));
+  return sessions.filter((session) => barDistortsLevel(bySession.get(session)));
+}
+
+/**
  * The decision instant at the end of `[from, to]`. NAV marking and simulated fills read series as of this
  * time; it is also the as-of time the benchmark and cash series a result report is built from must use, so
  * those are the same series the run scored against. Mirrors the window-end derivation inside `runBacktest`.
@@ -323,11 +339,16 @@ function windowEndDecisionAt(input: BacktestInput): UtcInstant {
  * copy that could drift. Promotion-blocking quality flags on a benchmark's own actions still surface through
  * the series' construction, matching `runBacktest`.
  */
-export function reportBenchmarkSeries(input: BacktestInput): { primary: TRSeries; cash: TRSeries } {
+export function reportBenchmarkSeries(input: BacktestInput): { primary: TRSeries; cash: TRSeries; primaryDistortingSessions: IsoDate[] } {
   const endAt = windowEndDecisionAt(input);
+  const primary = loadExecutionSeries(input, input.charter.benchmarks.primary, endAt);
   return {
-    primary: loadExecutionSeries(input, input.charter.benchmarks.primary, endAt).tr,
+    primary: primary.tr,
     cash: loadExecutionSeries(input, input.charter.universe.cash_etf, endAt).tr,
+    // The primary's own gaps, over the run's sessions. `navDistortingSessions` sees only what the candidate
+    // HELD, so a missing or carried-forward benchmark bar on a session the candidate was out of it reached the
+    // aggregate F2 unseen, understating the benchmark's drawdown (Codex P1, PR #111).
+    primaryDistortingSessions: distortingSessions(primary.bars, input.calendar.sessionDates(input.from, input.to)),
   };
 }
 
@@ -773,7 +794,7 @@ export function runBacktest(input: BacktestInput): BacktestResult {
   for (const point of deterministic.points) {
     for (const entityId of point.held) {
       const bar = barsBySession.get(entityId)?.get(point.session);
-      if (bar === undefined || bar.flags.includes("STALE_BAR")) navDistorting.add(point.session);
+      if (barDistortsLevel(bar)) navDistorting.add(point.session);
     }
   }
   const navDistortingSessions = [...navDistorting].sort();

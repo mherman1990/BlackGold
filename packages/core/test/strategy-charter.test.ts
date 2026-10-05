@@ -62,7 +62,25 @@ describe("charter.yaml", () => {
     expect(c.features).toMatchObject({ momentum_lookback_sessions: 252, momentum_skip_sessions: 21, trend_sma_sessions: 200, volatility_sessions: 63, adv_sessions: 20 });
     expect(c.rules).toMatchObject({ entry_rank: 5, hold_rank: 7, max_positions: 5, execution_delay_bars: 1, decision_offset_minutes: 60 });
     expect(c.sizing).toMatchObject({ max_weight_per_etf: "0.20", min_cash_weight: "0.02", annual_volatility_target: "0.10" });
-    expect(c.pass_fail).toMatchObject({ primary_threshold: "0.10", bootstrap_block_sessions: 21, max_drawdown_ratio: "0.75", minimum_independent_decisions: 150 });
+    expect(c.pass_fail).toMatchObject({ primary_threshold: "0.10", bootstrap_block_sessions: 21, max_drawdown_ratio: "0.75", minimum_independent_decisions: 100 });
+  });
+
+  it("carries the owner's 0.3.0 answers (D-56) into the fields the code executes", () => {
+    // The OD resolutions are prose a person reads; these fields are what the aggregate actually acts on. A
+    // resolution with no executable counterpart would be a decision the code silently ignores.
+    const c = loaded();
+    expect(c.charter_version).toBe("0.3.0");
+    expect(c.approval.open_decisions.map((d) => d.id)).toEqual(["OD-1", "OD-2", "OD-3", "OD-4", "OD-5", "OD-6", "OD-7", "OD-8", "OD-9", "OD-10", "OD-11", "OD-12", "OD-13"]);
+    expect(c.approval.open_decisions.every((d) => d.resolution !== null)).toBe(true);
+    expect(c.pass_fail.primary_metric).toBe("net_sharpe_difference_vs_primary_benchmark"); // OD-5: kept
+    expect(c.pass_fail.promotion_co_gates).toEqual(["F2"]); // OD-5, OD-6
+    expect(c.pass_fail.mixed_verdict).toBe("OWNER_REVIEW_NEVER_ACTIVE"); // OD-7
+    expect(c.pass_fail.minimum_independent_decisions).toBe(100); // OD-8
+    expect(c.benchmarks.secondary_2_readings).toEqual({ rescale: "WEEKLY_AT_DECISION_INSTANTS", ex_date_rebalance_income: "CASH_REALLOCATED_AT_OPEN" }); // OD-9
+    expect(c.component_versions.features).toBe(2);
+    expect(c.component_versions.risk_policy).toBe(1); // OD-11, OD-12: the operative risk.yaml is 0.2.0
+    expect(c.costs.max_participation_of_adv).toBe("0.005"); // OD-12: unchanged; risk.yaml moved to it
+    expect(c.approval.approval_ref).toBe("docs/DECISIONS.md#D-56");
   });
 
   it("declares a 72-member sensitivity grid containing the registered point", () => {
@@ -70,6 +88,83 @@ describe("charter.yaml", () => {
     const members =
       g.momentum.length * g.trend_sma_sessions.length * g.volatility_sessions.length * g.ranks.length * g.annual_volatility_target.length * g.rebalance_band_pct_points.length;
     expect(members).toBe(72);
+  });
+});
+
+/**
+ * The owner signed 0.2.0 on 2026-09-12 against this exact file; its hash is what any 0.2.0 registration or
+ * sealed shadow record binds. A schema change that injects a key into every parsed charter - a `.default()` on
+ * a new field, say - would move that hash without anyone touching the file, which is a signed artifact
+ * changing identity behind the owner's back. The fixture is a frozen copy so the tracked charter can move on.
+ */
+const SIGNED_0_2_0_PATH = fileURLToPath(new URL("./fixtures/etf-trend-vol-charter-0.2.0-signed.yaml", import.meta.url));
+const SIGNED_0_2_0_HASH = "sha256:5c7f94da552b8bc668af25df482410a510cafdb21475bf1fcf3741c8d1e00d25";
+
+describe("schema additions never move a signed charter's hash", () => {
+  it("the owner-signed 0.2.0 charter still hashes to what was signed", () => {
+    const { charter, charterHash: hash } = loadCharterFile(SIGNED_0_2_0_PATH);
+    expect(charter.charter_version).toBe("0.2.0");
+    expect(charter.approval.state).toBe("APPROVED");
+    expect(hash).toBe(SIGNED_0_2_0_HASH);
+  });
+
+  it("adds no key for a 0.3.0 field the charter does not declare", () => {
+    const c = loadCharterFile(SIGNED_0_2_0_PATH).charter;
+    expect(Object.keys(c.pass_fail)).not.toContain("promotion_co_gates");
+    expect(Object.keys(c.pass_fail)).not.toContain("mixed_verdict");
+    expect(Object.keys(c.benchmarks)).not.toContain("secondary_2_readings");
+  });
+});
+
+describe("0.3.0 charter fields admit only what the code implements", () => {
+  const base = (): Charter => structuredClone(loadCharterFile(SIGNED_0_2_0_PATH).charter);
+  const issuesOf = (value: unknown): string[] => {
+    try {
+      parseCharter(value);
+      return [];
+    } catch (e) {
+      if (e instanceof InvalidCharterError) return e.issues;
+      throw e;
+    }
+  };
+
+  it("accepts the readings, routing and co-gate the code implements", () => {
+    const c = base();
+    c.pass_fail.promotion_co_gates = ["F2"];
+    c.pass_fail.mixed_verdict = "OWNER_REVIEW_NEVER_ACTIVE";
+    c.benchmarks.secondary_2_readings = { rescale: "WEEKLY_AT_DECISION_INSTANTS", ex_date_rebalance_income: "CASH_REALLOCATED_AT_OPEN" };
+    expect(issuesOf(c)).toEqual([]);
+  });
+
+  it("refuses a co-gate the aggregate does not evaluate", () => {
+    const c = base() as unknown as { pass_fail: Record<string, unknown> };
+    c.pass_fail["promotion_co_gates"] = ["F3"];
+    expect(issuesOf(c).join("; ")).toMatch(/promotion_co_gates/);
+  });
+
+  it("refuses a co-gate the charter does not declare as a falsifier, and a duplicate", () => {
+    const undeclared = base();
+    undeclared.pass_fail.promotion_co_gates = ["F2"];
+    undeclared.pass_fail.falsifiers = undeclared.pass_fail.falsifiers.filter((f) => f.id !== "F2");
+    expect(issuesOf(undeclared)).toContain("pass_fail.promotion_co_gates F2 is not a declared falsifier");
+
+    const twice = base();
+    twice.pass_fail.promotion_co_gates = ["F2", "F2"];
+    expect(issuesOf(twice)).toContain("pass_fail.promotion_co_gates lists a falsifier twice");
+  });
+
+  it("refuses a Secondary 2 reading or a routing the code does not implement", () => {
+    const daily = base() as unknown as { benchmarks: Record<string, unknown> };
+    daily.benchmarks["secondary_2_readings"] = { rescale: "EVERY_SESSION", ex_date_rebalance_income: "CASH_REALLOCATED_AT_OPEN" };
+    expect(issuesOf(daily).join("; ")).toMatch(/secondary_2_readings/);
+
+    const closeReinvest = base() as unknown as { benchmarks: Record<string, unknown> };
+    closeReinvest.benchmarks["secondary_2_readings"] = { rescale: "WEEKLY_AT_DECISION_INSTANTS", ex_date_rebalance_income: "REINVESTED_AT_CLOSE" };
+    expect(issuesOf(closeReinvest).join("; ")).toMatch(/secondary_2_readings/);
+
+    const toActive = base() as unknown as { pass_fail: Record<string, unknown> };
+    toActive.pass_fail["mixed_verdict"] = "OWNER_REVIEW_MAY_ACTIVATE";
+    expect(issuesOf(toActive).join("; ")).toMatch(/mixed_verdict/);
   });
 });
 
