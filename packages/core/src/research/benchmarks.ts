@@ -443,8 +443,11 @@ export function cagr(points: readonly TRPoint[]): Dec {
   return last.trIndex.div(first.trIndex).pow(ONE.div(years)).minus(ONE);
 }
 
-/** Most negative peak-to-trough decline of the index, as a non-positive Dec (e.g. "-0.187"). */
-export function maxDrawdown(points: readonly TRPoint[]): Dec {
+/**
+ * Most negative peak-to-trough decline of the index, as a non-positive Dec (e.g. "-0.187"). Reads only the
+ * level, so the aggregate's chain-linked curve (`research/aggregate.ts`, F2) goes through this same function.
+ */
+export function maxDrawdown(points: readonly Pick<TRPoint, "trIndex">[]): Dec {
   let peak: Dec | undefined;
   let worst = ZERO;
   for (const p of points) {

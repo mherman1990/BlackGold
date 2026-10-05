@@ -166,6 +166,23 @@ const PassFail = z.strictObject({
   minimum_independent_decisions: z.int().min(1),
   /** Falsifier ids (F1..Fn) with the condition each encodes. */
   falsifiers: z.array(z.strictObject({ id: z.string().min(1), condition: z.string().min(1) })).min(1),
+  /**
+   * Falsifiers that must also clear, on the aggregate walk-forward out-of-sample set, before section 17's
+   * REGISTERED -> ACTIVE transition - in addition to the primary metric, never instead of it. Only the ones
+   * the aggregate evaluates may be named, so a charter cannot declare a co-gate no code measures.
+   *
+   * Optional and without a default, as are the two fields below: a default would add a key to every parsed
+   * charter, and `charterHash` covers the parsed charter, so an owner-signed charter that predates the field
+   * would silently change hash. Absent means the charter registered no co-gate.
+   */
+  promotion_co_gates: z.array(z.literal("F2")).min(1).optional(),
+  /**
+   * How a mixed section 16.1 outcome routes: the primary metric fails and Secondary 2 is beaten. Absent, the
+   * charter's own sections 16.1 and 17 disagree about that case and the aggregate surfaces the conflict.
+   * `OWNER_REVIEW_NEVER_ACTIVE`: owner review, which may end in REJECTED or a new charter version but never
+   * in ACTIVE on a failed primary metric.
+   */
+  mixed_verdict: z.literal("OWNER_REVIEW_NEVER_ACTIVE").optional(),
 });
 
 const Benchmarks = z.strictObject({
@@ -175,6 +192,21 @@ const Benchmarks = z.strictObject({
   volatility_controlled_primary: z.boolean(),
   equal_weight_risk_etfs: z.boolean(),
   secondary: z.array(z.string().min(1)).default([]),
+  /**
+   * The owner's readings of the two things section 11 leaves silent about Secondary 2. Each value is the one
+   * the code implements, and the only one the schema admits: declaring a reading the code does not implement
+   * would be a charter the executable silently contradicts. Absent, both readings are open and every verdict
+   * resting on Secondary 2 carries them as caveats (`SECONDARY_2_OPEN_READINGS`). No default: see
+   * `pass_fail.promotion_co_gates`.
+   */
+  secondary_2_readings: z
+    .strictObject({
+      /** Re-scale at the strategy's own weekly decision instants, not every session. */
+      rescale: z.literal("WEEKLY_AT_DECISION_INSTANTS"),
+      /** On a session that is both an ex-date and a rebalance, the distribution is cash reallocated at the open. */
+      ex_date_rebalance_income: z.literal("CASH_REALLOCATED_AT_OPEN"),
+    })
+    .optional(),
 });
 
 const SensitivityGrid = z.strictObject({
@@ -296,6 +328,13 @@ function structuralIssues(c: Charter): string[] {
     c.sensitivity_grid.annual_volatility_target.some((v) => new Dec(v).eq(c.sizing.annual_volatility_target)) &&
     c.sensitivity_grid.rebalance_band_pct_points.some((v) => new Dec(v).eq(c.rules.rebalance_band_pct_points));
   if (!gridRegistered) issues.push("the registered point must itself be a member of sensitivity_grid (protocol section 5.4)");
+  const falsifierIds = new Set(c.pass_fail.falsifiers.map((f) => f.id));
+  for (const g of c.pass_fail.promotion_co_gates ?? []) {
+    if (!falsifierIds.has(g)) issues.push(`pass_fail.promotion_co_gates ${g} is not a declared falsifier`);
+  }
+  if (new Set(c.pass_fail.promotion_co_gates ?? []).size !== (c.pass_fail.promotion_co_gates ?? []).length) {
+    issues.push("pass_fail.promotion_co_gates lists a falsifier twice");
+  }
   return issues;
 }
 

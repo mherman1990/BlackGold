@@ -442,6 +442,29 @@ describe("runEvaluation", () => {
     if (!agg.citableAsEvidence) expect(agg.citabilityReasons.length).toBeGreaterThan(0);
   });
 
+  // Charter 0.3.0 makes F2 a promotion co-gate on the chain-linked curves (D-55). A chain-linked curve holds
+  // each window's own curve, rescaled, so its drawdown is at least as deep as the deepest window's - for the
+  // candidate and the primary benchmark separately. That pins the wiring: the aggregate reads the same two
+  // level series the per-split F2 reads, each to its own side.
+  it("reads F2 at the aggregate scope from the curves the per-split F2 reads", () => {
+    const c = walkForwardCharter();
+    sharedWalkForward ??= evaluateKinds(c, rollingMarket(), ["WALK_FORWARD"]);
+    const r = sharedWalkForward;
+    const dd = r.aggregate?.drawdown;
+    expect(dd).toBeDefined();
+    if (dd === undefined) return;
+    const perSplit = r.splits.map((s) => s.drawdown).filter((d) => d !== undefined);
+    expect(perSplit.length).toBe(r.splits.length);
+    const deepest = (xs: readonly string[]): Dec => xs.map((x) => new Dec(x)).reduce((a, b) => (b.lt(a) ? b : a));
+    const strategyDeepest = deepest(perSplit.map((d) => d.strategy));
+    const primaryDeepest = deepest(perSplit.map((d) => d.primaryBenchmark));
+    // Not vacuous only if the two legs' deepest windows differ, so a swapped wiring cannot satisfy both.
+    expect(strategyDeepest.eq(primaryDeepest)).toBe(false);
+    expect(new Dec(dd.candidateMaxDrawdown).lte(strategyDeepest)).toBe(true);
+    expect(new Dec(dd.primaryMaxDrawdown).lte(primaryDeepest)).toBe(true);
+    expect(dd.limitRatio).toBe(new Dec(c.pass_fail.max_drawdown_ratio).toFixed());
+  });
+
   it("produces no aggregate when no walk-forward split ran", () => {
     // No walk-forward split means no aggregate out-of-sample set to pool, and saying so with `undefined` is
     // different from reporting a verdict computed from one window. RECENT rather than DESIGN purely for

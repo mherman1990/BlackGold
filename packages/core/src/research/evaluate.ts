@@ -348,6 +348,10 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
         candidateTotalReturn: candidate.totalReturn,
         secondary2TotalReturn: secondary2?.totalReturn,
         secondary2UnusableReason: unusable,
+        // The level series the per-split F2 above reads (`drawdownCheck` over the report's B1 arm and its
+        // `${primary}_TR` benchmark), so the aggregate F2 chain-links the same curves rather than new ones.
+        candidateIndex: candidateArm.index.points,
+        primaryIndex: primary.points,
         // Read from the backtest's own bars, not from `bt.labels`: the labels do not carry this, for three
         // separate reasons documented at the derivation in `runBacktest`. A run carrying these is still
         // citable, so the first prong has to notice them itself.
