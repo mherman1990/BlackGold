@@ -13,6 +13,7 @@ import { registerShadowFillJob, SHADOW_FILLS_RECORDED, SHADOW_INCIDENT, SHADOW_R
 import { appendShadowFillRecord, shadowFillRecords, SHADOW_FILL_RECORD_VERSION, type ShadowFillRecord } from "../src/decision/shadow-fills.ts";
 import { fillDueSession, fillOwedSession, fillWindowEndSession, reconcileShadow } from "../src/decision/shadow-reconcile.ts";
 import { loadCharterFile } from "../src/strategy/charter.ts";
+import { appendDecisionRecord, type ProspectiveDecisionRecord } from "../src/decision/decision-record.ts";
 import { readShadowHaltInputs, recordShadowReArm, ShadowReArmError, SHADOW_HALT_REARM } from "../src/decision/shadow-halt.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
 
@@ -398,7 +399,7 @@ describe("reconciler breaks feed the next decision's halt (D-54)", () => {
   const recordsAt = (db: Db, session: string) =>
     (db.prepare("SELECT arm, halt_state, record_json FROM decision_records WHERE decision_at = ?").all(afterClose(session, 60)) as { arm: string; halt_state: string; record_json: string }[]);
 
-  it("holds the book after a break outlives a session, freezes its fills, and steps down one level per owner re-arm", async () => {
+  it("holds the book after a break outlives a session, and steps down one level per owner re-arm", async () => {
     // Thin VTI: B0's week-1 buy leaves a LIQUIDITY remainder, finalized at the window end (Friday 03-13) as an
     // UNFILLED_REMAINDER break. The 03-13 decision ran before that reconcile, so it is unaffected; by the 03-20
     // decision the break has been reported for more than a session.
@@ -416,11 +417,11 @@ describe("reconciler breaks feed the next decision's halt (D-54)", () => {
       expect(r.record_json).toContain(`reconciliation_unresolved:${brk}`);
     }
 
-    // HOLD_ONLY binds the outcome: the week-3 B1 decision trades nothing, exits included.
+    // The week-3 outcomes are recorded against the held decisions. (Whether HOLD_ONLY freezes a held book's EXITS
+    // is proven by the dedicated test below: in this fixture B1's week-3 target sits inside the rebalance band,
+    // so it has no order at all and an assertion here could not tell a freeze from a quiet week.)
     await env.scheduler.tick(afterClose("2026-03-23", 150));
-    const b1Week3 = fillRecordsOf(env.db).find((r) => r.arm === "B1_DETERMINISTIC" && r.decisionSession === "2026-03-20");
-    if (!b1Week3) throw new Error("no week-3 B1 fill record");
-    expect(b1Week3.fills).toEqual([]);
+    expect(fillRecordsOf(env.db).some((r) => r.arm === "B1_DETERMINISTIC" && r.decisionSession === "2026-03-20")).toBe(true);
 
     // The owner examines every reported break, acknowledges them, and re-arms toward NORMAL; the halt machine
     // stages it to one step: HOLD_ONLY -> HALT_NEW_RISK.
@@ -441,6 +442,38 @@ describe("reconciler breaks feed the next decision's halt (D-54)", () => {
     expect(week4?.halt.acknowledgedBreaks).toEqual([...new Set(reported)].sort());
     expect(week4?.halt.unresolvedBreaks.filter((b) => reported.includes(b))).toEqual([]);
     for (const r of recordsAt(env.db, "2026-03-27")) expect(r.halt_state).toBe("HALT_NEW_RISK");
+  });
+
+  it("a HOLD_ONLY decision freezes a held book's exits, and the fill event counts them (Codex P2, PR #108)", async () => {
+    // Week 1 fills a real B1 book. Then a HOLD_ONLY decision asking for a full exit is sealed for 03-13 (copied
+    // from week 1's sealed record, so it is a genuine record of this charter). Monday's fill run must sell
+    // nothing, record every held entity as a suppressed exit, and report that count on shadow.fills_recorded.
+    const env = setup("SHADOW");
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    await env.scheduler.tick(afterClose("2026-03-09", 150));
+    const week1 = env.db.prepare("SELECT arm, record_json FROM decision_records ORDER BY arm").all() as { arm: string; record_json: string }[];
+    const held = [...new Set((fillRecordsOf(env.db).find((r) => r.arm === "B1_DETERMINISTIC")?.fills ?? []).filter((f) => f.side === "BUY").map((f) => f.entityId))].sort();
+    expect(held.length).toBeGreaterThan(0);
+    for (const row of week1) {
+      const rec = JSON.parse(row.record_json) as ProspectiveDecisionRecord;
+      appendDecisionRecord(env.db, {
+        ...rec,
+        decisionAt: afterClose("2026-03-13", 60),
+        sealedAt: afterClose("2026-03-13", 61),
+        targetWeights: [],
+        cashWeight: "1",
+        gate: { newRiskAllowed: false, haltState: "HOLD_ONLY", increasedRisk: [], blockedBy: ["halt RECONCILIATION_UNRESOLVED: test"] },
+      });
+    }
+    // Monday: the decision job does nothing on a non-decision session; the fill job fills the 03-13 decisions.
+    await env.scheduler.tick(afterClose("2026-03-16", 150));
+    const frozen = fillRecordsOf(env.db).find((r) => r.arm === "B1_DETERMINISTIC" && r.decisionSession === "2026-03-13");
+    if (!frozen) throw new Error("no fill record for the HOLD_ONLY decision");
+    expect(frozen.fills).toEqual([]);
+    expect(frozen.suppressedExits).toEqual(held);
+    expect(frozen.suppressedEntries).toEqual([]);
+    const reported = (events(env.db, SHADOW_FILLS_RECORDED).at(-1)?.["recorded"] as { arm: string; suppressedEntries: number; suppressedExits: number }[]).find((r) => r.arm === "B1_DETERMINISTIC");
+    expect(reported).toMatchObject({ suppressedEntries: 0, suppressedExits: held.length });
   });
 
   it("refuses a re-arm that would do less than it says: bad state, blank actor or reason, an unreported break", () => {

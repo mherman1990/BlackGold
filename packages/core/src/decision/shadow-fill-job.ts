@@ -130,7 +130,7 @@ export function registerShadowFillJob(scheduler: Scheduler, deps: { config: AppC
       const bars = new Map([...replayInputs.series].map(([entityId, es]) => [entityId, es.bars] as const));
 
       const allFills = [...priorFills];
-      const newRecords: { arm: Arm; decisionAt: UtcInstant; hash: string; fills: number; suppressed: number; unfilled: number }[] = [];
+      const newRecords: { arm: Arm; decisionAt: UtcInstant; hash: string; fills: number; suppressedEntries: number; suppressedExits: number; unfilled: number }[] = [];
 
       ctx.db.transaction(() => {
         // Oldest decision first, so each replay sees every earlier outcome, including ones from this run. Once
@@ -173,7 +173,9 @@ export function registerShadowFillJob(scheduler: Scheduler, deps: { config: AppC
           }
           const { hash } = appendShadowFillRecord(ctx.db, fillRecord);
           allFills.push(fillRecord);
-          newRecords.push({ arm: row.arm, decisionAt: row.decision_at, hash, fills: fillRecord.fills.length, suppressed: fillRecord.suppressedEntries.length, unfilled: fillRecord.unfilled.length });
+          // Entries and exits reported separately: a HOLD_ONLY freeze suppresses exits too, and an exit-only
+          // rebalance frozen by it must not read as "nothing suppressed" (Codex P2, PR #108).
+          newRecords.push({ arm: row.arm, decisionAt: row.decision_at, hash, fills: fillRecord.fills.length, suppressedEntries: fillRecord.suppressedEntries.length, suppressedExits: fillRecord.suppressedExits.length, unfilled: fillRecord.unfilled.length });
         }
 
         if (newRecords.length > 0) {
