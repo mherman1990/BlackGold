@@ -7,7 +7,7 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 1056 tests (unit 989, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. If the count differs, trust the run and fix this line — it has been stale three times.
+4. `npm ci && npm run check`. All of lint, typecheck, 1057 tests (unit 990, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. If the count differs, trust the run and fix this line — it has been stale three times.
 
 ## 2. Repository guard
 
@@ -16,6 +16,8 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 ## 3. Current position
 
 **Newest first (2026-10-05).**
+
+- **D-55 is merged** (PR #109, `96394d2`). Its gateway follow-up is on the next PR: the hard caps now price a LIMIT sell at the higher of its limit and the bid, as the core order predicate does.
 
 - **D-54 is merged** (PR #108, `966fabf`). **D-55, the liquidity and order-level limits, is on the next PR.**
   - **Wired:** `risk/liquidity.ts` checks the ADV and price floors for every holding taking new risk. It fails closed when facts are missing and never blocks a hold or a reduction. It is the decision gate's fourth, required verdict, and shadow B1 feeds it from its own features.

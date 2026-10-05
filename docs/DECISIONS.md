@@ -1367,6 +1367,10 @@ limits"). These are the limit engines D-45 deferred.
    meaning against the synthetic shadow book (conflict 3).
 4. **One shared instrument rule.** `instrumentLiquidityViolations` is used by both the gate path and the order
    engine, so the two layers cannot disagree on it.
+5. **The gateway applies the same sell-pricing rule** (follow-up PR, 2026-10-05). `referencePrice` in
+   `broker-gateway/src/guards/hard-caps.ts` used the limit price for every LIMIT order, so a sell limit set below
+   the market understated its notional at the gateway too. It now prices a LIMIT sell at the higher of its limit
+   and the bid, as the core predicate does.
 
 30 tests. 36 mutations were run, one per guard, and every one was killed: 25 initially, then 11 from three Codex rounds.
 

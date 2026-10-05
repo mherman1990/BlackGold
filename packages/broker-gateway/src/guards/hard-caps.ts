@@ -1,7 +1,7 @@
 import {
+  Dec,
   epochMs,
   isLiveMode,
-  type Dec,
   type Mode,
   type OrderType,
   type Side,
@@ -104,8 +104,16 @@ export class HardCaps {
   }
 }
 
-/** Notional uses the limit price for LIMIT orders and the adverse side of the quote for MARKET orders. */
+/**
+ * Notional prices an order at the most it can fill for. A LIMIT buy pays at most its limit. A LIMIT sell's limit
+ * is only a floor: one set below the market fills at about the bid, so it is priced at the higher of its limit and
+ * the bid. Priced at the limit alone, a $1 sell limit on a $50 stock would pass as a $1 order (Codex P2, PR #109;
+ * the core order predicate applies the same rule). A MARKET order uses the adverse side of the quote.
+ */
 function referencePrice(intent: OrderIntent): Dec | undefined {
-  if (intent.orderType === "LIMIT") return intent.limitPrice;
+  if (intent.orderType === "LIMIT") {
+    if (intent.side === "SELL" && intent.limitPrice !== undefined) return Dec.max(intent.limitPrice, intent.quote.bid);
+    return intent.limitPrice;
+  }
   return intent.side === "BUY" ? intent.quote.ask : intent.quote.bid;
 }
