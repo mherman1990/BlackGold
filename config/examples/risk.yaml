@@ -12,7 +12,7 @@ version: "0.2.0"
 # To sign: set approvedBy and approvedAt. orderLimits.maxOrderNotionalUsd and maxOrderQuantity depend on the
 # sleeve size (D-55 conflict 2), which only the owner sets; set them here if they change, never in a prompt.
 approvedBy: Matt Herman
-approvedAt: 2026-10-05
+approvedAt: 2026-10-05T00:00:00Z
 
 sleeve:
   maxPctOfLiquidInvestableAssets: "0.05"
