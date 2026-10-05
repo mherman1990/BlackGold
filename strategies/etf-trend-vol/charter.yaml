@@ -102,9 +102,9 @@ approval:
         The chain-linked curve. Each split's levels are rescaled to start where the previous split's curve ended,
         for the strategy and for the primary benchmark alike, and F2 compares the two curves' maximum drawdowns.
         The same construction the second section 16.1 prong uses for total returns, and unlike a worst-window
-        reading it catches a drawdown that runs across a split boundary. A data gap in a held instrument
-        withholds the co-gate in both directions, the owner's gap rule for both 16.1 prongs (D-51). Owner
-        decision, 2026-10-05 (D-56).
+        reading it catches a drawdown that runs across a split boundary. A data gap - in an instrument the
+        strategy held, or in the primary benchmark's own bars - withholds the co-gate in both directions, the
+        owner's gap rule for both 16.1 prongs (D-51). Owner decision, 2026-10-05 (D-56).
     - id: OD-7
       question: "Sections 16.1 and 17 disagree when the primary metric fails and Secondary 2 is beaten. Which governs?"
       resolution: >-

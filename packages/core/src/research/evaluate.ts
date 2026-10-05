@@ -284,7 +284,7 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
       ...(input.barsSourceId === undefined ? {} : { barsSourceId: input.barsSourceId }),
     };
     const bt = runBacktest(btInput);
-    const { primary, cash } = reportBenchmarkSeries(btInput);
+    const { primary, cash, primaryDistortingSessions } = reportBenchmarkSeries(btInput);
     const report = buildResultReport({ charter: c, backtest: bt, primary, cash, trialLedgerCount });
 
     const splitBlocking = blocksPromotionEvidence(bt.labels);
@@ -352,6 +352,7 @@ export function runEvaluation(input: RunEvaluationInput): EvaluationReport {
         // `${primary}_TR` benchmark), so the aggregate F2 chain-links the same curves rather than new ones.
         candidateIndex: candidateArm.index.points,
         primaryIndex: primary.points,
+        primaryDistortingSessions,
         // Read from the backtest's own bars, not from `bt.labels`: the labels do not carry this, for three
         // separate reasons documented at the derivation in `runBacktest`. A run carrying these is still
         // citable, so the first prong has to notice them itself.

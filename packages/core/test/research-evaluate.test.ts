@@ -470,6 +470,20 @@ describe("runEvaluation", () => {
     expect(dd.limitRatio).toBe(new Dec(c.pass_fail.max_drawdown_ratio).toFixed());
   });
 
+  // Codex P1, PR #111: the benchmark's own gap has to reach the aggregate from the run, not only exist in
+  // `reportBenchmarkSeries`. The withheld reason is asserted by its text because only the benchmark report
+  // produces it; a candidate holding VTI that session would also withhold F2, through its NAV, for another reason.
+  it("withholds the aggregate F2 when the primary benchmark misses a session inside a walk-forward window", () => {
+    const c = walkForwardCharter();
+    const missing = D("2027-01-20");
+    const window = splitPlan(c).splits.find((s) => s.kind === "WALK_FORWARD" && s.evaluation.start <= missing && missing <= s.evaluation.end);
+    expect(window).toBeDefined();
+    const gapped = buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2027-03-31"), omitSessions: { VTI: [missing] } });
+    const dd = evaluateKinds(c, gapped, ["WALK_FORWARD"]).aggregate?.drawdown;
+    expect(dd?.clears).toBeUndefined();
+    expect(dd?.withheldBecause.join(" ")).toContain("primary benchmark's own bar");
+  });
+
   it("produces no aggregate when no walk-forward split ran", () => {
     // No walk-forward split means no aggregate out-of-sample set to pool, and saying so with `undefined` is
     // different from reporting a verdict computed from one window. RECENT rather than DESIGN purely for

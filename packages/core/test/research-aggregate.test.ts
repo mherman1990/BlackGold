@@ -86,6 +86,7 @@ function split(id: string, startDay: number, count: number, legs: Legs, over: Sp
     // F2 clears on these by a wide margin (-5% against -20%), so a case that is not about F2 never trips it.
     candidateIndex: levels(startDay, ["1", "0.95", "1.10"]),
     primaryIndex: levels(startDay, ["1", "0.80", "1.10"]),
+    primaryDistortingSessions: [],
     navDistortingSessions: [],
     citableAsEvidence: true,
     citabilityReasons: [],
@@ -605,6 +606,20 @@ describe("aggregateWalkForward: F2 on the chain-linked curves (charter 0.3.0, D-
     const r = run(charter(V0_3_0), [split("walk_forward/a", 2, 40, LOSING, { candidateIndex: [] }), split("walk_forward/b", 42, 40, LOSING)]);
     expect(r.drawdown?.clears).toBeUndefined();
     expect(r.drawdown?.withheldBecause.join(" ")).toContain("walk_forward/a");
+  });
+
+  // Codex P1, PR #111: a benchmark gap on a session the candidate does not hold the benchmark leaves
+  // `navDistortingSessions` empty, so only the benchmark's own report can withhold it.
+  it("withholds F2 on the primary benchmark's own gap, which the candidate's NAV cannot see", () => {
+    const primaryGap: SplitOverrides = { primaryDistortingSessions: [isoDate("2026-01-09")] };
+    const clearingB = split("walk_forward/b", 42, 40, LOSING);
+    expect(run(charter(V0_3_0), [split("walk_forward/a", 2, 40, LOSING), clearingB]).drawdown?.clears).toBe(true);
+    const clearingGapped = run(charter(V0_3_0), [split("walk_forward/a", 2, 40, LOSING, primaryGap), clearingB]);
+    expect(clearingGapped.drawdown?.clears).toBeUndefined();
+    expect(clearingGapped.drawdown?.withheldBecause.join(" ")).toContain("primary benchmark's own bar");
+
+    expect(run(charter(V0_3_0), spanning()).drawdown?.clears).toBe(false);
+    expect(run(charter(V0_3_0), [spanningA(primaryGap), spanningB()]).drawdown?.clears).toBeUndefined();
   });
 
   it("says the restart from cash shapes the curves only when there is a boundary", () => {

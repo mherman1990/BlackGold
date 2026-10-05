@@ -289,7 +289,7 @@ After realistic base costs, the strategy fails to improve the primary metric ove
 ### 16.2 Additional falsification conditions
 
 - F1: Primary metric point estimate below +0.10 or interval includes zero.
-- F2: Maximum drawdown not at or below 0.75 x VTI maximum drawdown. On the aggregate walk-forward out-of-sample set (0.3.0, OD-6) both drawdowns are read on chain-linked curves: each window's levels rescaled to start where the previous window's curve ended, so a drawdown that runs across a window boundary is measured whole. A data gap in a held instrument withholds it in both directions. From 0.3.0, F2 is also a promotion co-gate (section 13).
+- F2: Maximum drawdown not at or below 0.75 x VTI maximum drawdown. On the aggregate walk-forward out-of-sample set (0.3.0, OD-6) both drawdowns are read on chain-linked curves: each window's levels rescaled to start where the previous window's curve ended, so a drawdown that runs across a window boundary is measured whole. A data gap, in an instrument the strategy held or in the benchmark's own bars, withholds it in both directions. From 0.3.0, F2 is also a promotion co-gate (section 13).
 - F3: Sign of the primary metric flips under adverse costs or a one-session extra delay.
 - F4: Removing the single best 12-month window flips the sign (single-episode dependence).
 - F5: Fewer than 75% of grid members agree in sign.

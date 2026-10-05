@@ -93,6 +93,13 @@ export type AggregateSplitInput = {
   candidateIndex: readonly IndexLevel[];
   primaryIndex: readonly IndexLevel[];
   /**
+   * Sessions in the split where the primary benchmark's OWN bar was absent or carried forward
+   * (`reportBenchmarkSeries`). `navDistortingSessions` cannot carry these: it covers only what the candidate
+   * held, and the benchmark is a curve in its own right in F2. A missing or stale benchmark mark can only make
+   * its drawdown shallower, which makes F2 harder to clear - a co-gate failure the data did not earn.
+   */
+  primaryDistortingSessions: readonly IsoDate[];
+  /**
    * Sessions where a HELD instrument's bar was absent or carried forward in this split's run
    * (`BacktestResult.navDistortingSessions`). Not the same thing as `promotionBlockingCodes`: a run carrying
    * these is still citable, which is exactly why the first prong has to notice them itself.
@@ -510,6 +517,15 @@ export function aggregateWalkForward(input: AggregateInput): AggregateWalkForwar
     if (gappedSplits.length > 0) {
       withheldBecause.push(
         `${gappedSplits.length} of ${ordered.length} pooled split(s) carry a held instrument's absent or carried-forward bar, which distorts the candidate's levels by an amount and sign that depend on where the gap falls: ${gappedSplits.map((split) => split.splitId).join(", ")}`,
+      );
+    }
+    // The benchmark's own gaps (Codex P1, PR #111). Withheld both ways like the candidate's, per the owner's gap
+    // rule, though this one has a fixed direction: an absent or carried-forward mark can only shallow the
+    // benchmark's drawdown, so publishing would bias F2 toward failing.
+    const primaryGapped = ordered.filter((split) => split.primaryDistortingSessions.length > 0);
+    if (primaryGapped.length > 0) {
+      withheldBecause.push(
+        `the primary benchmark's own bar is absent or carried forward in ${primaryGapped.length} pooled split(s), which can only understate its drawdown: ${primaryGapped.map((split) => split.splitId).join(", ")}`,
       );
     }
     const candidateCurve = chainLinkLevels(ordered.map((split) => split.candidateIndex));

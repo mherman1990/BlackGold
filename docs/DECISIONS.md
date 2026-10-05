@@ -1476,7 +1476,9 @@ and the owner may strike it.
 with no defaults: a default would add a key to every parsed charter and move every signed hash. The signed
 0.2.0 file is frozen at `packages/core/test/fixtures/etf-trend-vol-charter-0.2.0-signed.yaml` and a test pins
 its hash (`sha256:5c7f94da...0d25`). `aggregateWalkForward` (`AGGREGATE_VERSION` 2) now reads F2 on chain-linked
-curves; reports section 17's computable conditions (primary passed AND each registered co-gate cleared,
+curves, withheld on a gap in either one - an instrument the candidate held, or the primary benchmark's own
+bars (`reportBenchmarkSeries`' `primaryDistortingSessions`; Codex P1 on PR #111, since the candidate's NAV
+cannot see a benchmark gap on a session it does not hold the benchmark); reports section 17's computable conditions (primary passed AND each registered co-gate cleared,
 three-valued, complete pool only; owner acceptance is never computed); routes the mixed case without a conflict
 when the charter declares `mixed_verdict`; and drops Secondary 2's open-reading caveats when the charter
 declares them.
