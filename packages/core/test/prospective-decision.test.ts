@@ -3,6 +3,8 @@ import { ONE, ZERO } from "@blackgold/shared";
 import { type Charter } from "../src/strategy/charter.ts";
 import { backtestParamsFromCharter, costsFromCharter, runBacktest, type BacktestInput } from "../src/research/backtest.ts";
 import { deterministicTargetBook, passiveTargetBook, prospectiveTargetBooks, type ArmTargetWeight } from "../src/decision/prospective.ts";
+import { computeFeatures, featureParamsFromCharter } from "../src/strategy/features.ts";
+import { admittedRiskEtfs } from "../src/strategy/charter.ts";
 import { buildMarket, fixtureCharter, D, N, type PricePath } from "./strategy-fixture.ts";
 
 // A charter with short feature windows so a few hundred fixture sessions exercise the same code the registered
@@ -109,6 +111,23 @@ describe("prospective deterministic target book matches the backtest (anti-drift
     const b = deterministicTargetBook(charter, { pit: market.pit, calendar: market.calendar }, at, new Set());
     expect(asPairs(a.targetWeights)).toEqual(asPairs(b.targetWeights));
     expect(a.cashWeight.toFixed()).toBe(b.cashWeight.toFixed());
+  });
+
+  it("carries each target line's liquidity facts from the same features that sized it (D-55)", () => {
+    const { charter, market, input } = fixture();
+    const at = firstBacktestDecision(input).decisionAt;
+    const deps = { pit: market.pit, calendar: market.calendar };
+    const book = deterministicTargetBook(charter, deps, at, new Set());
+    const fs = computeFeatures(deps, { riskEntities: admittedRiskEtfs(charter), cashEntityId: charter.universe.cash_etf, decisionAt: at, params: featureParamsFromCharter(charter) });
+    expect([...book.liquidity.keys()].sort()).toEqual(book.targetWeights.map((w) => w.entityId));
+    for (const { entityId } of book.targetWeights) {
+      const f = fs.features.get(entityId);
+      expect(f?.adv?.gt(0)).toBe(true);
+      expect(book.liquidity.get(entityId)?.advUsd?.toFixed()).toBe(f?.adv?.toFixed());
+      expect(book.liquidity.get(entityId)?.price?.toFixed()).toBe(f?.px?.toFixed());
+    }
+    // The passive comparator's gate is halt-only, so it carries none.
+    expect(passiveTargetBook(charter, deps, at).liquidity.size).toBe(0);
   });
 });
 

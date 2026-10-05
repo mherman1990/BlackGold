@@ -7,7 +7,7 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 1026 tests (unit 959, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. If the count differs, trust the run and fix this line — it has been stale three times.
+4. `npm ci && npm run check`. All of lint, typecheck, 1056 tests (unit 989, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. If the count differs, trust the run and fix this line — it has been stale three times.
 
 ## 2. Repository guard
 
@@ -16,6 +16,11 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 ## 3. Current position
 
 **Newest first (2026-10-05).**
+
+- **D-54 is merged** (PR #108, `966fabf`). **D-55, the liquidity and order-level limits, is on the next PR.**
+  - **Wired:** `risk/liquidity.ts` checks the ADV and price floors for every holding taking new risk. It fails closed when facts are missing and never blocks a hold or a reduction. It is the decision gate's fourth, required verdict, and shadow B1 feeds it from its own features.
+  - **Built, not wired:** `risk/orders.ts` is a predicate over one session's orders. It names breaches and never slices them. Do not wire it until Matt answers D-55's conflicts: what USD size the shadow book models, whether the order caps or the charter's rebalance gives way, and whether the backtest then has to model slicing (a new strategy version).
+  - **Not built:** the initial-risk budget is measured to a stop, and this charter has none.
 
 - **0.1.13 is published and pinned** (`0.1.13@sha256:0b504052…7c66`; release run #14 from `1decc13`; both architectures; anonymously pullable). The shadow jobs ship unregistered (compose mode `RESEARCH`, no shadow charter). Updating the Pi is the owner's act.
 - **Slice 3b (PR #102) merged with seven open Codex findings, four P1; PR #107 repairs them. 0.1.13 still carries the unrepaired code, so do not enable the shadow track on 0.1.13.** Three round-2 findings were answered "fixed in `02f381d`" but that commit was never pushed (the PR merged first); four round-3 findings were posted after the merge. **Repaired by PR #107**, which re-implements all seven: two-phase fills (sells before buys), shortfall from persisted fills, the zero-delay window end, the carried B1 book in decisions, fill-window completion counted in entity bars (with an owed bound one window later), split adjustment between decision and delayed fill, and no zero-delay backdating.
