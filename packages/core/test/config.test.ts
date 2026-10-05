@@ -14,6 +14,7 @@ import {
   ModelManifestConfigSchema,
   processingDelayOverridesMs,
   ratioString,
+  decString,
 } from "../src/index.ts";
 import { LIVE_MODES, MODES } from "@blackgold/shared";
 
@@ -59,6 +60,29 @@ describe("app config from environment", () => {
   it("rejects malformed values with a ConfigError", () => {
     expect(() => loadAppConfig({ BLACKGOLD_SCHEDULER_POLL_SECONDS: "1" })).toThrow(ConfigError);
     expect(() => loadAppConfig({ BLACKGOLD_MODE: "YOLO" })).toThrow(ConfigError);
+  });
+});
+
+describe("decString", () => {
+  it("rejects negatives with a pattern that survives into the emitted JSON schemas (Codex P2)", () => {
+    for (const bad of ["-0.1", "-1", "-0", "1.", ".5"]) {
+      expect(() => decString.parse(bad), bad).toThrow();
+    }
+    for (const ok of ["0", "0.05", "1500", "60.00"]) {
+      expect(() => decString.parse(ok), ok).not.toThrow();
+    }
+    // No emitted schema may carry the old signed-decimal pattern.
+    for (const f of [
+      "app.schema.json",
+      "risk.schema.json",
+      "financial-picture.schema.json",
+      "restricted-list.schema.json",
+      "theme-membership.schema.json",
+      "live-authorization.schema.json",
+      "model-manifest.schema.json",
+    ]) {
+      expect(readFileSync(`${ROOT}config/schema/${f}`, "utf8"), f).not.toContain("^-?");
+    }
   });
 });
 

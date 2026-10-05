@@ -86,17 +86,17 @@
         "llmPerCallUsd": {
           "default": "0.50",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "pattern": "^\\d+(\\.\\d+)?$"
         },
         "llmPerDayUsd": {
           "default": "5.00",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "pattern": "^\\d+(\\.\\d+)?$"
         },
         "llmPerMonthUsd": {
           "default": "60.00",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "pattern": "^\\d+(\\.\\d+)?$"
         }
       }
     },

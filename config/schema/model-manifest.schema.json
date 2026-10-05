@@ -59,15 +59,15 @@
             "properties": {
               "inputPerMTokUsd": {
                 "type": "string",
-                "pattern": "^-?\\d+(\\.\\d+)?$"
+                "pattern": "^\\d+(\\.\\d+)?$"
               },
               "outputPerMTokUsd": {
                 "type": "string",
-                "pattern": "^-?\\d+(\\.\\d+)?$"
+                "pattern": "^\\d+(\\.\\d+)?$"
               },
               "cachedInputPerMTokUsd": {
                 "type": "string",
-                "pattern": "^-?\\d+(\\.\\d+)?$"
+                "pattern": "^\\d+(\\.\\d+)?$"
               },
               "checkedAt": {
                 "type": "string",

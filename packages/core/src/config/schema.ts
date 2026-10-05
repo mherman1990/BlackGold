@@ -8,14 +8,16 @@ import { ACCOUNT_ROLES, ARMS, MODES, SLEEVE_ROLE, durationMs } from "@blackgold/
  * JSON Schema files under config/schema/ are emitted from these definitions (see emit-json-schema.ts).
  */
 
-const DECIMAL_RE = /^-?\d+(\.\d+)?$/;
+// Non-negativity is part of the regex (not a .refine) so it survives into the JSON Schemas
+// emitted under config/schema/: editor/CI validation of the owner's YAML then matches runtime
+// validation.
+const DECIMAL_RE = /^\d+(\.\d+)?$/;
 const SHA256_PREFIXED_RE = /^sha256:[0-9a-f]{4,64}$/;
 
 /** Non-negative decimal string such as "0.05" or "1500". */
 export const decString = z
   .string()
-  .regex(DECIMAL_RE, "must be a decimal string such as \"0.05\"")
-  .refine((s) => !s.startsWith("-"), "must be non-negative");
+  .regex(DECIMAL_RE, "must be a non-negative decimal string such as \"0.05\"");
 
 /**
  * Ratio between 0 and 1 inclusive, as a decimal string. The bound is a .regex (not a .refine) so it
