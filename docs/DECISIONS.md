@@ -50,9 +50,11 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-42 | The Anthropic model adapter (raw `fetch`, no SDK) as its own PR: a second egress module `packages/core/src/model/provider-http.ts` is the only outbound POST and the only reference to `api.anthropic.com`; `live-disabled.test.ts` is updated to allow exactly that while trading hosts stay forbidden and `data/http.ts` stays POST-free. The key is passed in from the environment, never in git, code, or the image | Accepted 2026-09-07 by Matt ("keep building… put the key in when things are connected") | Live CR-12/CR-13 verification against the real API is Matt's one run on the Pi; call/budget persistence and C1/D1 wiring still Phase 5 |
 | D-49 | Corporate actions may be ingested automatically from Tiingo's daily-prices feed (`divCash`/`splitFactor`), flagged `UNVERIFIED_SINGLE_SOURCE`: usable for research and decisions, never promotion evidence. Amends D-29's "vendored file until a feed is verified" to add a single-source automated path alongside it; the operator-curated, ≥2-source reconciled vendored file stays the only promotion-eligible corporate-action source | Accepted 2026-09-12 by Matt ("Item 3, use A") | - |
 | D-50 | Adopt Tiingo (`tiingo.eod.bars.1d`) as the strategy's market-data source, revising OD-4 and cutting `charter_version` 0.2.0 — a new strategy version that does not inherit 0.1.0's evidence | **Accepted** 2026-09-12 by Matt, who signed the 0.2.0 approval block himself (`06515d7`, `6019e08`, `2a960e5`; `code_commit 115dae4`) | - |
-| D-51 | Reconsider the etf-trend-vol primary promotion metric: `net_sharpe_difference_vs_primary_benchmark` is nearly blind to the tail, but the strategy's thesis is drawdown reduction. Consider a Calmar/MAR- or Sortino-based gate, or an explicit max-drawdown constraint alongside the Sharpe test. Raised from the 2026-09-13 single-source machinery check (non-evidential). Any change is a new charter version | **Proposed** 2026-09-13 by Claude Code (owner to decide) | etf-trend-vol promotion criteria (charter version) |
+| D-51 | Reconsider the etf-trend-vol primary promotion metric: `net_sharpe_difference_vs_primary_benchmark` is nearly blind to the tail, but the strategy's thesis is drawdown reduction. Consider a Calmar/MAR- or Sortino-based gate, or an explicit max-drawdown constraint alongside the Sharpe test. Raised from the 2026-09-13 single-source machinery check (non-evidential). Any change is a new charter version | **Decided** 2026-10-05 by Matt under D-55 (OD-5): the primary metric is kept and F2 becomes a promotion co-gate. Binding when he signs 0.3.0 | - |
 | D-52 | Optional file-based secrets fallback: `config/load.ts` reads a dotenv `${dataDir}/secrets.env` for a closed allowlist of credential keys (the data-source keys + `ANTHROPIC_API_KEY`) when the environment leaves them empty, because umbrelOS 1.x does not inject the app-data `.env` into the container while the data volume is reliably mounted. Environment always wins; the file can never set MODE, the sleeve role, or any behavioural config, so it cannot enable a live path | **Proposed** 2026-09-13 by Claude Code (owner to accept). Amended 0.1.12 (2026-09-13) to admit the two opt-in auto-ingest switches | unattended/autonomous ingest and the analyst key under the umbrelOS env gap |
 | D-53 | (Slices 1, 2a, 2b, 3a-1 and both halves of 3a-2 merged as PRs #81, #82, #83, #85, #86, #87; 3a-3 and 2c merged as PRs #100, #101; 3b built 2026-10-05; only 4 remains, blocked on the owner's paper keys + D-12.) Build the paper/shadow track toward live as bounded per-rung PRs (docs/AUTOMATION_AND_LIVE_GATES.md): (1) the sealed prospective decision record + append-only ledger + SHADOW/PAPER mode guard; (2) the shadow decision loop — 2a the pure per-arm target book, 2b the pure gate-and-seal function, 2c the mode-gated `after_close` job; (3) counterfactual fills + reconciler; (4) the Alpaca **paper** broker adapter + order lifecycle. Building the machinery does not climb the ladder: Rung-2 shadow **evidence** still cannot precede the Rung-1 experiment, and a strategy still has to pass its own gate (D-51). No live mode, `LIVE_AUTHORIZATION`, or broker credential is added by any slice; slice 4 needs the owner's paper keys and the D-12 sleeve decision | **Proposed** 2026-09-14 by Claude Code (owner chose the paper/shadow track this session) | prospective decision loop; PAPER rung needs paper Alpaca keys + D-12 |
+| D-55 | The etf-trend-vol 0.3.0 charter bundle: keep the Sharpe-difference primary metric and add F2 as a promotion co-gate on chain-linked curves (OD-5, OD-6); a failed primary with Secondary 2 beaten goes to owner review, never ACTIVE (OD-7); §14.3's minimum restated as the schedule's capacity, 100 (OD-8); Secondary 2's two readings confirmed (OD-9); the prospective clock runs from registration (OD-10) | **Accepted** 2026-10-05 by Matt (answers in session); binding when he signs `charter_version` 0.3.0, which cites it | Experiment registration (0.3.0 is DRAFT until signed) |
+| D-56 | B-2: Claude Code may build a second automated public corporate-actions adapter plus a machine reconciler, and the owner audits and approves the reconciled ≥2-source file per universe before ingest; the citable evaluation runs from a separate store with no Tiingo action rows | **Accepted** 2026-10-05 by Matt. Amends D-29 and D-49 | Citable evidence (the adapter and reconciler are a future PR) |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -809,8 +811,10 @@ the signed hash (`sha256:5c7f94da…`, unchanged across that correction).
 
 ## D-51 Reconsider the etf-trend-vol primary promotion metric
 
-**Status:** Proposed 2026-09-13 by Claude Code. Matt must accept, replace, or reject. It is a question for the
-owner, not a change; nothing is altered by recording it.
+**Status:** Proposed 2026-09-13 by Claude Code. **Decided 2026-10-05 by Matt under D-55 (OD-5): keep the
+Sharpe-difference primary metric, and make F2 a co-gate on section 17's REGISTERED -> ACTIVE step, read on
+chain-linked curves (OD-6). Binding when he signs 0.3.0.** Step 3 below is therefore answered; the entry is
+kept as written for its history.
 
 **Where it came from.** Two single-split `research evaluate` runs on 2026-09-13 (charter 0.2.0, source
 `tiingo.eod.bars.1d`) exercised the evaluation machinery end to end. Both are **single-source and
@@ -1323,6 +1327,91 @@ before any halt relaxes.
 
 **What it does not do.** No order, broker, account, live mode, or `LIVE_AUTHORIZATION` is involved. The re-arm CLI
 writes one ledger event and is the owner's act; Claude Code builds it and does not run it on the Pi.
+
+---
+
+## D-55 The etf-trend-vol 0.3.0 charter bundle
+
+**Status:** Accepted 2026-10-05 by Matt, answering each question of the decision packet's charter bundle
+(`docs/analysis/2026-09-21-rung5-decision-packet.md`, D-packet-1) in session, every one with the recommended
+option. **The answers bind when he signs the 0.3.0 approval block**, which cites this entry as `approval_ref`.
+Until then 0.3.0 is DRAFT and no version of the charter is registrable.
+
+This record exists for the reason D-39 did: a decision made in a chat session is not a written owner decision,
+and `approval.approval_ref` needs something citable. Claude Code transcribed the answers into `charter.yaml`
+(OD-5..OD-10) and the prose charter; it did not sign, and the signature is the owner's act alone (CLAUDE.md,
+"What standing authorization never covers").
+
+**Why one batch.** Any charter edit is a new strategy version inheriting no evidence, including the
+prospective record. Settling these after registration would cost up to a year of shadow decisions (the
+packet's §0). 0.2.0 had nothing to lose: no experiment registered, no citable run.
+
+### The answers
+
+| OD | Question | Owner's answer | Executable form |
+|---|---|---|---|
+| OD-5 | B-1 / D-51: is the Sharpe-difference primary metric the right gate for a drawdown-reduction strategy? | Keep it unchanged; add F2 as a **co-gate** on REGISTERED -> ACTIVE, in addition and never instead | `pass_fail.promotion_co_gates: [F2]` |
+| OD-6 | Which maximum drawdown F2 reads across windows that each restart from cash | The **chain-linked curve**, strategy and VTI alike; withheld both ways on a data gap | `aggregate.ts` `drawdown` |
+| OD-7 | §16.1 vs §17 when the primary fails and Secondary 2 is beaten | §16.1 governs rejection, §17 promotion: **owner review, never ACTIVE** on a failed primary | `pass_fail.mixed_verdict: OWNER_REVIEW_NEVER_ACTIVE` |
+| OD-8 | §14.3's 150-block minimum vs the schedule's 102 | **100**, stated as the schedule's capacity; counts corrected; the two-20%-drawdowns clause becomes a disclosure | `pass_fail.minimum_independent_decisions: 100` |
+| OD-9 | Secondary 2's re-scaling cadence and ex-date income on a rebalance session | **Both confirmed** as implemented | `benchmarks.secondary_2_readings` |
+| OD-10 | Does the prospective clock count from registration or from ACTIVE? | **From registration** (§14.2) | prose; the shadow job already seals from registration |
+
+**Verified facts behind OD-8**, from `splitPlan` and the NYSE calendar on 2026-10-05: the registered schedule is
+9 splits tiling 2010-06-28..2018-12-31, 2,143 sessions, **102** blocks of 21. The whole design window is 2,917
+sessions, **138** blocks, so 150 is unreachable inside it under any schedule; §14.3's "about 155 in design and
+72 in holdout" was wrong (138 and 71). A one-year walk-forward window would give 11 splits from 2008-06-28 and
+125 blocks, pulling the GFC into the set. It was offered and declined, because the 2026-09-13 design run had
+already shown how the strategy fared in 2008, so moving the boundary now would be a choice informed by a
+viewed result.
+
+**One item Claude Code proposed rather than the owner deciding.** `component_versions.features` 1 -> 2 matches
+the code's `FEATURES_VERSION` since the corporate-action dedupe fix (packet item (e)). It produces
+byte-identical features on every store that exists; it is provenance. It is confirmed only by the signature,
+and the owner may strike it.
+
+**What changes in code (all driven by the charter, so 0.2.0 is untouched).** Three optional charter fields
+with no defaults: a default would add a key to every parsed charter and move every signed hash. The signed
+0.2.0 file is frozen at `packages/core/test/fixtures/etf-trend-vol-charter-0.2.0-signed.yaml` and a test pins
+its hash (`sha256:5c7f94da...0d25`). `aggregateWalkForward` (`AGGREGATE_VERSION` 2) now reads F2 on chain-linked
+curves; reports section 17's computable conditions (primary passed AND each registered co-gate cleared,
+three-valued, complete pool only; owner acceptance is never computed); routes the mixed case without a conflict
+when the charter declares `mixed_verdict`; and drops Secondary 2's open-reading caveats when the charter
+declares them.
+
+**A defect found while preparing this.** `SECONDARY_2_OPEN_READINGS` told every reader that Secondary 2
+"reinvests a distribution at the ex-date session's close" when `legSplit` credits a rebalance-session
+distribution to the pre-open holder as cash and reallocates it at the open, the reading STATE.md and D-51
+describe and the owner confirmed. The caveat is corrected for any charter that still carries it.
+
+**What this does not do.** It registers nothing, opens no holdout, cites no run, and enables no mode. Because
+the deflated-Sharpe adjustment is still unwired (F5's grid sweep), the primary metric can never read as passed
+today, so section 17's conditions read `false` or undetermined until that sweep exists.
+
+## D-56 B-2: machine-reconciled corporate actions with owner sign-off, in a separate evaluation store
+
+**Status:** Accepted 2026-10-05 by Matt, answering the decision packet's B-2 questions (D-packet-2) in
+session, each with the recommended option. Amends D-29 and D-49; replaces neither.
+
+**(a) Delegation: yes, with sign-off.** Claude Code may build a second automated corporate-actions adapter
+over an allowlisted public source independent of Tiingo (issuer distribution notices or an exchange feed), plus
+a machine reconciler that emits the >=2-source vendored file for the evaluation universe. D-29 and D-49 called
+that file *operator-curated*; the amendment is that machines fetch and cross-check while the **owner audits and
+approves the reconciled file, per universe, before it is ingested**. Ingest must refuse an unapproved file, the
+way an unapproved policy file already fails closed. The point of the original rule survives: Claude Code is
+never the sole author of its own evidence base, because nothing it reconciles becomes evidence until the owner
+signs it. Building it is a bounded future PR, authorized by this entry. Claude Code does not approve the file.
+
+**(b) Taint remedy: a separate evaluation store.** Reconciled rows written into the current Pi store stay
+tainted, because the Tiingo single-source rows already there share the `corporate_action.<KIND>` source ids,
+any new snapshot includes them, and `loadExecutionSeries` accumulates blocking codes over every row before
+the dedupe. So the citable evaluation runs from a **fresh data directory** holding Tiingo bars and the
+reconciled actions only, into which `ingest tiingo-actions` is never run. No code change; the current store
+keeps serving research and the shadow track. The taint rule itself is unchanged.
+
+**Ordering.** Under OD-10 (D-55) the prospective clock runs from registration, so B-2 gates the Rung-1 result
+and the owner's ACTIVE acceptance, not the clock. Per `HANDOFF.md` §5 the reconciled actions must be ingested
+**before** the evaluation store's snapshot, or the registered experiment keeps reading what the snapshot froze.
 
 ---
 

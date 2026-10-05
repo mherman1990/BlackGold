@@ -62,7 +62,23 @@ describe("charter.yaml", () => {
     expect(c.features).toMatchObject({ momentum_lookback_sessions: 252, momentum_skip_sessions: 21, trend_sma_sessions: 200, volatility_sessions: 63, adv_sessions: 20 });
     expect(c.rules).toMatchObject({ entry_rank: 5, hold_rank: 7, max_positions: 5, execution_delay_bars: 1, decision_offset_minutes: 60 });
     expect(c.sizing).toMatchObject({ max_weight_per_etf: "0.20", min_cash_weight: "0.02", annual_volatility_target: "0.10" });
-    expect(c.pass_fail).toMatchObject({ primary_threshold: "0.10", bootstrap_block_sessions: 21, max_drawdown_ratio: "0.75", minimum_independent_decisions: 150 });
+    expect(c.pass_fail).toMatchObject({ primary_threshold: "0.10", bootstrap_block_sessions: 21, max_drawdown_ratio: "0.75", minimum_independent_decisions: 100 });
+  });
+
+  it("carries the owner's 0.3.0 answers (D-55) into the fields the code executes", () => {
+    // The OD resolutions are prose a person reads; these fields are what the aggregate actually acts on. A
+    // resolution with no executable counterpart would be a decision the code silently ignores.
+    const c = loaded();
+    expect(c.charter_version).toBe("0.3.0");
+    expect(c.approval.open_decisions.map((d) => d.id)).toEqual(["OD-1", "OD-2", "OD-3", "OD-4", "OD-5", "OD-6", "OD-7", "OD-8", "OD-9", "OD-10"]);
+    expect(c.approval.open_decisions.every((d) => d.resolution !== null)).toBe(true);
+    expect(c.pass_fail.primary_metric).toBe("net_sharpe_difference_vs_primary_benchmark"); // OD-5: kept
+    expect(c.pass_fail.promotion_co_gates).toEqual(["F2"]); // OD-5, OD-6
+    expect(c.pass_fail.mixed_verdict).toBe("OWNER_REVIEW_NEVER_ACTIVE"); // OD-7
+    expect(c.pass_fail.minimum_independent_decisions).toBe(100); // OD-8
+    expect(c.benchmarks.secondary_2_readings).toEqual({ rescale: "WEEKLY_AT_DECISION_INSTANTS", ex_date_rebalance_income: "CASH_REALLOCATED_AT_OPEN" }); // OD-9
+    expect(c.component_versions.features).toBe(2);
+    expect(c.approval.approval_ref).toBe("docs/DECISIONS.md#D-55");
   });
 
   it("declares a 72-member sensitivity grid containing the registered point", () => {

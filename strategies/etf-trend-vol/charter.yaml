@@ -1,38 +1,47 @@
 # Machine-readable companion to ALPHA_CHARTER.md. The prose charter is the specification a human reads;
 # this file is the only form the code executes.
 #
-# STATUS: APPROVED (charter_version 0.2.0) - owner-signed 2026-09-12 against code_commit 115dae4 (D-50).
-# The approval block below is the signature; this banner only describes it. 0.2.0 revised OD-4 to adopt Tiingo
-# EOD daily bars (tiingo.eod.bars.1d) in place of the Alpaca IEX feed, because the charter's registered design
-# window opens in 2007 and the Alpaca IEX feed only reaches ~2018. Adopting a new data source is a data-transform
-# change and therefore a NEW STRATEGY VERSION (CLAUDE.md versioning rule): 0.2.0 does NOT inherit 0.1.0's
-# evidence, so any registered result on this version is fresh. The runtime source flip shipped atomically with
-# the signature (DEFAULT_BARS_SOURCE_ID plus the tiingo. processing-delay entry, a Codex P1 on PR #57), so there
-# was never a window in which a 0.2.0-labelled run read the old Alpaca feed.
+# STATUS: DRAFT (charter_version 0.3.0) - AWAITING OWNER SIGNATURE. The approval block below is unsigned;
+# this banner only describes it, and must be corrected in the same change that signs it.
 #
-# `assertRegistrable` (packages/core/src/strategy/charter.ts) reads the approval block, not this comment, and
-# reports registrable: true for this file. Filling that block is the OWNER's act and always is: Claude Code
-# prepares a charter version and must never sign it (the carve-out in CLAUDE.md). A future version starts at
-# DRAFT again, and the strategy-charter tripwire test failing on an unsigned charter is the gate working.
+# 0.3.0 is the one-batch cut the 2026-09-21 decision packet called for: every charter question that would
+# otherwise reset the prospective clock after registration, settled together before it. The owner answered
+# each on 2026-10-05; the answers are recorded as OD-5..OD-10 below and in docs/DECISIONS.md#D-55, and become
+# binding when he signs. In short: the Sharpe-difference primary metric is KEPT, and F2 becomes a co-gate on
+# section 17's REGISTERED -> ACTIVE step, read on chain-linked curves (OD-5, OD-6); a failed primary with
+# Secondary 2 beaten goes to owner review and never to ACTIVE (OD-7); section 14.3's minimum is restated as
+# the schedule's capacity, 100 (OD-8); Secondary 2's two readings are confirmed (OD-9); the prospective clock
+# runs from registration (OD-10). component_versions.features moves 1 -> 2 to match the code
+# (FEATURES_VERSION 2, the corporate-action dedupe fix) - provenance only, proposed by Claude Code and
+# confirmed only by the signature.
+#
+# Any charter edit is a new strategy version: 0.3.0 inherits none of 0.2.0's evidence, and 0.2.0 has none to
+# lose (nothing registered, nothing citable). The signed 0.2.0 file is frozen at
+# packages/core/test/fixtures/etf-trend-vol-charter-0.2.0-signed.yaml with its hash sha256:5c7f94da...0d25.
+#
+# TO SIGN (the owner's act, from his own account - Claude Code must never fill these, CLAUDE.md carve-out):
+# set approval.state to APPROVED and fill approved_by, approval_date and code_commit (the commit you reviewed);
+# then change the first line of this banner to say APPROVED. Until then `assertRegistrable` refuses this file
+# and the strategy-charter tripwire test is red - the gate working, not a defect.
 #
 # Comments here are not hash-covered: charterHash is sha256 over the canonical JSON of the PARSED charter
-# (charter.ts), so editing this banner cannot alter the signed hash sha256:5c7f94da....
+# (charter.ts), so no banner edit can alter a hash.
 
 strategy_id: etf-trend-vol
-charter_version: 0.2.0
+charter_version: 0.3.0
 prose_charter: strategies/etf-trend-vol/ALPHA_CHARTER.md
 runtime_llm_in_signal: false
 arms: [B0_PASSIVE, B1_DETERMINISTIC]
 
 approval:
-  # SIGNED by the owner on 2026-09-12 (D-50). For any future charter version, to sign: set `state` to APPROVED
-  # and fill `approved_by`, `approval_date`, `code_commit`. Claude Code must not fill these (CLAUDE.md carve-out).
-  state: APPROVED
-  approved_by: Matt Herman
-  approval_date: 2026-09-12
-  code_commit: 115dae4
-  approval_ref: "docs/DECISIONS.md#D-50"
-  decision_refs: [D-08, D-09, D-10, D-15, D-19, D-24, D-50]
+  # UNSIGNED. To sign: set `state` to APPROVED and fill `approved_by`, `approval_date`, `code_commit`.
+  # Claude Code must not fill these (CLAUDE.md carve-out). 0.2.0 was signed 2026-09-12 against 115dae4 (D-50).
+  state: DRAFT
+  approved_by: null
+  approval_date: null
+  code_commit: null
+  approval_ref: "docs/DECISIONS.md#D-55"
+  decision_refs: [D-08, D-09, D-10, D-15, D-19, D-24, D-50, D-51, D-55]
   conditions: []
   # ALPHA_CHARTER.md section 24. Each needs a written resolution before registration.
   open_decisions:
@@ -62,7 +71,7 @@ approval:
     - id: OD-4
       question: "Approval of the free market-data source after the capability probe (D-24, CR-09)."
       resolution: >-
-        PROPOSED for 0.2.0 (owner confirms by signing this charter): adopt Tiingo free tier, EOD daily bars
+        Owner-signed with 0.2.0 on 2026-09-12 (D-50), carried unchanged into 0.3.0: adopt Tiingo free tier, EOD daily bars
         (tiingo.eod.bars.1d), replacing the Alpaca IEX feed approved at 0.1.0 (D-39). Reason: Alpaca's free IEX
         feed only reaches ~2018, so the registered design window 2007-06-01..2018-12-31 cannot be run on it;
         Tiingo serves the whole universe back past 2007 (verified on the Pi: 96,288 raw bars 2000-2026; coverage
@@ -74,6 +83,62 @@ approval:
         ADV cap no longer reads artificially low - ADV participation binds on full-tape volume, the intended
         behavior. This is a new strategy version (0.2.0) and does not inherit 0.1.0's evidence. Owner decision
         recorded on signing (D-50).
+    # OD-5..OD-10: the 0.3.0 bundle. Each resolution records the owner's answer of 2026-10-05 (D-55); the
+    # signature on this block is what makes them binding.
+    - id: OD-5
+      question: "B-1 / D-51: is the Sharpe-difference primary metric the right promotion gate for a strategy whose stated purpose is drawdown reduction?"
+      resolution: >-
+        Keep net_sharpe_difference_vs_primary_benchmark as the primary metric, with its threshold, bootstrap and
+        deflation unchanged. Add F2 (maximum drawdown at or below 0.75x the primary benchmark's) as a CO-GATE on
+        section 17's REGISTERED -> ACTIVE transition: ACTIVE needs the primary metric passed AND F2 cleared on the
+        aggregate walk-forward out-of-sample set, plus the owner's written acceptance. In addition to the primary
+        metric, never instead of it: a conjunction can only make promotion harder, so this is not choosing the
+        metric the strategy passes, and F2 and its 0.75 ratio were already registered (section 13 names 0.75 as
+        the target), so no new threshold is introduced. Encoded as pass_fail.promotion_co_gates [F2]. Section
+        16.1's rejection rule is unchanged. Owner decision, 2026-10-05 (D-55).
+    - id: OD-6
+      question: "F2 at the aggregate scope: each walk-forward window restarts from cash, so which maximum drawdown does the co-gate read?"
+      resolution: >-
+        The chain-linked curve. Each split's levels are rescaled to start where the previous split's curve ended,
+        for the strategy and for the primary benchmark alike, and F2 compares the two curves' maximum drawdowns.
+        The same construction the second section 16.1 prong uses for total returns, and unlike a worst-window
+        reading it catches a drawdown that runs across a split boundary. A data gap in a held instrument
+        withholds the co-gate in both directions, the owner's gap rule for both 16.1 prongs (D-51). Owner
+        decision, 2026-10-05 (D-55).
+    - id: OD-7
+      question: "Sections 16.1 and 17 disagree when the primary metric fails and Secondary 2 is beaten. Which governs?"
+      resolution: >-
+        Section 16.1 governs rejection and section 17 governs promotion. The mixed case goes to owner review,
+        and that review may end in REJECTED or in a new charter version - never in ACTIVE on a failed primary
+        metric. Encoded as pass_fail.mixed_verdict OWNER_REVIEW_NEVER_ACTIVE. Owner decision, 2026-10-05 (D-55).
+    - id: OD-8
+      question: "Section 14.3 sets a minimum of 150 monthly-equivalent out-of-sample blocks; the registered walk-forward schedule reaches 102. Which is wrong?"
+      resolution: >-
+        The minimum. minimum_independent_decisions is 100, stated plainly as the registered schedule's capacity
+        rather than as an independent statistical requirement: 9 splits tiling 2010-06-28..2018-12-31, 2,143
+        sessions, 102 blocks of 21. 150 is unreachable inside the 2007-06-01..2018-12-31 design window under any
+        schedule (the whole window is 2,917 sessions, 138 blocks), and section 14.3's own counts were wrong (it
+        said about 155 in design and 72 in holdout; the calendar gives 138 and 71). Extending the schedule's span
+        was declined: shortening the walk-forward window to pull 2008 into the set would be a boundary chosen
+        after the 2026-09-13 design run showed how the strategy did there. The clause requiring the set to span
+        two VTI drawdowns of 20% or more becomes a disclosure, not a precondition: 2007-2009 falls in the first
+        training window, 2011 and 2018 Q4 are each near the 20% line (unverified on the store), and 2020 and 2022
+        are in the sealed holdout. Owner decision, 2026-10-05 (D-55).
+    - id: OD-9
+      question: "Section 11 is silent on Secondary 2's re-scaling cadence and on ex-date income on a rebalance session. Confirm or overrule the implemented readings?"
+      resolution: >-
+        Both confirmed as implemented. Secondary 2 re-scales weekly, at the strategy's own decision instants; on
+        a session that is both an ex-date and a rebalance, the distribution is cash to the pre-open holder and is
+        reallocated at the open with the rebalance. Encoded as benchmarks.secondary_2_readings, which also
+        removes the open-reading caveat from every section 16.1 verdict under this version. Owner decision,
+        2026-10-05 (D-55).
+    - id: OD-10
+      question: "Do prospective decisions count toward section 17's 26-week SHADOW -> PAPER and section 14.3's 52-week minimums from experiment registration, or from ACTIVE acceptance?"
+      resolution: >-
+        From experiment registration, as section 14.2 already says: every weekly decision sealed before the next
+        open from registration onward counts. The decisions are sealed either way, so the stricter reading would
+        delay evidence without adding safety; promotion past SHADOW still requires ACTIVE under section 17.
+        Owner decision, 2026-10-05 (D-55).
 
 universe:
   universe_id: etf_trend_vol_v0
@@ -227,6 +292,11 @@ benchmarks:
   volatility_controlled_primary: true
   equal_weight_risk_etfs: true
   secondary: [SPY]
+  # 0.3.0, OD-9: the owner's confirmation of the two readings section 11 leaves silent. The schema admits only
+  # the values the code implements.
+  secondary_2_readings:
+    rescale: WEEKLY_AT_DECISION_INSTANTS
+    ex_date_rebalance_income: CASH_REALLOCATED_AT_OPEN
 
 # ALPHA_CHARTER.md sections 13 and 16.
 pass_fail:
@@ -236,12 +306,14 @@ pass_fail:
   bootstrap_confidence: "0.90"
   max_drawdown_ratio: "0.75"
   min_grid_sign_agreement: "0.75"
-  minimum_independent_decisions: 150
+  # 0.3.0, OD-8: the registered walk-forward schedule's capacity (102 blocks), not an independent statistical
+  # requirement. 0.2.0 said 150, which no schedule inside the design window can reach.
+  minimum_independent_decisions: 100
   falsifiers:
     - id: F1
       condition: "Primary metric point estimate below the threshold, or the bootstrap interval includes zero."
     - id: F2
-      condition: "Maximum drawdown not at or below max_drawdown_ratio times the primary benchmark's maximum drawdown."
+      condition: "Maximum drawdown not at or below max_drawdown_ratio times the primary benchmark's maximum drawdown. On the aggregate walk-forward out-of-sample set it is read on the chain-linked curves of the strategy and the primary benchmark (OD-6)."
     - id: F3
       condition: "Sign of the primary metric flips under adverse costs or one extra session of execution delay."
     - id: F4
@@ -250,6 +322,10 @@ pass_fail:
       condition: "Fewer than min_grid_sign_agreement of sensitivity-grid members agree in sign."
     - id: F6
       condition: "Prospective: after 36 months the rolling paired excess return versus the primary benchmark is below the 10th percentile of the historical block-bootstrap distribution. Triggers PAUSE and review, never silent tuning."
+  # 0.3.0, OD-5: ACTIVE needs the primary metric passed AND these cleared on the aggregate walk-forward set.
+  promotion_co_gates: [F2]
+  # 0.3.0, OD-7: primary fails + Secondary 2 beaten -> owner review, never ACTIVE.
+  mixed_verdict: OWNER_REVIEW_NEVER_ACTIVE
 
 # ALPHA_CHARTER.md section 15. 2 x 2 x 1 x 3 x 3 x 2 = 72 members; the registered point is one of them.
 sensitivity_grid:
@@ -278,7 +354,9 @@ reasons_it_may_not_work:
   - "The result may be real and still too small to matter after tax at sleeve scale."
 
 component_versions:
-  features: 1
+  # 1 -> 2 in 0.3.0: matches the code's FEATURES_VERSION since the corporate-action dedupe fix (2026-09-21).
+  # Byte-identical features on every store that exists; provenance, not a superseding change.
+  features: 2
   strategy_rules: 1
   portfolio_construction: 1
   risk_policy: 0
