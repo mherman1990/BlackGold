@@ -37,13 +37,13 @@ prose_charter: strategies/etf-trend-vol/ALPHA_CHARTER.md
 runtime_llm_in_signal: false
 arms: [B0_PASSIVE, B1_DETERMINISTIC]
 
-approval:
+approval: APPROVED
   # UNSIGNED. To sign: set `state` to APPROVED and fill `approved_by`, `approval_date`, `code_commit`.
   # Claude Code must not fill these (CLAUDE.md carve-out). 0.2.0 was signed 2026-09-12 against 115dae4 (D-50).
-  state: DRAFT
-  approved_by: null
-  approval_date: null
-  code_commit: null
+  state: APPROVED
+  approved_by: Matt Herman
+  approval_date: 2026-10-05
+  code_commit: 58d4474
   approval_ref: "docs/DECISIONS.md#D-56"
   decision_refs: [D-08, D-09, D-10, D-15, D-19, D-24, D-50, D-51, D-55, D-56]
   conditions: []
