@@ -15,7 +15,7 @@ import { appendDecisionRecord, DecisionAlreadySealedError } from "./decision-rec
 import { EMPTY_SHADOW_BOOK, shadowDecisionRecords, type ShadowBookState, type SymbolIdentity } from "./shadow-decision.ts";
 import { shadowFillRecords } from "./shadow-fills.ts";
 import { loadShadowReplayInputs, replayShadowArm, shadowBookStateAt } from "./shadow-book.ts";
-import { readShadowHaltInputs, shadowHaltContext } from "./shadow-halt.ts";
+import { readShadowHaltInputs, shadowHaltContext, shadowHaltStatus } from "./shadow-halt.ts";
 
 /**
  * The mode-gated `after_close` shadow decision job (D-53 slice 2c): the scheduler seam that resolves what the
@@ -68,6 +68,55 @@ function readPolicyFile<T>(dir: string, file: string, parse: (text: string, labe
   const path = join(dir, file);
   const bytes = readFileSync(path);
   return { value: parse(bytes.toString("utf8"), path), hash: `sha256:${sha256Hex(bytes)}` };
+}
+
+/**
+ * Minutes after a session close the shadow jobs run: never before the nightly ingest (close + 90 min, hence the
+ * 150-minute floor) and always behind the charter's decision instant (+30 absorbs scheduler polling delay).
+ */
+export function shadowJobOffsetMinutes(decisionOffsetMinutes: number): number {
+  return Math.max(150, decisionOffsetMinutes + 30);
+}
+
+/**
+ * The shadow decision the job will seal next, as of `now`: the earliest weekly decision instant after the last
+ * one sealed for this charter whose job run has not yet happened. Before a Friday close that is Friday's; between
+ * Friday's decision instant and the delayed run it is still Friday's (sealed timestamp-locked to the instant).
+ */
+export function upcomingShadowDecision(
+  db: Db,
+  calendar: ExchangeCalendar,
+  args: { charterHash: string; decisionOffsetMinutes: number; now: UtcInstant },
+): { decisionAt: UtcInstant; session: IsoDate } {
+  const jobOffsetMs = shadowJobOffsetMinutes(args.decisionOffsetMinutes) * 60_000;
+  const last = (db.prepare("SELECT MAX(decision_at) AS at FROM decision_records WHERE charter_hash = ?").get(args.charterHash) as { at: UtcInstant | null }).at;
+  const nowMs = Date.parse(args.now);
+  // Start early enough that a decision whose run is still ahead cannot be skipped, however large the offset.
+  const start = calendar.previousSession(addMs(args.now, -jobOffsetMs));
+  for (const session of calendar.sessionDates(start, addDays(start, 28 + Math.ceil(jobOffsetMs / 86_400_000)))) {
+    if (!isWeeklyDecisionSession(calendar, session)) continue;
+    const close = calendar.sessionClose(session);
+    const decisionAt = addMs(close, args.decisionOffsetMinutes * 60_000);
+    if (last !== null && Date.parse(decisionAt) <= Date.parse(last)) continue;
+    if (Date.parse(addMs(close, jobOffsetMs)) <= nowMs) continue;
+    return { decisionAt, session };
+  }
+  throw new RangeError(`no upcoming weekly decision session found after ${start}`);
+}
+
+/**
+ * The owner's `shadow status`: the halt picture as the NEXT decision will see it - evaluated at that decision's
+ * own instant and session, not at the moment the command happens to run (Codex P2, PR #108). Read at "now" with
+ * the previous session, a break first reported Thursday reads as fresh on Friday morning although Friday's
+ * decision will hold the book on it, which is exactly when the owner is deciding whether to re-arm.
+ */
+export function shadowStatusForNextDecision(
+  db: Db,
+  calendar: ExchangeCalendar,
+  args: { charterHash: string; decisionOffsetMinutes: number; now: UtcInstant },
+): { nextDecision: { decisionAt: UtcInstant; session: IsoDate } } & ReturnType<typeof shadowHaltStatus> {
+  const nextDecision = upcomingShadowDecision(db, calendar, args);
+  return { nextDecision, ...shadowHaltStatus(db, args.charterHash, nextDecision.decisionAt, nextDecision.session) };
 }
 
 /** The sleeve arm whose replayed book a decision starts from. */
@@ -134,7 +183,7 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
   // misconfigured path loudly at startup instead of at the first close. The 150-minute floor keeps the job
   // behind the nightly ingest (close + 90 min); the +30 buffer absorbs scheduler polling delay.
   const registeredOffsetMinutes = loadCharterFile(charterPath).charter.rules.decision_offset_minutes;
-  const jobOffsetMinutes = Math.max(150, registeredOffsetMinutes + 30);
+  const jobOffsetMinutes = shadowJobOffsetMinutes(registeredOffsetMinutes);
 
   scheduler.register({
     jobId: "shadow_decision",

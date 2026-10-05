@@ -10,6 +10,7 @@ import { appendShadowFillRecord, counterfactualFills, fillWindowObserved, shadow
 import { DEFAULT_MAX_FILL_BARS } from "../research/simulator.ts";
 import { fillDueSession, fillOwedSession, reconcileShadow } from "./shadow-reconcile.ts";
 import { closesAt, loadShadowReplayInputs, replayShadowArm } from "./shadow-book.ts";
+import { shadowJobOffsetMinutes } from "./shadow-job.ts";
 
 /**
  * The mode-gated `after_close` counterfactual fill + reconcile job (D-53 slice 3b): the scheduler seam that
@@ -61,7 +62,7 @@ export function registerShadowFillJob(scheduler: Scheduler, deps: { config: AppC
   // With equal offsets the scheduler executes same-instant runs in jobId order, and "shadow_decision" sorts
   // before "shadow_fill", so the decision run always precedes this one.
   const registeredOffsetMinutes = loadCharterFile(charterPath).charter.rules.decision_offset_minutes;
-  const jobOffsetMinutes = Math.max(150, registeredOffsetMinutes + 30);
+  const jobOffsetMinutes = shadowJobOffsetMinutes(registeredOffsetMinutes);
 
   scheduler.register({
     jobId: "shadow_fill",

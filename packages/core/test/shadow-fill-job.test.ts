@@ -8,7 +8,7 @@ import { addMs, Dec, isoDate, sha256Hex, type Db, type UtcInstant } from "@black
 import { Ledger, NyseCalendar, PointInTimeRepository, Scheduler, corporateActionObservation, openCoreDb } from "../src/index.ts";
 import { parseAppConfig } from "../src/config/load.ts";
 import type { AppConfig } from "../src/config/schema.ts";
-import { registerShadowDecisionJob } from "../src/decision/shadow-job.ts";
+import { registerShadowDecisionJob, shadowStatusForNextDecision, upcomingShadowDecision } from "../src/decision/shadow-job.ts";
 import { registerShadowFillJob, SHADOW_FILLS_RECORDED, SHADOW_INCIDENT, SHADOW_RECONCILED } from "../src/decision/shadow-fill-job.ts";
 import { appendShadowFillRecord, shadowFillRecords, SHADOW_FILL_RECORD_VERSION, type ShadowFillRecord } from "../src/decision/shadow-fills.ts";
 import { fillDueSession, fillOwedSession, fillWindowEndSession, reconcileShadow } from "../src/decision/shadow-reconcile.ts";
@@ -456,6 +456,32 @@ describe("reconciler breaks feed the next decision's halt (D-54)", () => {
     // A well-formed one is recorded.
     recordShadowReArm(env.db, ledger, base);
     expect(events(env.db, SHADOW_HALT_REARM)).toEqual([{ charterHash, to: "HALT_NEW_RISK", actor: "Owner", reason: "reviewed", acknowledgedBreaks: [] }]);
+  });
+
+  it("finds the decision the job will seal next: before the close, in the pending window, after the run, already sealed", async () => {
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    const next = (now: UtcInstant) => upcomingShadowDecision(env.db, cal, { charterHash, decisionOffsetMinutes: 60, now });
+    const friday = { decisionAt: afterClose("2026-03-06", 60), session: "2026-03-06" };
+    const nextFriday = { decisionAt: afterClose("2026-03-13", 60), session: "2026-03-13" };
+    expect(next("2026-03-06T15:00:00.000Z" as UtcInstant)).toEqual(friday); // Friday morning
+    expect(next(afterClose("2026-03-06", 90))).toEqual(friday); // past the instant, before the delayed run
+    expect(next(afterClose("2026-03-06", 160))).toEqual(nextFriday); // the run has happened (here: skipped, nothing sealed)
+    await env.scheduler.tick(afterClose("2026-03-06", 150)); // seals Friday
+    expect(next(afterClose("2026-03-06", 90))).toEqual(nextFriday); // already sealed: never offered again
+  });
+
+  it("shadow status classifies breaks as the NEXT decision will, not as of the moment it runs (Codex P2, PR #108)", () => {
+    // A break first reported Thursday 03-12. On Friday morning the next decision is Friday's, which compares it
+    // with Friday and holds the book on it - so status must call it unresolved, not fresh.
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    const brk = "MISSING_DECISION_RECORD:B1_DETERMINISTIC:2026-03-06";
+    new Ledger(env.db).append(SHADOW_RECONCILED, { charterHash, session: "2026-03-12", breaks: [brk] }, afterClose("2026-03-12", 150));
+    const status = shadowStatusForNextDecision(env.db, cal, { charterHash, decisionOffsetMinutes: 60, now: "2026-03-13T15:00:00.000Z" as UtcInstant });
+    expect(status.nextDecision).toEqual({ decisionAt: afterClose("2026-03-13", 60), session: "2026-03-13" });
+    expect(status.unresolvedBreaks).toEqual([brk]);
+    expect(status.freshBreaks).toEqual([]);
   });
 
   it("drops a malformed re-arm written to the ledger directly: relaxing a halt needs a well-formed owner action", () => {

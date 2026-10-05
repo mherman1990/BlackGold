@@ -25,7 +25,8 @@ import { splitPlan, type SplitKind } from "./research/walkforward.ts";
 import { enumerateGrid, enumerateTiers } from "./research/robustness.ts";
 import { buildCoverageReport } from "./research/coverage.ts";
 import { runEvaluation, type EvaluationProgress } from "./research/evaluate.ts";
-import { recordShadowReArm, shadowHaltStatus, ShadowReArmError } from "./decision/shadow-halt.ts";
+import { recordShadowReArm, ShadowReArmError } from "./decision/shadow-halt.ts";
+import { shadowStatusForNextDecision } from "./decision/shadow-job.ts";
 
 /**
  * blackgold-core CLI. Operational commands plus Phase 1 public-source ingestion. No broker, no model, no live path.
@@ -74,7 +75,8 @@ Phase 3 runtime-LLM analyst (requires ANTHROPIC_API_KEY in the environment; abst
                                             Factors are classified deterministically from the charter; an unclassified candidate is refused
 
 Shadow halt state (D-54; the owner's re-arm path - no order, no broker, no live mode):
-  shadow status --charter <charter.yaml>    The halt state the next shadow decision starts from, and every reconciliation break
+  shadow status --charter <charter.yaml>    The halt picture as the NEXT shadow decision will see it (its instant and session):
+                                            recorded state, pending re-arms, and every reconciliation break
   shadow rearm --charter <charter.yaml> --to NORMAL|HALT_NEW_RISK|HOLD_ONLY --actor <name> --reason <text> [--acknowledge <break,...>]
                                             Record an owner re-arm. Applied at the next decision, one step at a time; an
                                             active fault still binds. --acknowledge resolves breaks the reconciler has reported
@@ -115,9 +117,11 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
       const o = parseOptions(rest, { charter: { type: "string" }, to: { type: "string" }, actor: { type: "string" }, reason: { type: "string" }, acknowledge: { type: "string" } });
       const charterPath = o["charter"];
       if (typeof charterPath !== "string") throw new UsageError("shadow requires --charter <charter.yaml>");
-      const charterHash = loadCharterFile(charterPath).charterHash;
+      const loaded = loadCharterFile(charterPath);
+      const charterHash = loaded.charterHash;
       if (sub === "status") {
-        return { exitCode: 0, output: withDb(config, (db) => shadowHaltStatus(db, charterHash, now, calendar.previousSession(now))) };
+        const decisionOffsetMinutes = loaded.charter.rules.decision_offset_minutes;
+        return { exitCode: 0, output: withDb(config, (db) => shadowStatusForNextDecision(db, calendar, { charterHash, decisionOffsetMinutes, now })) };
       }
       if (sub === "rearm") {
         const opt = (k: string): string => {
