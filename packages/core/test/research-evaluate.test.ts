@@ -34,6 +34,11 @@ function evalCharter(mut: (c: Charter) => void = () => undefined): Charter {
     annual_volatility_target: ["0.10", "0.15"],
     rebalance_band_pct_points: ["2.0"],
   };
+  // Signed here, in memory, rather than inherited from the tracked file: these cases are about how an
+  // evaluation treats an APPROVED charter, and the tracked charter is unsigned whenever a new version awaits
+  // the owner's signature (0.3.0, from 2026-10-05). A test-only signer, never the owner's name; the case that
+  // needs a draft sets one explicitly.
+  c.approval = { ...c.approval, state: "APPROVED", approved_by: "Test Owner", approval_date: "2026-01-01", code_commit: "0123456789ab", approval_ref: "test" };
   mut(c);
   return c;
 }
