@@ -61,6 +61,24 @@ describe("shadowHaltContext: owner acknowledgements", () => {
     expect(c.acknowledgedBreaks).toEqual([]);
   });
 
+  it("scopes an acknowledgement to the occurrence it resolved: a recurrence holds again (Codex P2, PR #108)", () => {
+    // Reported 03-12, acknowledged 03-12 evening, cleared 03-13, back 03-16 and still there on 03-19: the owner
+    // examined the first occurrence only, so the recurrence is unresolved past one session.
+    const c = ctx({
+      reconciles: [rec("2026-03-12", [BREAK]), rec("2026-03-13", []), rec("2026-03-16", [BREAK]), rec("2026-03-19", [BREAK])],
+      reArms: [rearm("HALT_NEW_RISK", "2026-03-12T23:00:00.000Z" as UtcInstant, [BREAK])],
+    });
+    expect(c.unresolvedBreaks).toEqual([BREAK]);
+    expect(c.acknowledgedBreaks).toEqual([]);
+    // Control: the same acknowledgement issued during the current occurrence does resolve it.
+    const ok = ctx({
+      reconciles: [rec("2026-03-12", [BREAK]), rec("2026-03-13", []), rec("2026-03-16", [BREAK]), rec("2026-03-19", [BREAK])],
+      reArms: [rearm("HALT_NEW_RISK", "2026-03-17T12:00:00.000Z" as UtcInstant, [BREAK])],
+    });
+    expect(ok.unresolvedBreaks).toEqual([]);
+    expect(ok.acknowledgedBreaks).toEqual([BREAK]);
+  });
+
   it("ignores a re-arm recorded after the decision instant", () => {
     const c = ctx({ reconciles, reArms: [rearm("HALT_NEW_RISK", "2026-03-20T21:00:00.001Z" as UtcInstant, [BREAK])] });
     expect(c.unresolvedBreaks).toEqual([BREAK]);

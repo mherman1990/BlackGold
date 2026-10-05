@@ -1293,9 +1293,10 @@ before any halt relaxes.
    the decision session itself is recorded on the ledger event but not yet acted on. Every input is
    knowledge-scoped to the decision instant.
 3. **"Resolved" means acknowledged by the owner.** `shadow rearm --acknowledge <codes>` records the owner's
-   resolution (§9.2). An acknowledgement counts only for a break the reconciler had already reported when the
-   re-arm was issued, so nobody can pre-acknowledge a future fault. A break that genuinely disappears from the
-   latest reconcile stops counting without an acknowledgement.
+   resolution (§9.2). An acknowledgement resolves only the occurrence it was issued during, meaning at or after
+   that occurrence's first report. Nobody can pre-acknowledge a future fault, and an acknowledged break that
+   clears and later recurs holds the book again. The CLI accepts only breaks the latest reconcile reports. A
+   break that genuinely disappears from the latest reconcile stops counting without an acknowledgement.
 4. **Staged re-arm.** `shadow rearm --to …` writes `shadow.halt_rearm` with actor and reason. The next decision
    applies each re-arm issued since the previous decision, in order, through `evaluateHaltState`: one step per
    action, and an active fault still binds. Malformed re-arm events are dropped.

@@ -451,7 +451,11 @@ describe("reconciler breaks feed the next decision's halt (D-54)", () => {
     expect(() => recordShadowReArm(env.db, ledger, { ...base, to: "EMERGENCY_FLATTEN_AUTHORIZED" })).toThrow(ShadowReArmError);
     expect(() => recordShadowReArm(env.db, ledger, { ...base, actor: "  " })).toThrow(ShadowReArmError);
     expect(() => recordShadowReArm(env.db, ledger, { ...base, reason: "" })).toThrow(ShadowReArmError);
-    expect(() => recordShadowReArm(env.db, ledger, { ...base, acknowledge: ["MISSING_DECISION_RECORD:B1_DETERMINISTIC:2026-03-27"] })).toThrow(/has not reported/);
+    expect(() => recordShadowReArm(env.db, ledger, { ...base, acknowledge: ["MISSING_DECISION_RECORD:B1_DETERMINISTIC:2026-03-27"] })).toThrow(/does not report/);
+    // Reported once, since cleared: the latest reconcile no longer reports it, so there is no occurrence to resolve.
+    ledger.append(SHADOW_RECONCILED, { charterHash, session: "2026-03-20", breaks: ["NEGATIVE_CASH:B1_DETERMINISTIC:2026-03-20"] }, afterClose("2026-03-20", 150));
+    ledger.append(SHADOW_RECONCILED, { charterHash, session: "2026-03-23", breaks: [] }, afterClose("2026-03-23", 150));
+    expect(() => recordShadowReArm(env.db, ledger, { ...base, acknowledge: ["NEGATIVE_CASH:B1_DETERMINISTIC:2026-03-20"] })).toThrow(/does not report/);
     expect(events(env.db, SHADOW_HALT_REARM)).toHaveLength(0);
     // A well-formed one is recorded.
     recordShadowReArm(env.db, ledger, base);

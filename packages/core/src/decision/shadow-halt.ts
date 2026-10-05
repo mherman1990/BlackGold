@@ -18,9 +18,10 @@ import type { RiskState } from "../risk/halt.ts";
  *    an active fault still binds. `evaluateHaltState` enforces both; this module only collects the re-arms a
  *    decision may consume.
  *
- * An acknowledgement counts only for a break the reconciler had ALREADY reported when the re-arm was issued.
- * Break codes name a specific arm and session, so a code written in advance would otherwise silence a future
- * fault before anyone had seen it.
+ * An acknowledgement resolves only the OCCURRENCE of a break it was issued during: at or after that occurrence's
+ * first report. Break codes name a specific arm and session, so a code written in advance would otherwise
+ * silence a future fault before anyone had seen it, and an acknowledgement of an occurrence that cleared would
+ * silence its recurrence, which nobody has examined.
  */
 
 /** Where the owner's re-arms land (written by the `shadow rearm` CLI). */
@@ -44,7 +45,7 @@ export type ShadowHaltContext = {
   unresolvedBreaks: string[];
   /** Breaks first reported at the decision session itself: recorded on the event, not yet acted on. */
   freshBreaks: string[];
-  /** Every break the owner has acknowledged by this instant (only acknowledgements of already-reported breaks). */
+  /** Currently reported breaks the owner acknowledged during their current occurrence (so they do not hold). */
   acknowledgedBreaks: string[];
 };
 
@@ -71,30 +72,27 @@ export function shadowHaltContext(input: {
   const known = input.reconciles.filter((r) => Date.parse(r.at) <= atMs).sort(byInstant);
   const knownReArms = input.reArms.filter((r) => Date.parse(r.at) <= atMs).sort(byInstant);
 
-  // Acknowledgements: only of a break some reconcile had reported at or before the re-arm itself.
-  const acknowledged = new Set<string>();
-  for (const r of knownReArms) {
-    const rMs = Date.parse(r.at);
-    const seenBy = new Set(known.filter((k) => Date.parse(k.at) <= rMs).flatMap((k) => k.breaks));
-    for (const code of r.acknowledgedBreaks) if (seenBy.has(code)) acknowledged.add(code);
-  }
-
   const unresolvedBreaks: string[] = [];
   const freshBreaks: string[] = [];
+  const acknowledged: string[] = [];
   const latest = known.at(-1);
   if (latest !== undefined) {
     for (const code of [...new Set(latest.breaks)].sort()) {
-      if (acknowledged.has(code)) continue;
-      // First seen = the earliest reconcile in the unbroken run of reconciles, ending at the latest, that all
-      // report this break. A break that cleared and came back is a new occurrence and starts a new run.
-      let firstSeen = latest.session;
-      for (let i = known.length - 1; i >= 0; i--) {
-        const k = known[i];
-        if (!k?.breaks.includes(code)) break;
-        firstSeen = k.session;
+      // The current OCCURRENCE: the unbroken run of reconciles, ending at the latest, that all report this break.
+      // A break that cleared and came back is a new occurrence and starts a new run.
+      let first = known.length - 1;
+      while (first > 0 && (known[first - 1]?.breaks.includes(code) ?? false)) first--;
+      const firstReport = known[first] ?? latest;
+      // An acknowledgement resolves only the occurrence it was issued during (Codex P2, PR #108): it must come at
+      // or after this occurrence's first report. That excludes a code named in advance, and an acknowledgement
+      // of an earlier occurrence that cleared - a recurrence has not been examined by anyone.
+      const firstReportMs = Date.parse(firstReport.at);
+      if (knownReArms.some((r) => r.acknowledgedBreaks.includes(code) && Date.parse(r.at) >= firstReportMs)) {
+        acknowledged.push(code);
+        continue;
       }
       // "Unresolved past one session": reported on a session before this decision's, and still reported.
-      (firstSeen < input.decisionSession ? unresolvedBreaks : freshBreaks).push(code);
+      (firstReport.session < input.decisionSession ? unresolvedBreaks : freshBreaks).push(code);
     }
   }
 
@@ -102,7 +100,7 @@ export function shadowHaltContext(input: {
   const sinceMs = input.previous === undefined ? Number.NEGATIVE_INFINITY : Date.parse(input.previous.decisionAt);
   const reArms = knownReArms.filter((r) => Date.parse(r.at) > sinceMs);
 
-  return { current, reArms, unresolvedBreaks, freshBreaks, acknowledgedBreaks: [...acknowledged].sort() };
+  return { current, reArms, unresolvedBreaks, freshBreaks, acknowledgedBreaks: acknowledged };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -188,9 +186,12 @@ export function recordShadowReArm(
   const reason = args.reason.trim();
   if (actor.length === 0) throw new ShadowReArmError("--actor is required: a re-arm is an owner action recorded with its actor");
   if (reason.length === 0) throw new ShadowReArmError("--reason is required: record the root cause and its resolution");
-  const reported = new Set(readShadowHaltInputs(db, args.charterHash, args.now).reconciles.filter((r) => Date.parse(r.at) <= Date.parse(args.now)).flatMap((r) => r.breaks));
+  // Only a break the LATEST reconcile reports can be acknowledged: an acknowledgement resolves the current
+  // occurrence, so one naming a break that has since cleared would resolve nothing (and must not linger).
+  const latest = readShadowHaltInputs(db, args.charterHash, args.now).reconciles.filter((r) => Date.parse(r.at) <= Date.parse(args.now)).sort(byInstant).at(-1);
+  const reported = new Set(latest?.breaks ?? []);
   const unknown = args.acknowledge.filter((code) => !reported.has(code));
-  if (unknown.length > 0) throw new ShadowReArmError(`cannot acknowledge a break the reconciler has not reported: ${unknown.join(", ")}`);
+  if (unknown.length > 0) throw new ShadowReArmError(`cannot acknowledge a break the latest reconcile does not report: ${unknown.join(", ")}`);
   const payload = { charterHash: args.charterHash, to: args.to as ShadowFaultState, actor, reason, acknowledgedBreaks: [...new Set(args.acknowledge)].sort() };
   ledger.append(SHADOW_HALT_REARM, payload, args.now);
   return { ...payload, at: args.now };

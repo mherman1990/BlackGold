@@ -79,7 +79,7 @@ Shadow halt state (D-54; the owner's re-arm path - no order, no broker, no live 
                                             recorded state, pending re-arms, and every reconciliation break
   shadow rearm --charter <charter.yaml> --to NORMAL|HALT_NEW_RISK|HOLD_ONLY --actor <name> --reason <text> [--acknowledge <break,...>]
                                             Record an owner re-arm. Applied at the next decision, one step at a time; an
-                                            active fault still binds. --acknowledge resolves breaks the reconciler has reported
+                                            active fault still binds. --acknowledge resolves breaks the latest reconcile reports
 
 Configuration comes from BLACKGOLD_* environment variables (see config/schema/README.md).`;
 
