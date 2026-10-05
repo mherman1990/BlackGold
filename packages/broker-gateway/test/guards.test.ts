@@ -105,6 +105,19 @@ describe("HardCaps", () => {
     expect(makeCaps({ maxOrderNotional: dec("44998") }).check(sell, T0).ok).toBe(true); // 100 * 449.98
   });
 
+  it("NOTIONAL_CAP prices a LIMIT SELL at the higher of its limit and the bid (Codex P2, PR #109)", () => {
+    // Quote 449.98/450.02. A $1 sell limit fills at about the bid: 100 x 449.98 = 44,998, not 100.
+    const dodge = makeIntent({ side: "SELL", limitPrice: dec("1.00") });
+    expect(makeCaps({ maxOrderNotional: dec("44998") }).check(dodge, T0).ok).toBe(true);
+    expect(makeCaps({ maxOrderNotional: dec("44997.99") }).check(dodge, T0).reasonCodes).toEqual(["NOTIONAL_CAP"]);
+    // A sell limit above the market is priced at its limit: 100 x 460 = 46,000, though the bid is 449.98.
+    const above = makeIntent({ side: "SELL", limitPrice: dec("460.00") });
+    expect(makeCaps({ maxOrderNotional: dec("46000") }).check(above, T0).ok).toBe(true);
+    expect(makeCaps({ maxOrderNotional: dec("45999.99") }).check(above, T0).reasonCodes).toEqual(["NOTIONAL_CAP"]);
+    // A LIMIT buy keeps its limit, the most it can pay: 100 x 449.00 = 44,900, where the bid would read 44,998.
+    expect(makeCaps({ maxOrderNotional: dec("44900") }).check(makeIntent({ limitPrice: dec("449.00") }), T0).ok).toBe(true);
+  });
+
   it("QTY_CAP: exactly at the cap passes, one share over fails", () => {
     const loose = makeCaps({ maxOrderNotional: dec("1000000") });
     expect(loose.check(makeIntent({ quantity: dec(500) }), T0).ok).toBe(true);
