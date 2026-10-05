@@ -4,18 +4,12 @@ import type { ExchangeCalendar } from "../calendar/types.ts";
 import type { Scheduler } from "../scheduler/scheduler.ts";
 import { PointInTimeRepository } from "../data/pit/repository.ts";
 import { loadCharterFile } from "../strategy/charter.ts";
-import { costsFromCharter, loadExecutionSeries, type EntitySeries, type ExecutionSeriesInput } from "../research/backtest.ts";
-import { dailyNavSeries, type PortfolioEvent } from "../research/nav.ts";
+import { costsFromCharter } from "../research/backtest.ts";
 import { sealsProspectiveDecisions, type ProspectiveDecisionRecord } from "./decision-record.ts";
-import {
-  appendShadowFillRecord,
-  counterfactualFills,
-  shadowFillRecords,
-  SHADOW_INITIAL_CASH,
-  type ShadowFillRecord,
-} from "./shadow-fills.ts";
+import { appendShadowFillRecord, counterfactualFills, fillWindowObserved, shadowFillRecords, type ShadowFillRecord } from "./shadow-fills.ts";
 import { DEFAULT_MAX_FILL_BARS } from "../research/simulator.ts";
-import { fillDueSession, reconcileShadow } from "./shadow-reconcile.ts";
+import { fillDueSession, fillOwedSession, reconcileShadow } from "./shadow-reconcile.ts";
+import { closesAt, loadShadowReplayInputs, replayShadowArm } from "./shadow-book.ts";
 
 /**
  * The mode-gated `after_close` counterfactual fill + reconcile job (D-53 slice 3b): the scheduler seam that
@@ -113,16 +107,9 @@ export function registerShadowFillJob(scheduler: Scheduler, deps: { config: AppC
 
       const pending = sealedRows.filter((r) => !recorded.has(`${r.arm}|${r.decision_at}`) && fillDueSession(calendar, decisionSessionOf(r.decision_at), costs.delayBars) <= session);
 
-      // The simulator works a remainder across up to DEFAULT_MAX_FILL_BARS bars starting at the first fill
-      // attempt; the last of those is this many sessions after the decision. A record finalized before the
-      // whole window has completed could seal a LIQUIDITY remainder bars it never saw might have filled - and
-      // the append-only ledger forbids correcting it (Codex P1, PR #102). Finalization is therefore deferred
-      // for a remainder that more bars could still change; see below.
-      const fillWindowEnd = (decisionSession: IsoDate): IsoDate => fillDueSession(calendar, decisionSession, costs.delayBars + DEFAULT_MAX_FILL_BARS - 1);
-
       // The entity universe the replay and the pending fills touch: every target the sealed records carry plus
       // everything a prior fill ever traded. Loaded through the backtest's OWN execution-series loader, as of
-      // the run's scheduled instant.
+      // the run's scheduled instant (shadow-book.ts, shared with the decision job).
       const entities = new Set<string>();
       for (const row of sealedRows) {
         const rec = JSON.parse(row.record_json) as ProspectiveDecisionRecord;
@@ -130,87 +117,16 @@ export function registerShadowFillJob(scheduler: Scheduler, deps: { config: AppC
       }
       for (const f of priorFills) for (const fill of f.fills) entities.add(fill.entityId);
 
-      const firstSession = decisionSessionOf(sealedRows[0]?.decision_at ?? ctx.scheduledFor);
-      const seriesInput: ExecutionSeriesInput = {
+      const replayInputs = loadShadowReplayInputs({
         pit: new PointInTimeRepository(ctx.db, { processingDelayOverrides: processingDelayOverridesMs(config.sources) }),
         calendar,
-        from: firstSession,
+        entities,
+        from: decisionSessionOf(sealedRows[0]?.decision_at ?? ctx.scheduledFor),
         to: session,
-        // The default bars source, exactly like the decision job's feature reads (no override is configured).
-      };
-      const series = new Map<string, EntitySeries>();
-      for (const e of [...entities].sort()) series.set(e, loadExecutionSeries(seriesInput, e, ctx.scheduledFor));
-
-      const closesAt = (s: IsoDate): Map<string, Dec> => {
-        const m = new Map<string, Dec>();
-        for (const [entityId, es] of series) {
-          let found: Dec | undefined;
-          for (const b of es.bars) {
-            if (b.session <= s) found = b.close;
-            else break;
-          }
-          if (found !== undefined) m.set(entityId, found);
-        }
-        return m;
-      };
-
-      // Corporate-action identity, split, and delisting events, exactly as runBacktest emits them. Dividends
-      // are NOT emitted here: their credit depends on the arm's own ex-date holding, so they are built per arm
-      // inside `replayArm` with the entitlement attached.
-      const actionEvents: PortfolioEvent[] = [];
-      const dividends: { entityId: string; amountPerShare: Dec; exDate: IsoDate; payDate: IsoDate }[] = [];
-      const splits: { entityId: string; ratio: Dec; exDate: IsoDate }[] = [];
-      for (const [entityId, es] of series) {
-        for (const a of es.actions) {
-          if (a.kind === "CASH_DIVIDEND") dividends.push({ entityId, amountPerShare: a.amount, exDate: a.exDate, payDate: a.payDate });
-          if (a.kind === "SPLIT") {
-            actionEvents.push({ type: "SPLIT", entityId, ratio: a.ratio, exDate: a.exDate });
-            splits.push({ entityId, ratio: a.ratio, exDate: a.exDate });
-          }
-          if (a.kind === "DELISTING") actionEvents.push({ type: "DELISTING", entityId, finalPrice: a.finalPrice, session: a.lastTradeDate });
-        }
-      }
-
-      // The quantity an arm held going INTO `exDate` (fills and splits strictly before it, splits first on a
-      // shared date), which is the dividend-entitled quantity. Passing the pay-date position instead would
-      // credit income to shares bought between ex and pay dates and strip it from shares sold there
-      // (Codex P1, PR #102) - `dailyNavSeries` only defaults that way when no entitlement is supplied.
-      const entitledQuantity = (fillsForArm: readonly ShadowFillRecord[], entityId: string, exDate: IsoDate): Dec => {
-        const evs: { date: IsoDate; rank: number; apply: (q: Dec) => Dec }[] = [];
-        for (const f of fillsForArm) {
-          for (const fill of f.fills) {
-            if (fill.entityId !== entityId) continue;
-            const qty = new Dec(fill.quantity);
-            evs.push({ date: fill.session, rank: 1, apply: (q) => (fill.side === "BUY" ? q.plus(qty) : q.minus(qty)) });
-          }
-        }
-        for (const s of splits) {
-          // A same-date split applies before the fill, matching the replay's own ordering (post-split units).
-          if (s.entityId === entityId) evs.push({ date: s.exDate, rank: 0, apply: (q) => q.times(s.ratio) });
-        }
-        evs.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.rank - b.rank));
-        let q = ZERO;
-        for (const e of evs) {
-          if (e.date >= exDate) break;
-          q = e.apply(q);
-        }
-        return q;
-      };
-
-      /** Replay one arm's synthetic book from its append-only fill records, through `toSession` inclusive. */
-      const replayArm = (arm: Arm, fillsForArm: readonly ShadowFillRecord[], toSession: IsoDate) => {
-        const events: PortfolioEvent[] = [...actionEvents];
-        for (const d of dividends) {
-          events.push({ type: "DIVIDEND", entityId: d.entityId, amountPerShare: d.amountPerShare, payDate: d.payDate, entitledQuantity: entitledQuantity(fillsForArm, d.entityId, d.exDate) });
-        }
-        for (const f of fillsForArm) {
-          for (const fill of f.fills) {
-            events.push({ type: "FILL", entityId: fill.entityId, side: fill.side, quantity: new Dec(fill.quantity), price: new Dec(fill.price), fees: new Dec(fill.fees), session: fill.session });
-          }
-        }
-        const sessions = calendar.sessionDates(firstSession, toSession);
-        return dailyNavSeries({ initialCash: SHADOW_INITIAL_CASH, events, sessions, closes: closesAt });
-      };
+        asOf: ctx.scheduledFor,
+      });
+      const replayArm = (fillsForArm: readonly ShadowFillRecord[], toSession: IsoDate) => replayShadowArm(replayInputs, fillsForArm, toSession);
+      const bars = new Map([...replayInputs.series].map(([entityId, es]) => [entityId, es.bars] as const));
 
       const allFills = [...priorFills];
       const newRecords: { arm: Arm; decisionAt: UtcInstant; hash: string; fills: number; suppressed: number; unfilled: number }[] = [];
@@ -226,11 +142,10 @@ export function registerShadowFillJob(scheduler: Scheduler, deps: { config: AppC
           const record = JSON.parse(row.record_json) as ProspectiveDecisionRecord;
           const decisionSession = decisionSessionOf(row.decision_at);
           const armFills = allFills.filter((f) => f.arm === row.arm);
-          const replay = replayArm(row.arm, armFills, decisionSession);
+          const replay = replayArm(armFills, decisionSession);
           const mark = replay.points.find((p) => p.session === decisionSession) ?? replay.points.at(-1);
           const positions = new Map<string, Dec>();
           for (const [entityId, pos] of replay.portfolio.positions) if (!pos.quantity.isZero()) positions.set(entityId, pos.quantity);
-          const bars = new Map([...series].map(([entityId, es]) => [entityId, es.bars] as const));
           const fillRecord = counterfactualFills({
             record,
             decisionRecordHash: row.record_hash,
@@ -238,15 +153,20 @@ export function registerShadowFillJob(scheduler: Scheduler, deps: { config: AppC
             computedAt: ctx.now,
             book: { positions, cash: replay.portfolio.cash, nav: mark?.nav ?? ZERO },
             bars,
-            prices: closesAt(decisionSession),
+            prices: closesAt(replayInputs, decisionSession),
             costs,
             bandPctPoints,
+            splits: replayInputs.splits,
+            maxFillBars: DEFAULT_MAX_FILL_BARS,
           });
-          // Defer a record whose remainder later bars could still fill: LIQUIDITY and NO_BARS remainders are
-          // only final once the simulator's whole fill window has completed (a CASH remainder is the book's
-          // own arithmetic - more bars cannot change it, so it finalizes immediately). The query-driven
-          // selection re-processes the decision on a later run; nothing is persisted for it now.
-          if (fillRecord.unfilled.some((u) => u.reason !== "CASH") && fillWindowEnd(decisionSession) > session) {
+          // Defer a record whose remainder later bars could still fill: a LIQUIDITY or NO_BARS remainder is only
+          // final once the entity's OWN bars cover the simulator's window (Codex P1, PR #102 round 3 - the
+          // simulator advances over bars, not sessions), or once the shared owed bound is reached, after which
+          // the remainder is sealed as a break rather than stalling the arm forever. A CASH remainder is the
+          // book's own arithmetic - more bars cannot change it, so it finalizes immediately. The query-driven
+          // selection re-processes a deferred decision on a later run; nothing is persisted for it now.
+          const windowOpen = fillRecord.unfilled.some((u) => u.reason !== "CASH" && !fillWindowObserved(bars.get(u.entityId), decisionSession, costs.delayBars, DEFAULT_MAX_FILL_BARS));
+          if (windowOpen && fillOwedSession(calendar, decisionSession, costs.delayBars, DEFAULT_MAX_FILL_BARS) > session) {
             deferredArms.add(row.arm);
             continue;
           }
@@ -266,7 +186,7 @@ export function registerShadowFillJob(scheduler: Scheduler, deps: { config: AppC
         // Reconcile over the WHOLE ledger state including this run's records, every run.
         const bookCash = new Map<string, { session: IsoDate; cash: Dec }[]>();
         for (const arm of SHADOW_ARMS) {
-          const points = replayArm(arm, allFills.filter((f) => f.arm === arm), session).points;
+          const points = replayArm(allFills.filter((f) => f.arm === arm), session).points;
           bookCash.set(arm, points.map((p) => ({ session: p.session, cash: p.cash })));
         }
         const breaks = reconcileShadow({
