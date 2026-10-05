@@ -1,18 +1,20 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { addDays, addMs, canonicalJson, sha256Hex, type IsoDate } from "@blackgold/shared";
+import { addDays, addMs, canonicalJson, sha256Hex, type Db, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import { processingDelayOverridesMs, RestrictedListConfigSchema, RiskConfigSchema, ThemeMembershipConfigSchema, type AppConfig } from "../config/schema.ts";
 import { parseYamlConfig } from "../config/load.ts";
 import type { ExchangeCalendar } from "../calendar/types.ts";
 import type { Scheduler } from "../scheduler/scheduler.ts";
 import { PointInTimeRepository } from "../data/pit/repository.ts";
 import { EntityMap } from "../market/entity-map.ts";
-import { loadCharterFile } from "../strategy/charter.ts";
+import { loadCharterFile, type Charter } from "../strategy/charter.ts";
 import { weeklyDecisionSessions } from "../research/backtest.ts";
 import { entityMapResolver, storedLookThroughResolver } from "../compliance/theme-membership.ts";
-import { sealsProspectiveDecisions } from "./decision-record.ts";
+import { sealsProspectiveDecisions, type ProspectiveDecisionRecord } from "./decision-record.ts";
 import { appendDecisionRecord, DecisionAlreadySealedError } from "./decision-record.ts";
-import { shadowDecisionRecords, type SymbolIdentity } from "./shadow-decision.ts";
+import { EMPTY_SHADOW_BOOK, shadowDecisionRecords, type ShadowBookState, type SymbolIdentity } from "./shadow-decision.ts";
+import { shadowFillRecords } from "./shadow-fills.ts";
+import { loadShadowReplayInputs, replayShadowArm, shadowBookStateAt } from "./shadow-book.ts";
 
 /**
  * The mode-gated `after_close` shadow decision job (D-53 slice 2c): the scheduler seam that resolves what the
@@ -65,6 +67,51 @@ function readPolicyFile<T>(dir: string, file: string, parse: (text: string, labe
   const path = join(dir, file);
   const bytes = readFileSync(path);
   return { value: parse(bytes.toString("utf8"), path), hash: `sha256:${sha256Hex(bytes)}` };
+}
+
+/** The sleeve arm whose replayed book a decision starts from. */
+const SLEEVE_ARM = "B1_DETERMINISTIC";
+
+/**
+ * The replayed B1 shadow book a decision at `decisionAt` starts from, plus any reason it cannot be trusted.
+ * Before any B1 decision has been sealed there is no book: the decision is from empty, as the first week is.
+ * A prior B1 decision with no outcome recorded by the decision instant (a deferred window, a down host, a fill
+ * job failure) leaves the book unknown - it would be built on a history that is still changing - so it enters
+ * the halt machine as a stale input: new risk blocked, the reason on the record, the target still sealed.
+ */
+function carriedShadowBook(
+  db: Db,
+  args: { pit: PointInTimeRepository; calendar: ExchangeCalendar; charter: Charter; charterHash: string; decisionAt: UtcInstant; decisionSession: IsoDate; offsetMinutes: number },
+): { state: ShadowBookState; staleInputs: string[] } {
+  const { charter, decisionAt } = args;
+  const sealed = db
+    .prepare("SELECT decision_at, arm, record_json FROM decision_records WHERE charter_hash = ? AND decision_at < ? ORDER BY decision_at, arm")
+    .all(args.charterHash, decisionAt) as { decision_at: UtcInstant; arm: string; record_json: string }[];
+  const priorSleeve = sealed.filter((r) => r.arm === SLEEVE_ARM);
+  if (priorSleeve.length === 0) return { state: EMPTY_SHADOW_BOOK, staleInputs: [] };
+
+  const decisionAtMs = Date.parse(decisionAt);
+  const fills = shadowFillRecords(db, charter.strategy_id, charter.charter_version, SLEEVE_ARM).filter(
+    (f) => f.charterHash === args.charterHash && f.decisionAt < decisionAt && Date.parse(f.computedAt) <= decisionAtMs,
+  );
+  const recorded = new Set(fills.map((f) => f.decisionAt));
+  const staleInputs = priorSleeve.filter((r) => !recorded.has(r.decision_at)).map((r) => `shadow_book_incomplete:${SLEEVE_ARM} has no recorded outcome for ${r.decision_at}`);
+
+  const sessionOf = (at: UtcInstant): IsoDate => args.calendar.previousSession(addMs(at, -args.offsetMinutes * 60_000));
+  const entities = new Set<string>();
+  for (const r of sealed) for (const w of (JSON.parse(r.record_json) as ProspectiveDecisionRecord).targetWeights) entities.add(w.entityId);
+  for (const f of fills) for (const fill of f.fills) entities.add(fill.entityId);
+  const firstRow = sealed[0];
+  const inputs = loadShadowReplayInputs({
+    pit: args.pit,
+    calendar: args.calendar,
+    entities,
+    from: firstRow === undefined ? args.decisionSession : sessionOf(firstRow.decision_at),
+    to: args.decisionSession,
+    asOf: decisionAt,
+  });
+  const replay = replayShadowArm(inputs, fills, args.decisionSession);
+  return { state: shadowBookStateAt(replay, inputs, args.decisionSession), staleInputs };
 }
 
 /**
@@ -223,6 +270,14 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       if (futureDated(membership.value.asOf)) unapprovedPolicies.push("policy_future_dated:theme-membership.yaml");
 
 
+      // The book this decision starts from is the REPLAYED B1 shadow book (Codex P1, PR #102 round 3), not an
+      // empty one: from the second week on, candidate hysteresis, the gate's new-risk deltas, and the halt
+      // machine's drawdown must read the same book the fill job will execute this decision against. B1 is the
+      // sleeve book; B0's gate is halt-only and reads no weights. Knowledge-scoped to the decision instant:
+      // only fill records computed by then, bars and corporate actions as of then.
+      const book = carriedShadowBook(ctx.db, { pit, calendar, charter, charterHash: loaded.charterHash, decisionAt, decisionSession: session, offsetMinutes: registeredOffsetMinutes });
+      const staleInputs = [...unapprovedPolicies, ...book.staleInputs];
+
       const records = shadowDecisionRecords(charter, {
         mode: config.mode,
         charterHash: loaded.charterHash,
@@ -232,9 +287,10 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
         deps: { pit, calendar },
         decisionAt,
         sealedAt: ctx.now,
+        state: book.state,
         identity,
         lookThrough,
-        ...(unapprovedPolicies.length === 0 ? {} : { staleInputs: unapprovedPolicies }),
+        ...(staleInputs.length === 0 ? {} : { staleInputs }),
       });
 
       // Seal all arms and the ledger event in ONE transaction (Codex P1): the scheduler claims the
@@ -287,6 +343,9 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
           charterHash: loaded.charterHash,
           policyHashes: { risk_yaml: risk.hash, restricted_list_yaml: restricted.hash, theme_membership_yaml: membership.hash },
           unapprovedPolicies,
+          // What the decision started from: the replayed sleeve book's holdings (entity ids only - weights are
+          // on nothing a dollar can be read from), and any reason that book could not be trusted.
+          startingBook: { held: [...book.state.currentWeights.keys()].sort(), staleInputs: book.staleInputs },
           policyVersions: { risk_yaml: risk.value.version },
           sealed,
           alreadySealed,

@@ -17,8 +17,8 @@ import type { ShadowFillRecord } from "./shadow-fills.ts";
  * Break code vocabulary (stable strings - notify and tests key on them):
  *  - `MISSING_DECISION_RECORD:<arm>:<session>` - a weekly decision session inside the observed window has no
  *    sealed record for an arm that has sealed before. Rung 2's exit evidence is dead on arrival if these exist.
- *  - `MISSING_FILL_RECORD:<arm>:<decisionAt>` - a sealed decision whose fill-due session has passed with no
- *    recorded outcome.
+ *  - `MISSING_FILL_RECORD:<arm>:<decisionAt>` - a sealed decision whose owed session (`fillOwedSession`) has
+ *    passed with no recorded outcome.
  *  - `UNFILLED_REMAINDER:<arm>:<decisionAt>:<entityId>` - the simulator could not fill an order's full
  *    quantity inside its fill window (thin volume, untradable bars, or cash exhaustion).
  *  - `NEGATIVE_CASH:<arm>:<session>` - the replayed synthetic book went cash-negative: an invariant violation
@@ -34,6 +34,27 @@ export function fillDueSession(calendar: ExchangeCalendar, decisionSession: IsoD
   const due = sessions[delayBars];
   if (due === undefined) throw new RangeError(`no session ${delayBars} sessions after ${decisionSession} within ${horizon}`);
   return due;
+}
+
+/**
+ * The calendar session of the simulator's last fill-window bar, when the entity trades every session: its
+ * loop starts `max(delayBars, 1)` sessions after the decision (the zero-delay decision-bar attempt happens
+ * before the loop - Codex P2, PR #102 round 2) and runs `maxFillBars` bars.
+ */
+export function fillWindowEndSession(calendar: ExchangeCalendar, decisionSession: IsoDate, delayBars: number, maxFillBars: number): IsoDate {
+  return fillDueSession(calendar, decisionSession, Math.max(delayBars, 1) + maxFillBars - 1);
+}
+
+/**
+ * The session by which an outcome is OWED: one further full window after {@link fillWindowEndSession}. The fill
+ * job finalizes earlier, as soon as the entity's OWN bars cover the window (`fillWindowObserved`), but a missing
+ * session pushes that later than any calendar count; this grace absorbs up to `maxFillBars` missing sessions.
+ * At the bound the job finalizes whatever the window produced - an entity whose bars stop arriving would
+ * otherwise stall its arm forever - and the remainder becomes an UNFILLED_REMAINDER break instead of silence.
+ * The job and the reconciler share this bound, so legitimate deferral never reads as a missing record.
+ */
+export function fillOwedSession(calendar: ExchangeCalendar, decisionSession: IsoDate, delayBars: number, maxFillBars: number): IsoDate {
+  return fillDueSession(calendar, decisionSession, Math.max(delayBars, 1) + 2 * maxFillBars - 1);
 }
 
 export type SealedDecisionKey = { arm: string; decisionAt: UtcInstant; decisionSession: IsoDate };
@@ -83,13 +104,13 @@ export function reconcileShadow(input: ReconcileShadowInput): string[] {
     }
   }
 
-  // An outcome is owed only after the simulator's WHOLE fill window has completed: the fill job legitimately
-  // defers finalizing a working remainder until the window's last bar is observable, so flagging at the first
-  // attempt session would raise a phantom incident on every deferred order.
+  // An outcome is owed only at the shared bound (`fillOwedSession`): the fill job legitimately defers a working
+  // remainder until the entity's own bars cover the simulator's window, so flagging any earlier would raise a
+  // phantom incident on every deferred order.
   const filled = new Set(input.fillRecords.map((f) => `${f.arm}|${f.decisionAt}`));
   for (const s of input.sealed) {
     if (filled.has(`${s.arm}|${s.decisionAt}`)) continue;
-    if (fillDueSession(input.calendar, s.decisionSession, input.delayBars + input.maxFillBars - 1) <= input.throughSession) {
+    if (fillOwedSession(input.calendar, s.decisionSession, input.delayBars, input.maxFillBars) <= input.throughSession) {
       breaks.push(`MISSING_FILL_RECORD:${s.arm}:${s.decisionAt}`);
     }
   }

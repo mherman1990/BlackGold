@@ -10,8 +10,8 @@ import { parseAppConfig } from "../src/config/load.ts";
 import type { AppConfig } from "../src/config/schema.ts";
 import { registerShadowDecisionJob } from "../src/decision/shadow-job.ts";
 import { registerShadowFillJob, SHADOW_FILLS_RECORDED, SHADOW_INCIDENT, SHADOW_RECONCILED } from "../src/decision/shadow-fill-job.ts";
-import { shadowFillRecords, type ShadowFillRecord } from "../src/decision/shadow-fills.ts";
-import { fillDueSession, reconcileShadow } from "../src/decision/shadow-reconcile.ts";
+import { appendShadowFillRecord, shadowFillRecords, SHADOW_FILL_RECORD_VERSION, type ShadowFillRecord } from "../src/decision/shadow-fills.ts";
+import { fillDueSession, fillOwedSession, fillWindowEndSession, reconcileShadow } from "../src/decision/shadow-reconcile.ts";
 import { loadCharterFile } from "../src/strategy/charter.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
 
@@ -86,12 +86,24 @@ const PATHS: PricePath[] = [
 
 type Env = { db: Db; scheduler: Scheduler; config: AppConfig; charterPath: string; policyDir: string };
 
-function setup(mode: "SHADOW" | "RESEARCH", withCharterPath = true, opts: { approveRestrictedList?: boolean; decisionOffsetMinutes?: number; vtiVolumeShares?: bigint; dividend?: { exDate: string; payDate: string; amount: string } } = {}): Env {
+function setup(
+  mode: "SHADOW" | "RESEARCH",
+  withCharterPath = true,
+  opts: {
+    approveRestrictedList?: boolean;
+    decisionOffsetMinutes?: number;
+    vtiVolumeShares?: bigint;
+    dividend?: { exDate: string; payDate: string; amount: string };
+    omitSessions?: Record<string, string[]>;
+    withFillJob?: boolean;
+  } = {},
+): Env {
   const dir = mkdtempSync(join(tmpdir(), "bg-shadowfill-"));
   const db = openCoreDb({ dbPath: join(dir, "s.sqlite") }).db;
   const vtiVolume = opts.vtiVolumeShares;
   const paths = vtiVolume === undefined ? PATHS : PATHS.map((pp) => (pp.entityId === "VTI" ? { ...pp, volumeShares: vtiVolume } : pp));
-  buildMarket({ paths, from: D("2026-01-02"), to: D("2026-03-20"), db });
+  const omitSessions = opts.omitSessions === undefined ? undefined : Object.fromEntries(Object.entries(opts.omitSessions).map(([k, v]) => [k, v.map((s) => D(s))]));
+  buildMarket({ paths, from: D("2026-01-02"), to: D("2026-03-27"), db, ...(omitSessions === undefined ? {} : { omitSessions }) });
   if (opts.dividend !== undefined) {
     new PointInTimeRepository(db).append(
       corporateActionObservation(
@@ -106,7 +118,7 @@ function setup(mode: "SHADOW" | "RESEARCH", withCharterPath = true, opts: { appr
   const config = parseAppConfig({ mode, shadow: { ...(withCharterPath ? { charterPath } : {}), policyDir: dir } });
   const scheduler = new Scheduler({ db, ledger: new Ledger(db), calendar: cal, dueLookbackMs: 4 * 3_600_000, missedLookbackMs: 48 * 3_600_000 });
   registerShadowDecisionJob(scheduler, { config, calendar: cal });
-  registerShadowFillJob(scheduler, { config, calendar: cal });
+  if (opts.withFillJob !== false) registerShadowFillJob(scheduler, { config, calendar: cal });
   return { db, scheduler, config, charterPath, policyDir: dir };
 }
 
@@ -264,6 +276,120 @@ describe("shadow_fill job: schedule, deferral, and dividend entitlement (Codex r
   });
 });
 
+describe("shadow loop repairs (Codex, PR #102 round 3)", () => {
+  type SealedEvent = { session: string; startingBook: { held: string[]; staleInputs: string[] } };
+  const sealedEvents = (db: Db): SealedEvent[] => events(db, "shadow.decision_sealed") as unknown as SealedEvent[];
+
+  it("seals each later decision against the REPLAYED B1 book, not an empty one (P1)", async () => {
+    const env = setup("SHADOW");
+    await env.scheduler.tick(afterClose("2026-03-06", 150)); // week 1: sealed from empty
+    await env.scheduler.tick(afterClose("2026-03-09", 150)); // week-1 fills recorded
+    await env.scheduler.tick(afterClose("2026-03-13", 150)); // week 2: sealed from the carried book
+    const [week1, week2] = sealedEvents(env.db);
+    if (!week1 || !week2) throw new Error("expected two sealed decision events");
+    expect(week1.startingBook).toEqual({ held: [], staleInputs: [] });
+
+    // What B1 actually bought in week 1, read straight from its fill record - an independent derivation of
+    // the book the week-2 decision must start from.
+    const b1Week1 = fillRecordsOf(env.db).find((r) => r.arm === "B1_DETERMINISTIC" && r.decisionSession === "2026-03-06");
+    if (!b1Week1) throw new Error("no week-1 B1 fill record");
+    const bought = [...new Set(b1Week1.fills.filter((f) => f.side === "BUY").map((f) => f.entityId))].sort();
+    expect(bought.length).toBeGreaterThan(0);
+    expect(week2.startingBook).toEqual({ held: bought, staleInputs: [] });
+
+    // The gate reads the carried weights: a holding already at or above its new target is not new risk, so
+    // week 2's increased-risk set is a strict subset of its positive targets (from empty it would be all of them).
+    const rec = env.db.prepare("SELECT record_json FROM decision_records WHERE arm = 'B1_DETERMINISTIC' ORDER BY decision_at DESC LIMIT 1").get() as { record_json: string };
+    const parsed = JSON.parse(rec.record_json) as { targetWeights: { entityId: string; weight: string }[]; gate: { increasedRisk: string[] } };
+    const positive = parsed.targetWeights.filter((w) => new Dec(w.weight).gt(0)).map((w) => w.entityId);
+    expect(parsed.gate.increasedRisk.length).toBeLessThan(positive.length);
+  });
+
+  it("blocks new risk when a prior B1 decision has no recorded outcome: the book is unknown (fail closed)", async () => {
+    // No fill job: week 1 is sealed but never filled, so the week-2 decision cannot know its starting book.
+    const env = setup("SHADOW", true, { withFillJob: false });
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    await env.scheduler.tick(afterClose("2026-03-13", 150));
+    const week2 = sealedEvents(env.db).at(-1);
+    expect(week2?.startingBook.staleInputs).toEqual([`shadow_book_incomplete:B1_DETERMINISTIC has no recorded outcome for ${afterClose("2026-03-06", 60)}`]);
+    const rows = env.db.prepare("SELECT arm, new_risk_allowed, record_json FROM decision_records WHERE decision_at = ?").all(afterClose("2026-03-13", 60)) as { arm: string; new_risk_allowed: number; record_json: string }[];
+    expect(rows).toHaveLength(2);
+    for (const r of rows) {
+      expect(r.new_risk_allowed).toBe(0);
+      expect(r.record_json).toContain("shadow_book_incomplete");
+    }
+  });
+
+  it("ignores a fill record computed AFTER the decision instant: the starting book is knowledge-scoped", async () => {
+    // Week 1 is sealed but its outcome only lands at 03-13 21:30Z - after the week-2 decision instant (close
+    // 20:00Z + 60 min) but before the delayed run executes. The decision is timestamp-locked to an instant at
+    // which that outcome did not exist, so the book is still unknown there.
+    const env = setup("SHADOW", true, { withFillJob: false });
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    const week1 = env.db.prepare("SELECT decision_at, record_hash FROM decision_records WHERE arm = 'B1_DETERMINISTIC'").get() as { decision_at: UtcInstant; record_hash: string };
+    appendShadowFillRecord(env.db, {
+      recordVersion: SHADOW_FILL_RECORD_VERSION,
+      strategyId: "etf-trend-vol",
+      strategyVersion: "0.2.0",
+      charterHash: loadCharterFile(env.charterPath).charterHash,
+      arm: "B1_DETERMINISTIC",
+      decisionAt: week1.decision_at,
+      decisionSession: isoDate("2026-03-06"),
+      decisionRecordHash: week1.record_hash,
+      computedAt: afterClose("2026-03-13", 90),
+      navAtDecision: "100000",
+      cashAtDecision: "100000",
+      fills: [],
+      suppressedEntries: [],
+      unfilled: [],
+      unpriced: [],
+      executionShortfall: "0",
+      labels: [],
+    });
+    await env.scheduler.tick(afterClose("2026-03-13", 150));
+    expect(sealedEvents(env.db).at(-1)?.startingBook.staleInputs).toEqual([`shadow_book_incomplete:B1_DETERMINISTIC has no recorded outcome for ${week1.decision_at}`]);
+  });
+
+  it("defers finalizing past the calendar window when the entity is missing a bar inside it (P1)", async () => {
+    // VTI is thin (a LIQUIDITY remainder) AND has no bar on Wednesday 03-11, inside B0's Mon-Fri window. The
+    // simulator works VTI's OWN bars, so its fifth is Monday 03-16: finalizing on the calendar end (Friday
+    // 03-13) would seal a remainder the simulator had one more bar to work.
+    const env = setup("SHADOW", true, { vtiVolumeShares: 12_000n, omitSessions: { VTI: ["2026-03-11"] } });
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    await env.scheduler.tick(afterClose("2026-03-09", 150));
+    await env.scheduler.tick(afterClose("2026-03-13", 150));
+    const b0At = (): ShadowFillRecord | undefined => fillRecordsOf(env.db).find((r) => r.arm === "B0_PASSIVE" && r.decisionSession === "2026-03-06");
+    expect(b0At()).toBeUndefined(); // the calendar window has ended, the entity's window has not
+    expect((events(env.db, SHADOW_RECONCILED).at(-1)?.["breaks"] as string[]).filter((b) => b.startsWith("MISSING_FILL_RECORD"))).toEqual([]);
+    await env.scheduler.tick(afterClose("2026-03-16", 150));
+    const b0 = b0At();
+    if (!b0) throw new Error("B0 not finalized once VTI's own bars covered the window");
+    expect(b0.fills.some((f) => f.session === "2026-03-16")).toBe(true); // the fifth bar did work the remainder
+    expect(b0.fills.some((f) => f.session === "2026-03-11")).toBe(false);
+  });
+
+  it("finalizes at the owed bound when the entity's bars stop arriving, instead of stalling the arm forever", async () => {
+    // VTI is thin and its feed dies after Monday 03-09: the simulator's window is never observed. At the owed
+    // bound (one further window after the calendar end: Friday 03-20) the outcome is sealed with its genuine
+    // remainder, and the reconciler reports an UNFILLED_REMAINDER break - never a silent, permanent deferral.
+    const dead = cal.sessionDates(isoDate("2026-03-10"), isoDate("2026-03-27"));
+    const env = setup("SHADOW", true, { vtiVolumeShares: 12_000n, omitSessions: { VTI: dead } });
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    await env.scheduler.tick(afterClose("2026-03-09", 150));
+    await env.scheduler.tick(afterClose("2026-03-19", 150));
+    const b0At = (): ShadowFillRecord | undefined => fillRecordsOf(env.db).find((r) => r.arm === "B0_PASSIVE" && r.decisionSession === "2026-03-06");
+    expect(b0At()).toBeUndefined(); // still inside the grace window
+    await env.scheduler.tick(afterClose("2026-03-20", 150));
+    const b0 = b0At();
+    if (!b0) throw new Error("B0 not finalized at the owed bound");
+    expect(b0.fills.map((f) => f.session)).toEqual(["2026-03-09"]);
+    expect(b0.unfilled.map((u) => u.reason)).toEqual(["LIQUIDITY"]);
+    const breaks = events(env.db, SHADOW_RECONCILED).at(-1)?.["breaks"] as string[];
+    expect(breaks.some((b) => b.startsWith(`UNFILLED_REMAINDER:B0_PASSIVE:${afterClose("2026-03-06", 60)}`))).toBe(true);
+    expect(breaks.some((b) => b.startsWith(`MISSING_FILL_RECORD:B0_PASSIVE:${afterClose("2026-03-06", 60)}`))).toBe(false);
+  });
+});
+
 describe("reconcileShadow (pure)", () => {
   const sealed = (arm: string, session: string): { arm: string; decisionAt: UtcInstant; decisionSession: ReturnType<typeof isoDate> } => ({
     arm,
@@ -284,14 +410,18 @@ describe("reconcileShadow (pure)", () => {
     expect(breaks).toEqual(["MISSING_DECISION_RECORD:B1_DETERMINISTIC:2026-03-13"]);
   });
 
-  it("flags a sealed decision whose fill-due session has passed with no recorded outcome - and not before it is due", () => {
+  it("flags a sealed decision whose owed session has passed with no recorded outcome - and not before it is owed", () => {
     const sealedRecords = [sealed("B0_PASSIVE", "2026-03-06"), sealed("B1_DETERMINISTIC", "2026-03-06")];
-    // Before the simulator's whole fill window completes (delay 1 + 5 bars: last bar Friday 2026-03-13) the
-    // outcome is not yet owed - the fill job legitimately defers a working remainder until then.
-    expect(reconcileShadow({ ...base, sealed: sealedRecords, fillRecords: [], throughSession: isoDate("2026-03-06") })).toEqual([]);
-    expect(reconcileShadow({ ...base, sealed: sealedRecords, fillRecords: [], throughSession: isoDate("2026-03-12") })).toEqual([]);
-    // Once the window's last bar has completed, both outcomes are owed.
-    expect(reconcileShadow({ ...base, sealed: sealedRecords, fillRecords: [], throughSession: isoDate("2026-03-13") }).filter((b) => b.startsWith("MISSING_FILL_RECORD"))).toEqual([
+    // The calendar window ends Friday 2026-03-13 (delay 1 + 5 bars), but the fill job may still be waiting on
+    // the entity's OWN bars to cover it, so the outcome is owed only one further window later: Friday
+    // 2026-03-20. Before that, a deferral is legitimate and must not read as a missing record.
+    const missingFills = (through: string): string[] =>
+      reconcileShadow({ ...base, sealed: sealedRecords, fillRecords: [], throughSession: isoDate(through) }).filter((b) => b.startsWith("MISSING_FILL_RECORD"));
+    expect(missingFills("2026-03-06")).toEqual([]);
+    expect(missingFills("2026-03-13")).toEqual([]);
+    expect(missingFills("2026-03-19")).toEqual([]);
+    // At the owed bound, both outcomes are owed.
+    expect(reconcileShadow({ ...base, sealed: sealedRecords, fillRecords: [], throughSession: isoDate("2026-03-20") }).filter((b) => b.startsWith("MISSING_FILL_RECORD"))).toEqual([
       `MISSING_FILL_RECORD:B0_PASSIVE:${afterClose("2026-03-06", 60)}`,
       `MISSING_FILL_RECORD:B1_DETERMINISTIC:${afterClose("2026-03-06", 60)}`,
     ]);
@@ -318,5 +448,16 @@ describe("reconcileShadow (pure)", () => {
   it("fillDueSession counts exchange sessions, not calendar days", () => {
     expect(fillDueSession(cal, isoDate("2026-03-06"), 1)).toBe("2026-03-09"); // Friday -> Monday
     expect(fillDueSession(cal, isoDate("2026-03-06"), 0)).toBe("2026-03-06");
+  });
+
+  it("fillWindowEndSession includes the zero-delay decision-bar attempt (Codex P2, PR #102 round 2)", () => {
+    // Zero delay: the decision-bar attempt, then the loop's five bars starting the NEXT session -> Friday 03-13.
+    // The old `delay + bars - 1` formula said Thursday 03-12, one bar early.
+    expect(fillWindowEndSession(cal, isoDate("2026-03-06"), 0, 5)).toBe("2026-03-13");
+    expect(fillWindowEndSession(cal, isoDate("2026-03-06"), 1, 5)).toBe("2026-03-13");
+    expect(fillWindowEndSession(cal, isoDate("2026-03-06"), 2, 5)).toBe("2026-03-16");
+    // The owed bound is one further full window.
+    expect(fillOwedSession(cal, isoDate("2026-03-06"), 0, 5)).toBe("2026-03-20");
+    expect(fillOwedSession(cal, isoDate("2026-03-06"), 2, 5)).toBe("2026-03-23");
   });
 });
