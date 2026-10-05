@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse, stringify } from "yaml";
 import { addMs, Dec, isoDate, sha256Hex, type Db, type UtcInstant } from "@blackgold/shared";
-import { Ledger, NyseCalendar, Scheduler, openCoreDb } from "../src/index.ts";
+import { Ledger, NyseCalendar, PointInTimeRepository, Scheduler, corporateActionObservation, openCoreDb } from "../src/index.ts";
 import { parseAppConfig } from "../src/config/load.ts";
 import type { AppConfig } from "../src/config/schema.ts";
 import { registerShadowDecisionJob } from "../src/decision/shadow-job.ts";
@@ -20,7 +20,7 @@ const afterClose = (session: string, mins: number): UtcInstant => addMs(cal.sess
 
 // Fixture helpers mirror shadow-job.test.ts: the fill job composes with the decision job, so the environment
 // must be the one that seals real records (same shrunk charter, policies, experiment registration, market).
-function writeShadowCharter(dir: string): string {
+function writeShadowCharter(dir: string, decisionOffsetMinutes?: number): string {
   const src = fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url));
   const doc = parse(readFileSync(src, "utf8")) as Record<string, unknown>;
   const universe = doc["universe"] as Record<string, unknown>;
@@ -33,6 +33,7 @@ function writeShadowCharter(dir: string): string {
   const factors = doc["factors"] as { assignments: Record<string, unknown> };
   const keep = new Set([...(universe["risk_etfs"] as string[]), universe["cash_etf"] as string]);
   factors.assignments = Object.fromEntries(Object.entries(factors.assignments).filter(([sym]) => keep.has(sym)));
+  if (decisionOffsetMinutes !== undefined) (doc["rules"] as Record<string, unknown>)["decision_offset_minutes"] = decisionOffsetMinutes;
   const grid = doc["sensitivity_grid"] as Record<string, unknown>;
   grid["momentum"] = [{ lookback_sessions: 20, skip_sessions: 4 }, { lookback_sessions: 40, skip_sessions: 4 }];
   grid["trend_sma_sessions"] = [10, 15];
@@ -85,11 +86,21 @@ const PATHS: PricePath[] = [
 
 type Env = { db: Db; scheduler: Scheduler; config: AppConfig; charterPath: string; policyDir: string };
 
-function setup(mode: "SHADOW" | "RESEARCH", withCharterPath = true, opts: { approveRestrictedList?: boolean } = {}): Env {
+function setup(mode: "SHADOW" | "RESEARCH", withCharterPath = true, opts: { approveRestrictedList?: boolean; decisionOffsetMinutes?: number; vtiVolumeShares?: bigint; dividend?: { exDate: string; payDate: string; amount: string } } = {}): Env {
   const dir = mkdtempSync(join(tmpdir(), "bg-shadowfill-"));
   const db = openCoreDb({ dbPath: join(dir, "s.sqlite") }).db;
-  buildMarket({ paths: PATHS, from: D("2026-01-02"), to: D("2026-03-20"), db });
-  const charterPath = writeShadowCharter(dir);
+  const vtiVolume = opts.vtiVolumeShares;
+  const paths = vtiVolume === undefined ? PATHS : PATHS.map((pp) => (pp.entityId === "VTI" ? { ...pp, volumeShares: vtiVolume } : pp));
+  buildMarket({ paths, from: D("2026-01-02"), to: D("2026-03-20"), db });
+  if (opts.dividend !== undefined) {
+    new PointInTimeRepository(db).append(
+      corporateActionObservation(
+        { kind: "CASH_DIVIDEND", entityId: "VTI", amount: new Dec(opts.dividend.amount), exDate: isoDate(opts.dividend.exDate), payDate: isoDate(opts.dividend.payDate), qualified: true },
+        { sourceLocator: "test/div/VTI", availableAt: afterClose(opts.dividend.exDate, 60), ingestedAt: afterClose(opts.dividend.exDate, 60), rawContentHash: `sha256:${sha256Hex("div")}`, adapterVersion: "1.0.0", parserVersion: "1.0.0" },
+      ),
+    );
+  }
+  const charterPath = writeShadowCharter(dir, opts.decisionOffsetMinutes);
   registerExperimentFor(db, loadCharterFile(charterPath).charterHash);
   writePolicyDir(dir, opts);
   const config = parseAppConfig({ mode, shadow: { ...(withCharterPath ? { charterPath } : {}), policyDir: dir } });
@@ -194,6 +205,65 @@ describe("shadow_fill job", () => {
   });
 });
 
+describe("shadow_fill job: schedule, deferral, and dividend entitlement (Codex round 1)", () => {
+  it("derives its schedule from the charter so reconciliation can never precede that session's sealing (Codex P2)", async () => {
+    // A 300-minute decision offset: the decision job schedules at close+330. A fixed close+150 fill job would
+    // reconcile BEFORE sealing on every decision Friday and raise a phantom MISSING_DECISION_RECORD incident.
+    const env = setup("SHADOW", true, { decisionOffsetMinutes: 300 });
+    const offsets = new Map(env.scheduler.registeredJobs().map((j) => [j.jobId, (j.schedule as { offsetMs: number }).offsetMs]));
+    expect(offsets.get("shadow_fill")).toBe(330 * 60_000);
+    expect(offsets.get("shadow_fill")).toBe(offsets.get("shadow_decision")); // same instant; jobId order runs decision first
+    await env.scheduler.tick(afterClose("2026-03-06", 340));
+    const reconciled = events(env.db, SHADOW_RECONCILED);
+    expect(reconciled.at(-1)?.["breaks"]).toEqual([]); // the session's own records sealed in the same tick
+    expect(events(env.db, SHADOW_INCIDENT)).toHaveLength(0);
+  });
+
+  it("defers finalizing a working LIQUIDITY remainder until the simulator's whole fill window has completed (Codex P1)", async () => {
+    // VTI trades 12000 shares a session, so at 0.5% ADV participation the passive arm's ~470-share buy caps
+    // at ~60 shares per bar: the first
+    // fill session leaves a remainder that LATER bars inside the 5-bar window could still work. Sealing it on
+    // Monday would freeze an outcome the simulator had not finished producing - immutably.
+    const env = setup("SHADOW", true, { vtiVolumeShares: 12_000n });
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    await env.scheduler.tick(afterClose("2026-03-09", 150));
+    const monday = fillRecordsOf(env.db);
+    expect(monday.some((r) => r.arm === "B0_PASSIVE")).toBe(false); // deferred, not sealed short
+    expect((events(env.db, SHADOW_RECONCILED).at(-1)?.["breaks"] as string[]).filter((b) => b.startsWith("MISSING_FILL_RECORD"))).toEqual([]); // not owed before the window ends
+    await env.scheduler.tick(afterClose("2026-03-13", 150)); // the window's last bar (delay 1 + 5 bars) has completed
+    const b0 = fillRecordsOf(env.db).find((r) => r.arm === "B0_PASSIVE" && r.decisionSession === "2026-03-06");
+    if (!b0) throw new Error("B0 not finalized at the window end");
+    expect(new Set(b0.fills.map((f) => f.session)).size).toBeGreaterThan(1); // the remainder was worked across bars
+    expect(b0.unfilled.some((u) => u.reason === "LIQUIDITY")).toBe(true); // the genuine leftover, now final
+    // And a genuine post-window liquidity remainder IS a reconciler break.
+    expect((events(env.db, SHADOW_RECONCILED).at(-1)?.["breaks"] as string[]).some((b) => b.startsWith("UNFILLED_REMAINDER:B0_PASSIVE"))).toBe(true);
+    expect(events(env.db, SHADOW_INCIDENT).length).toBeGreaterThan(0);
+  });
+
+  it("credits a dividend to the EX-DATE holding, not the pay-date one (Codex P1)", async () => {
+    // Ex-date Friday 2026-03-06 (before the arm's first buy on Monday), pay date Wednesday: the book bought
+    // between ex and pay and is NOT entitled. The pay-date default would credit ~470 shares x 10.
+    const notEntitled = setup("SHADOW", true, { dividend: { exDate: "2026-03-06", payDate: "2026-03-11", amount: "10" } });
+    await notEntitled.scheduler.tick(afterClose("2026-03-06", 150));
+    await notEntitled.scheduler.tick(afterClose("2026-03-09", 150));
+    await notEntitled.scheduler.tick(afterClose("2026-03-13", 150));
+    await notEntitled.scheduler.tick(afterClose("2026-03-16", 150));
+    const na = fillRecordsOf(notEntitled.db).find((r) => r.arm === "B0_PASSIVE" && r.decisionSession === "2026-03-13");
+    if (!na) throw new Error("no week-2 B0 record");
+    expect(new Dec(na.cashAtDecision).lt(new Dec("1500"))).toBe(true); // only the buy's leftover; no unearned credit
+
+    // Control (the fixture spans the entitlement dimension): ex-date after the buy - the holding IS entitled.
+    const entitled = setup("SHADOW", true, { dividend: { exDate: "2026-03-11", payDate: "2026-03-12", amount: "10" } });
+    await entitled.scheduler.tick(afterClose("2026-03-06", 150));
+    await entitled.scheduler.tick(afterClose("2026-03-09", 150));
+    await entitled.scheduler.tick(afterClose("2026-03-13", 150));
+    await entitled.scheduler.tick(afterClose("2026-03-16", 150));
+    const ea = fillRecordsOf(entitled.db).find((r) => r.arm === "B0_PASSIVE" && r.decisionSession === "2026-03-13");
+    if (!ea) throw new Error("no week-2 B0 record (entitled env)");
+    expect(new Dec(ea.cashAtDecision).gt(new Dec("3000"))).toBe(true); // ~470 shares x 10 credited
+  });
+});
+
 describe("reconcileShadow (pure)", () => {
   const sealed = (arm: string, session: string): { arm: string; decisionAt: UtcInstant; decisionSession: ReturnType<typeof isoDate> } => ({
     arm,
@@ -202,7 +272,7 @@ describe("reconcileShadow (pure)", () => {
   });
   const fillFor = (arm: string, session: string, unfilled: { entityId: string; side: "BUY" | "SELL"; remaining: string; reason: "CASH" | "LIQUIDITY" | "NO_BARS" }[] = []): ShadowFillRecord =>
     ({ arm, decisionAt: afterClose(session, 60), unfilled, fills: [] }) as unknown as ShadowFillRecord;
-  const base = { calendar: cal, arms: ["B0_PASSIVE", "B1_DETERMINISTIC"], delayBars: 1, bookCash: new Map() };
+  const base = { calendar: cal, arms: ["B0_PASSIVE", "B1_DETERMINISTIC"], delayBars: 1, maxFillBars: 5, bookCash: new Map() };
 
   it("flags a weekly decision session an arm failed to seal, from the first sealed session onward", () => {
     const breaks = reconcileShadow({
@@ -216,10 +286,12 @@ describe("reconcileShadow (pure)", () => {
 
   it("flags a sealed decision whose fill-due session has passed with no recorded outcome - and not before it is due", () => {
     const sealedRecords = [sealed("B0_PASSIVE", "2026-03-06"), sealed("B1_DETERMINISTIC", "2026-03-06")];
-    // On the decision session itself the fill (due Monday) is not yet owed.
+    // Before the simulator's whole fill window completes (delay 1 + 5 bars: last bar Friday 2026-03-13) the
+    // outcome is not yet owed - the fill job legitimately defers a working remainder until then.
     expect(reconcileShadow({ ...base, sealed: sealedRecords, fillRecords: [], throughSession: isoDate("2026-03-06") })).toEqual([]);
-    // Once Monday has completed, both outcomes are owed.
-    expect(reconcileShadow({ ...base, sealed: sealedRecords, fillRecords: [], throughSession: isoDate("2026-03-09") })).toEqual([
+    expect(reconcileShadow({ ...base, sealed: sealedRecords, fillRecords: [], throughSession: isoDate("2026-03-12") })).toEqual([]);
+    // Once the window's last bar has completed, both outcomes are owed.
+    expect(reconcileShadow({ ...base, sealed: sealedRecords, fillRecords: [], throughSession: isoDate("2026-03-13") }).filter((b) => b.startsWith("MISSING_FILL_RECORD"))).toEqual([
       `MISSING_FILL_RECORD:B0_PASSIVE:${afterClose("2026-03-06", 60)}`,
       `MISSING_FILL_RECORD:B1_DETERMINISTIC:${afterClose("2026-03-06", 60)}`,
     ]);

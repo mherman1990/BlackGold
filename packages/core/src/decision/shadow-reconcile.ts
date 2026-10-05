@@ -50,6 +50,8 @@ export type ReconcileShadowInput = {
   throughSession: IsoDate;
   /** The charter's execution delay in sessions (fills land this many sessions after the decision). */
   delayBars: number;
+  /** The simulator's fill-window length in bars; an outcome is OWED only once the whole window has completed. */
+  maxFillBars: number;
   /** Replayed synthetic book cash per arm, by session, for the invariant check. */
   bookCash: ReadonlyMap<string, readonly { session: IsoDate; cash: Dec }[]>;
 };
@@ -81,10 +83,13 @@ export function reconcileShadow(input: ReconcileShadowInput): string[] {
     }
   }
 
+  // An outcome is owed only after the simulator's WHOLE fill window has completed: the fill job legitimately
+  // defers finalizing a working remainder until the window's last bar is observable, so flagging at the first
+  // attempt session would raise a phantom incident on every deferred order.
   const filled = new Set(input.fillRecords.map((f) => `${f.arm}|${f.decisionAt}`));
   for (const s of input.sealed) {
     if (filled.has(`${s.arm}|${s.decisionAt}`)) continue;
-    if (fillDueSession(input.calendar, s.decisionSession, input.delayBars) <= input.throughSession) {
+    if (fillDueSession(input.calendar, s.decisionSession, input.delayBars + input.maxFillBars - 1) <= input.throughSession) {
       breaks.push(`MISSING_FILL_RECORD:${s.arm}:${s.decisionAt}`);
     }
   }
