@@ -1272,7 +1272,8 @@ reaches.
 ## D-54 Reconciler breaks feed the shadow halt state; shadow halts are sticky and owner re-armed
 
 **Status:** Proposed 2026-10-05 by Claude Code, at Matt's request ("start on the reconciler-to-halt wiring").
-Built on the slice-3b repairs. Matt accepts, amends, or rejects; the readings flagged below are his.
+Built on the slice-3b repairs. **Reading (a) is owner-confirmed, provisionally (Matt, 2026-10-05: "go with
+literal §8 for now")**: every break kind holds the book. Readings (b) and (c) are still his to confirm.
 
 **Why.** Slice 3b recorded reconciliation breaks but did not act on them. Its own docs deferred that step to an
 explicitly reviewed change, because a feedback loop between the two shadow jobs is financial-critical. Wiring
@@ -1307,9 +1308,10 @@ before any halt relaxes.
 
 **Readings for the owner to confirm or overrule.**
 
-- **(a) Every break kind holds the book.** That is §8's literal text. A per-kind mapping is defensible (for
-  example, a thin-volume `UNFILLED_REMAINDER` → `HALT_NEW_RISK`, `NEGATIVE_CASH` → `HOLD_ONLY`), but choosing
-  one is a policy call.
+- **(a) Every break kind holds the book.** That is §8's literal text. **Confirmed for now (Matt,
+  2026-10-05).** A per-kind mapping remains defensible (for example, a thin-volume `UNFILLED_REMAINDER` →
+  `HALT_NEW_RISK`, `NEGATIVE_CASH` → `HOLD_ONLY`). Adopting one later is a policy change, and it must land
+  before registration, as (c) says.
 - **(b) Stickiness now applies to the halts the shadow book already entered.** These are unapproved policy
   files and stale market data, plus drawdown now that decisions read the carried book. After the owner's
   signed `restricted-list.yaml` and `theme-membership.yaml` replace the placeholders, one `shadow rearm --to
