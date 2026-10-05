@@ -48,7 +48,8 @@ import type { ProspectiveDecisionRecord } from "./decision-record.ts";
 
 // 2: fills apply in time order with sells first; executionShortfall derives from the fills actually persisted;
 //    unfilled `remaining` is in decision-session units; orders crossing a split are worked in decision units.
-export const SHADOW_FILL_RECORD_VERSION = 2;
+// 3: `suppressedExits` - a HOLD_ONLY verdict freezes the book, exits included (D-54).
+export const SHADOW_FILL_RECORD_VERSION = 3;
 
 /** Synthetic shadow-book denomination. Not a real dollar amount; ratios are level-independent. */
 export const SHADOW_INITIAL_CASH = new Dec("100000");
@@ -82,6 +83,12 @@ export type ShadowFillRecord = {
   fills: ShadowFill[];
   /** Orders the gate suppressed (`newRiskAllowed: false` cancels entries/adds, keeps exits). */
   suppressedEntries: string[];
+  /**
+   * Exits a HOLD_ONLY verdict suppressed: reconciliation uncertainty blocks risk-reducing orders too (D-54).
+   * Includes a held line absent from the target that had no price at the decision mark (no stored close at or
+   * before it), or that a non-positive NAV left the book unable to size.
+   */
+  suppressedExits: string[];
   /**
    * Orders with quantity left unfilled after the simulator's fill window, with why: `CASH` (the order was fully
    * simulated but the book could not afford all of it - whole-share flooring plus an adverse open, the book's
@@ -190,7 +197,7 @@ function inDecisionUnits(bars: readonly SimBar[], splits: readonly ShadowSplit[]
 export function counterfactualFills(input: CounterfactualFillInput): ShadowFillRecord {
   const { record, book } = input;
   const labels = new Set<string>();
-  const base: Omit<ShadowFillRecord, "fills" | "suppressedEntries" | "unfilled" | "unpriced" | "executionShortfall" | "labels"> = {
+  const base: Omit<ShadowFillRecord, "fills" | "suppressedEntries" | "suppressedExits" | "unfilled" | "unpriced" | "executionShortfall" | "labels"> = {
     recordVersion: SHADOW_FILL_RECORD_VERSION,
     strategyId: record.strategyId,
     strategyVersion: record.strategyVersion,
@@ -204,26 +211,46 @@ export function counterfactualFills(input: CounterfactualFillInput): ShadowFillR
     cashAtDecision: book.cash.toFixed(),
   };
 
+  const weights = new Map<string, Dec>();
+  for (const w of record.targetWeights) weights.set(w.entityId, new Dec(w.weight));
+  // A HOLD_ONLY verdict freezes every held line the target removes, whether or not the book can size or price
+  // it, so these exits are read from the book, never only from order construction (Codex P2s, PR #108 rounds
+  // 5 and 7). "Removes" means absent from the target, exactly rebalanceOrders' unconditional EXIT: a line still
+  // targeted - an explicit zero included, which rebalanceOrders trades only past the band - has no known
+  // direction without sizing.
+  const hold = record.gate.haltState === "HOLD_ONLY";
+  const removedHeld = hold ? [...book.positions].filter(([id, q]) => q.gt(0) && !weights.has(id)).map(([id]) => id) : [];
+
   // A non-positive synthetic NAV cannot size a book; record the honest empty outcome rather than throwing a
   // run away (shareTargets throws on nav <= 0 by design - sizing a real book from nothing is an error there).
   if (!book.nav.gt(0)) {
-    return { ...base, fills: [], suppressedEntries: [], unfilled: [], unpriced: [], executionShortfall: "0", labels: [SHADOW_BOOK_NON_POSITIVE_NAV] };
+    return { ...base, fills: [], suppressedEntries: [], suppressedExits: removedHeld.sort(), unfilled: [], unpriced: [], executionShortfall: "0", labels: [SHADOW_BOOK_NON_POSITIVE_NAV] };
   }
-
-  const weights = new Map<string, Dec>();
-  for (const w of record.targetWeights) weights.set(w.entityId, new Dec(w.weight));
 
   const st = shareTargets({ nav: book.nav, weights, prices: input.prices });
   const orders = rebalanceOrders({ nav: book.nav, targets: st.targets, current: book.positions, prices: input.prices, bandPctPoints: input.bandPctPoints });
 
-  // The sealed gate verdict binds the fills: blocked new risk cancels every increase (entries AND adds) and
-  // keeps the decreases - HALT_NEW_RISK semantics, not a silent no-op and not a full freeze.
+  // The sealed gate verdict binds the fills. Blocked new risk cancels every increase (entries AND adds) and
+  // keeps the decreases - HALT_NEW_RISK semantics, not a silent no-op. A HOLD_ONLY verdict is a full freeze:
+  // reconciliation or order-state uncertainty blocks risk-reducing orders too (AUTOMATION_AND_LIVE_GATES
+  // section 7 - "do not touch anything until the picture is reconciled"; the owner-approved close it allows
+  // does not exist in shadow).
   const suppressedEntries: string[] = [];
+  const suppressedExits: string[] = [];
   const actionable = orders.filter((o) => {
-    if (record.gate.newRiskAllowed || !o.deltaShares.gt(0)) return true;
+    const increase = o.deltaShares.gt(0);
+    if (hold) {
+      (increase ? suppressedEntries : suppressedExits).push(o.entityId);
+      return false;
+    }
+    if (record.gate.newRiskAllowed || !increase) return true;
     suppressedEntries.push(o.entityId);
     return false;
   });
+  // rebalanceOrders drops an exit it cannot price, so the order list alone under-reports the freeze; add those
+  // from the book. Rare: closesAt carries the last close forward, so this needs a holding with no stored close at
+  // or before the decision session. A held line still targeted but unpriced stays on `unpriced`.
+  for (const entityId of removedHeld) if (input.prices.get(entityId) === undefined) suppressedExits.push(entityId);
 
   // Phase 1: simulate every actionable order with no cash constraint, in decision-session units.
   type Worked = { entityId: string; side: "BUY" | "SELL"; quantity: Dec; decisionClose: Dec; splits: ShadowSplit[]; simUnfilled: Dec; applied: Dec; cashShort: boolean };
@@ -341,6 +368,7 @@ export function counterfactualFills(input: CounterfactualFillInput): ShadowFillR
     ...base,
     fills,
     suppressedEntries: suppressedEntries.sort(),
+    suppressedExits: suppressedExits.sort(),
     unfilled,
     unpriced: [...st.unpriced].sort(),
     executionShortfall: shortfall.toFixed(),

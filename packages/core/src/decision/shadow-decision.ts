@@ -11,6 +11,7 @@ import {
   DECISION_RECORD_VERSION,
 } from "./decision-record.ts";
 import { prospectiveTargetBooks, type ArmTargetBook, type DecisionEngineDeps } from "./prospective.ts";
+import type { ShadowHaltContext } from "./shadow-halt.ts";
 
 /**
  * The prospective SHADOW/PAPER decision, composed and sealed (D-53 slice 2b).
@@ -105,6 +106,12 @@ export type ShadowDecisionContext = {
    * compliance engine treats as an unknown state that blocks new risk. `[]` asserts a run that found nothing.
    */
   lookThrough?: (symbol: string) => readonly string[] | undefined;
+  /**
+   * The persisted halt context (D-54, `shadowHaltContext`): the state the previous decision recorded, the owner
+   * re-arms this decision may consume, and the reconciliation breaks unresolved past one session. Absent means
+   * a first decision with nothing recorded: NORMAL, no re-arm, no break.
+   */
+  halt?: Pick<ShadowHaltContext, "current" | "reArms" | "unresolvedBreaks">;
 };
 
 /** Project the sealed gate outcome from a full verdict (the redacted subset the record carries). */
@@ -112,14 +119,31 @@ function outcome(v: { newRiskAllowed: boolean; haltState: DecisionGateOutcome["h
   return { newRiskAllowed: v.newRiskAllowed, haltState: v.haltState, increasedRisk: [...v.increasedRisk], blockedBy: [...v.blockedBy] };
 }
 
-/** Build the halt input shared by every arm this decision (same portfolio and signals). */
+/**
+ * Build the halt input shared by every arm this decision (same portfolio and signals). The state escalates from
+ * the one the previous decision recorded, never from a fresh NORMAL (halts are sticky, AUTOMATION_AND_LIVE_GATES
+ * section 7). Each owner re-arm is applied in turn - `evaluateHaltState` stages it to one step and clamps it to
+ * the active faults - so the gate's own evaluation then starts from the re-armed state and can only escalate.
+ */
 function haltInputOf(ctx: ShadowDecisionContext, state: ShadowBookState): HaltInput {
-  return {
+  const base: HaltInput = {
     policy: ctx.risk,
-    current: "NORMAL",
+    current: ctx.halt?.current ?? "NORMAL",
     portfolio: state.portfolio,
     ...(ctx.staleInputs === undefined ? {} : { staleInputs: ctx.staleInputs }),
+    ...((ctx.halt?.unresolvedBreaks.length ?? 0) > 0 ? { reconciliationUnresolved: true } : {}),
   };
+  let current = base.current;
+  for (const r of ctx.halt?.reArms ?? []) current = evaluateHaltState({ ...base, current, ownerReArm: { to: r.to, actor: r.actor, at: r.at } }).state;
+  return { ...base, current };
+}
+
+/** Attribution on the record itself: which breaks held it, and which owner re-arms it consumed. */
+function haltNotes(ctx: ShadowDecisionContext): string[] {
+  return [
+    ...(ctx.halt?.unresolvedBreaks ?? []).map((b) => `reconciliation_unresolved:${b}`),
+    ...(ctx.halt?.reArms ?? []).map((r) => `owner_rearm:${r.to}:${r.at}`),
+  ];
 }
 
 /** A new-risk compliance candidate for one target line, resolving identity and look-through through the context. */
@@ -182,7 +206,7 @@ function recordFor(charter: Charter, ctx: ShadowDecisionContext, book: ArmTarget
     cashWeight: book.cashWeight.toFixed(),
     gate,
     constructionVersion: charter.component_versions.portfolio_construction,
-    notes: [],
+    notes: haltNotes(ctx),
   };
 }
 

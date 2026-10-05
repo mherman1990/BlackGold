@@ -3,7 +3,7 @@ import { nowUtc, type Db, type IsoDate, type UtcInstant } from "@blackgold/share
 import { processingDelayOverridesMs, type AppConfig } from "./config/schema.ts";
 import type { ExchangeCalendar } from "./calendar/types.ts";
 import { Ledger, sealThroughDate } from "./ledger/ledger.ts";
-import { Scheduler } from "./scheduler/scheduler.ts";
+import { OPERATIONAL_DUE_LOOKBACK_MS, Scheduler } from "./scheduler/scheduler.ts";
 import { PointInTimeRepository } from "./data/pit/repository.ts";
 import { DEFAULT_BARS_SOURCE_ID } from "./market/series.ts";
 import { parseIngestArgs, runIngest } from "./ingest/run.ts";
@@ -246,7 +246,7 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
     db: opts.db,
     ledger,
     calendar: opts.calendar,
-    dueLookbackMs: 24 * 3_600_000,
+    dueLookbackMs: OPERATIONAL_DUE_LOOKBACK_MS,
     missedLookbackMs: 7 * 24 * 3_600_000,
   });
   registerPhase0Jobs(scheduler, { config: opts.config, calendar: opts.calendar });

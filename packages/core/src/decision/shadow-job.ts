@@ -4,7 +4,7 @@ import { addDays, addMs, canonicalJson, sha256Hex, type Db, type IsoDate, type U
 import { processingDelayOverridesMs, RestrictedListConfigSchema, RiskConfigSchema, ThemeMembershipConfigSchema, type AppConfig } from "../config/schema.ts";
 import { parseYamlConfig } from "../config/load.ts";
 import type { ExchangeCalendar } from "../calendar/types.ts";
-import type { Scheduler } from "../scheduler/scheduler.ts";
+import { claimExpired, OPERATIONAL_DUE_LOOKBACK_MS, type Scheduler } from "../scheduler/scheduler.ts";
 import { PointInTimeRepository } from "../data/pit/repository.ts";
 import { EntityMap } from "../market/entity-map.ts";
 import { loadCharterFile, type Charter } from "../strategy/charter.ts";
@@ -15,6 +15,7 @@ import { appendDecisionRecord, DecisionAlreadySealedError } from "./decision-rec
 import { EMPTY_SHADOW_BOOK, shadowDecisionRecords, type ShadowBookState, type SymbolIdentity } from "./shadow-decision.ts";
 import { shadowFillRecords } from "./shadow-fills.ts";
 import { loadShadowReplayInputs, replayShadowArm, shadowBookStateAt } from "./shadow-book.ts";
+import { readShadowHaltInputs, shadowHaltContext, shadowHaltStatus } from "./shadow-halt.ts";
 
 /**
  * The mode-gated `after_close` shadow decision job (D-53 slice 2c): the scheduler seam that resolves what the
@@ -67,6 +68,95 @@ function readPolicyFile<T>(dir: string, file: string, parse: (text: string, labe
   const path = join(dir, file);
   const bytes = readFileSync(path);
   return { value: parse(bytes.toString("utf8"), path), hash: `sha256:${sha256Hex(bytes)}` };
+}
+
+/**
+ * Minutes after a session close the shadow jobs run: never before the nightly ingest (close + 90 min, hence the
+ * 150-minute floor) and always behind the charter's decision instant (+30 absorbs scheduler polling delay).
+ */
+export function shadowJobOffsetMinutes(decisionOffsetMinutes: number): number {
+  return Math.max(150, decisionOffsetMinutes + 30);
+}
+
+/** The arms a shadow decision seals; an instant is sealed only when every one is present (`prospectiveTargetBooks`). */
+const SHADOW_DECISION_ARMS = ["B0_PASSIVE", "B1_DETERMINISTIC"] as const;
+
+/** The decision job's handler deadline; also how long its claimed run may stay pending or running. */
+export const SHADOW_DECISION_DEADLINE_MS = 10 * 60_000;
+
+/** Scheduler run states after which the job will not run that instant again. */
+const FINISHED_RUN_STATES = new Set(["succeeded", "failed", "missed", "skipped_duplicate"]);
+
+/**
+ * The shadow decision the job will seal next, as of `now`: the earliest weekly decision instant the job can still
+ * act on. An instant is finished only on PERSISTED evidence, never on the wall clock alone (Codex P2s, PR #108):
+ *
+ *  - every shadow arm is sealed at it (one sealed arm is not a finished decision - the job completes a half-sealed
+ *    pair by accepting the identical existing arm and sealing the other), or
+ *  - the scheduler has recorded a finished run for its job instant (succeeded - sealed or visibly skipped - failed,
+ *    missed, or a duplicate), or
+ *  - its claimed run (pending or running) has outlived the job's deadline: claim() will reject the key, so no tick
+ *    starts it again, and the missed-run detector will mark it missed - by the scheduler's own rule,
+ *    {@link claimExpired} (Codex P2, PR #108 round 7). Usually a crash left the row behind. The deadline cannot
+ *    pre-empt the synchronous handler, so an overrunning run may still commit; until it does, status reads the
+ *    following week. That is display only: the decision's own reads are timestamp-locked to its instant, or
+ *  - no run is recorded and the instant is already beyond the scheduler's due lookback, so no tick will run it.
+ *
+ * A run that is due but not yet ticked therefore stays upcoming: the scheduler executes it late, inside its
+ * lookback, timestamp-locked to the decision instant.
+ */
+export function upcomingShadowDecision(
+  db: Db,
+  calendar: ExchangeCalendar,
+  args: { charterHash: string; decisionOffsetMinutes: number; now: UtcInstant; dueLookbackMs?: number },
+): { decisionAt: UtcInstant; session: IsoDate } {
+  const jobOffsetMs = shadowJobOffsetMinutes(args.decisionOffsetMinutes) * 60_000;
+  const dueLookbackMs = args.dueLookbackMs ?? OPERATIONAL_DUE_LOOKBACK_MS;
+  const nowMs = Date.parse(args.now);
+  const sealed = new Set(
+    (
+      db
+        .prepare(`SELECT decision_at FROM decision_records WHERE charter_hash = ? AND arm IN (${SHADOW_DECISION_ARMS.map(() => "?").join(",")}) GROUP BY decision_at HAVING COUNT(DISTINCT arm) = ?`)
+        .all(args.charterHash, ...SHADOW_DECISION_ARMS, SHADOW_DECISION_ARMS.length) as { decision_at: UtcInstant }[]
+    ).map((r) => Date.parse(r.decision_at)),
+  );
+  const runs = new Map(
+    (db.prepare("SELECT scheduled_for, started_at, status FROM job_runs WHERE job_id = 'shadow_decision'").all() as { scheduled_for: string; started_at: string | null; status: string }[]).map(
+      (r) => [Date.parse(r.scheduled_for), r] as const,
+    ),
+  );
+  // Start early enough that a run the scheduler can still execute late cannot be skipped, however large the offset.
+  const start = calendar.previousSession(addMs(args.now, -(jobOffsetMs + dueLookbackMs)));
+  for (const session of calendar.sessionDates(start, addDays(start, 28 + Math.ceil((jobOffsetMs + dueLookbackMs) / 86_400_000)))) {
+    if (!isWeeklyDecisionSession(calendar, session)) continue;
+    const close = calendar.sessionClose(session);
+    const decisionAt = addMs(close, args.decisionOffsetMinutes * 60_000);
+    if (sealed.has(Date.parse(decisionAt))) continue;
+    const runAtMs = Date.parse(addMs(close, jobOffsetMs));
+    const run = runs.get(runAtMs);
+    if (run === undefined) {
+      if (runAtMs + dueLookbackMs <= nowMs) continue;
+    } else if (FINISHED_RUN_STATES.has(run.status) || claimExpired(run, SHADOW_DECISION_DEADLINE_MS, nowMs)) {
+      continue;
+    }
+    return { decisionAt, session };
+  }
+  throw new RangeError(`no upcoming weekly decision session found after ${start}`);
+}
+
+/**
+ * The owner's `shadow status`: the halt picture as the NEXT decision will see it - evaluated at that decision's
+ * own instant and session, not at the moment the command happens to run (Codex P2, PR #108). Read at "now" with
+ * the previous session, a break first reported Thursday reads as fresh on Friday morning although Friday's
+ * decision will hold the book on it, which is exactly when the owner is deciding whether to re-arm.
+ */
+export function shadowStatusForNextDecision(
+  db: Db,
+  calendar: ExchangeCalendar,
+  args: { charterHash: string; decisionOffsetMinutes: number; now: UtcInstant },
+): { nextDecision: { decisionAt: UtcInstant; session: IsoDate } } & ReturnType<typeof shadowHaltStatus> {
+  const nextDecision = upcomingShadowDecision(db, calendar, args);
+  return { nextDecision, ...shadowHaltStatus(db, args.charterHash, nextDecision.decisionAt, nextDecision.session) };
 }
 
 /** The sleeve arm whose replayed book a decision starts from. */
@@ -133,13 +223,13 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
   // misconfigured path loudly at startup instead of at the first close. The 150-minute floor keeps the job
   // behind the nightly ingest (close + 90 min); the +30 buffer absorbs scheduler polling delay.
   const registeredOffsetMinutes = loadCharterFile(charterPath).charter.rules.decision_offset_minutes;
-  const jobOffsetMinutes = Math.max(150, registeredOffsetMinutes + 30);
+  const jobOffsetMinutes = shadowJobOffsetMinutes(registeredOffsetMinutes);
 
   scheduler.register({
     jobId: "shadow_decision",
     name: "Seal the prospective shadow decision records for the configured charter",
     schedule: { kind: "after_close", offsetMs: jobOffsetMinutes * 60_000 },
-    deadlineMs: 10 * 60_000,
+    deadlineMs: SHADOW_DECISION_DEADLINE_MS,
     handler: (ctx) => {
       // Defence in depth: the registration gate above already excludes non-sealing modes, and the sealer
       // itself refuses them, but a job must never rely on its registration site alone.
@@ -278,6 +368,12 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       const book = carriedShadowBook(ctx.db, { pit, calendar, charter, charterHash: loaded.charterHash, decisionAt, decisionSession: session, offsetMinutes: registeredOffsetMinutes });
       const staleInputs = [...unapprovedPolicies, ...book.staleInputs];
 
+      // The persisted halt context (D-54): the state the previous decision recorded (sticky), the owner re-arms
+      // issued since, and the reconciliation breaks unresolved past one session - all as of the decision
+      // instant. A break the reconciler has reported for more than a session holds the book (HOLD_ONLY) until
+      // the owner acknowledges it in a re-arm.
+      const halt = shadowHaltContext({ ...readShadowHaltInputs(ctx.db, loaded.charterHash, decisionAt), decisionAt, decisionSession: session });
+
       const records = shadowDecisionRecords(charter, {
         mode: config.mode,
         charterHash: loaded.charterHash,
@@ -290,6 +386,7 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
         state: book.state,
         identity,
         lookThrough,
+        halt,
         ...(staleInputs.length === 0 ? {} : { staleInputs }),
       });
 
@@ -346,6 +443,15 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
           // What the decision started from: the replayed sleeve book's holdings (entity ids only - weights are
           // on nothing a dollar can be read from), and any reason that book could not be trusted.
           startingBook: { held: [...book.state.currentWeights.keys()].sort(), staleInputs: book.staleInputs },
+          // The halt this decision escalated from and what moved it: the previous recorded state, the owner
+          // re-arms consumed (actor, target, instant), and the breaks that held it or were first seen today.
+          halt: {
+            from: halt.current,
+            reArmsApplied: halt.reArms.map((r) => ({ to: r.to, actor: r.actor, at: r.at })),
+            unresolvedBreaks: halt.unresolvedBreaks,
+            freshBreaks: halt.freshBreaks,
+            acknowledgedBreaks: halt.acknowledgedBreaks,
+          },
           policyVersions: { risk_yaml: risk.value.version },
           sealed,
           alreadySealed,

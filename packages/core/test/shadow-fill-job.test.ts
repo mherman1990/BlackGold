@@ -8,11 +8,13 @@ import { addMs, Dec, isoDate, sha256Hex, type Db, type UtcInstant } from "@black
 import { Ledger, NyseCalendar, PointInTimeRepository, Scheduler, corporateActionObservation, openCoreDb } from "../src/index.ts";
 import { parseAppConfig } from "../src/config/load.ts";
 import type { AppConfig } from "../src/config/schema.ts";
-import { registerShadowDecisionJob } from "../src/decision/shadow-job.ts";
+import { registerShadowDecisionJob, SHADOW_DECISION_DEADLINE_MS, shadowStatusForNextDecision, upcomingShadowDecision } from "../src/decision/shadow-job.ts";
 import { registerShadowFillJob, SHADOW_FILLS_RECORDED, SHADOW_INCIDENT, SHADOW_RECONCILED } from "../src/decision/shadow-fill-job.ts";
 import { appendShadowFillRecord, shadowFillRecords, SHADOW_FILL_RECORD_VERSION, type ShadowFillRecord } from "../src/decision/shadow-fills.ts";
 import { fillDueSession, fillOwedSession, fillWindowEndSession, reconcileShadow } from "../src/decision/shadow-reconcile.ts";
 import { loadCharterFile } from "../src/strategy/charter.ts";
+import { appendDecisionRecord, type ProspectiveDecisionRecord } from "../src/decision/decision-record.ts";
+import { readShadowHaltInputs, recordShadowReArm, ShadowReArmError, SHADOW_HALT_REARM } from "../src/decision/shadow-halt.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
 
 const cal = new NyseCalendar();
@@ -341,6 +343,7 @@ describe("shadow loop repairs (Codex, PR #102 round 3)", () => {
       cashAtDecision: "100000",
       fills: [],
       suppressedEntries: [],
+      suppressedExits: [],
       unfilled: [],
       unpriced: [],
       executionShortfall: "0",
@@ -387,6 +390,218 @@ describe("shadow loop repairs (Codex, PR #102 round 3)", () => {
     const breaks = events(env.db, SHADOW_RECONCILED).at(-1)?.["breaks"] as string[];
     expect(breaks.some((b) => b.startsWith(`UNFILLED_REMAINDER:B0_PASSIVE:${afterClose("2026-03-06", 60)}`))).toBe(true);
     expect(breaks.some((b) => b.startsWith(`MISSING_FILL_RECORD:B0_PASSIVE:${afterClose("2026-03-06", 60)}`))).toBe(false);
+  });
+});
+
+describe("reconciler breaks feed the next decision's halt (D-54)", () => {
+  type HaltEvent = { session: string; halt: { from: string; reArmsApplied: { to: string }[]; unresolvedBreaks: string[]; freshBreaks: string[]; acknowledgedBreaks: string[] } };
+  const sealedOn = (db: Db, session: string): HaltEvent | undefined => (events(db, "shadow.decision_sealed") as unknown as HaltEvent[]).find((e) => e.session === session);
+  const recordsAt = (db: Db, session: string) =>
+    (db.prepare("SELECT arm, halt_state, record_json FROM decision_records WHERE decision_at = ?").all(afterClose(session, 60)) as { arm: string; halt_state: string; record_json: string }[]);
+
+  it("holds the book after a break outlives a session, and steps down one level per owner re-arm", async () => {
+    // Thin VTI: B0's week-1 buy leaves a LIQUIDITY remainder, finalized at the window end (Friday 03-13) as an
+    // UNFILLED_REMAINDER break. The 03-13 decision ran before that reconcile, so it is unaffected; by the 03-20
+    // decision the break has been reported for more than a session.
+    const env = setup("SHADOW", true, { vtiVolumeShares: 12_000n });
+    for (const s of ["2026-03-06", "2026-03-09", "2026-03-13", "2026-03-16", "2026-03-20"]) await env.scheduler.tick(afterClose(s, 150));
+    const brk = `UNFILLED_REMAINDER:B0_PASSIVE:${afterClose("2026-03-06", 60)}:VTI`;
+
+    expect(recordsAt(env.db, "2026-03-13").every((r) => r.halt_state !== "HOLD_ONLY")).toBe(true);
+    const week3 = sealedOn(env.db, "2026-03-20");
+    expect(week3?.halt.unresolvedBreaks).toContain(brk);
+    const held = recordsAt(env.db, "2026-03-20");
+    expect(held).toHaveLength(2);
+    for (const r of held) {
+      expect(r.halt_state).toBe("HOLD_ONLY");
+      expect(r.record_json).toContain(`reconciliation_unresolved:${brk}`);
+    }
+
+    // The week-3 outcomes are recorded against the held decisions. (Whether HOLD_ONLY freezes a held book's EXITS
+    // is proven by the dedicated test below: in this fixture B1's week-3 target sits inside the rebalance band,
+    // so it has no order at all and an assertion here could not tell a freeze from a quiet week.)
+    await env.scheduler.tick(afterClose("2026-03-23", 150));
+    expect(fillRecordsOf(env.db).some((r) => r.arm === "B1_DETERMINISTIC" && r.decisionSession === "2026-03-20")).toBe(true);
+
+    // The owner examines every reported break, acknowledges them, and re-arms toward NORMAL; the halt machine
+    // stages it to one step: HOLD_ONLY -> HALT_NEW_RISK.
+    const reported = (events(env.db, SHADOW_RECONCILED).at(-1)?.["breaks"] as string[] | undefined) ?? [];
+    expect(reported).toContain(brk);
+    recordShadowReArm(env.db, new Ledger(env.db), {
+      charterHash: loadCharterFile(env.charterPath).charterHash,
+      to: "NORMAL",
+      actor: "Test Owner",
+      reason: "thin-volume remainder in the synthetic book; examined, no data fault",
+      acknowledge: reported,
+      now: "2026-03-24T12:00:00.000Z" as UtcInstant,
+    });
+    await env.scheduler.tick(afterClose("2026-03-27", 150));
+    const week4 = sealedOn(env.db, "2026-03-27");
+    expect(week4?.halt.from).toBe("HOLD_ONLY");
+    expect(week4?.halt.reArmsApplied.map((r) => r.to)).toEqual(["NORMAL"]);
+    expect(week4?.halt.acknowledgedBreaks).toEqual([...new Set(reported)].sort());
+    expect(week4?.halt.unresolvedBreaks.filter((b) => reported.includes(b))).toEqual([]);
+    for (const r of recordsAt(env.db, "2026-03-27")) expect(r.halt_state).toBe("HALT_NEW_RISK");
+  });
+
+  it("a HOLD_ONLY decision freezes a held book's exits, and the fill event counts them (Codex P2, PR #108)", async () => {
+    // Week 1 fills a real B1 book. Then a HOLD_ONLY decision asking for a full exit is sealed for 03-13 (copied
+    // from week 1's sealed record, so it is a genuine record of this charter). Monday's fill run must sell
+    // nothing, record every held entity as a suppressed exit, and report that count on shadow.fills_recorded.
+    const env = setup("SHADOW");
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    await env.scheduler.tick(afterClose("2026-03-09", 150));
+    const week1 = env.db.prepare("SELECT arm, record_json FROM decision_records ORDER BY arm").all() as { arm: string; record_json: string }[];
+    const held = [...new Set((fillRecordsOf(env.db).find((r) => r.arm === "B1_DETERMINISTIC")?.fills ?? []).filter((f) => f.side === "BUY").map((f) => f.entityId))].sort();
+    expect(held.length).toBeGreaterThan(0);
+    for (const row of week1) {
+      const rec = JSON.parse(row.record_json) as ProspectiveDecisionRecord;
+      appendDecisionRecord(env.db, {
+        ...rec,
+        decisionAt: afterClose("2026-03-13", 60),
+        sealedAt: afterClose("2026-03-13", 61),
+        targetWeights: [],
+        cashWeight: "1",
+        gate: { newRiskAllowed: false, haltState: "HOLD_ONLY", increasedRisk: [], blockedBy: ["halt RECONCILIATION_UNRESOLVED: test"] },
+      });
+    }
+    // Monday: the decision job does nothing on a non-decision session; the fill job fills the 03-13 decisions.
+    await env.scheduler.tick(afterClose("2026-03-16", 150));
+    const frozen = fillRecordsOf(env.db).find((r) => r.arm === "B1_DETERMINISTIC" && r.decisionSession === "2026-03-13");
+    if (!frozen) throw new Error("no fill record for the HOLD_ONLY decision");
+    expect(frozen.fills).toEqual([]);
+    expect(frozen.suppressedExits).toEqual(held);
+    expect(frozen.suppressedEntries).toEqual([]);
+    const reported = (events(env.db, SHADOW_FILLS_RECORDED).at(-1)?.["recorded"] as { arm: string; suppressedEntries: number; suppressedExits: number }[]).find((r) => r.arm === "B1_DETERMINISTIC");
+    expect(reported).toMatchObject({ suppressedEntries: 0, suppressedExits: held.length });
+  });
+
+  it("refuses a re-arm that would do less than it says: bad state, blank actor or reason, an unreported break", () => {
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    const base = { charterHash, to: "HALT_NEW_RISK", actor: "Owner", reason: "reviewed", acknowledge: [] as string[], now: "2026-03-24T12:00:00.000Z" as UtcInstant };
+    const ledger = new Ledger(env.db);
+    expect(() => recordShadowReArm(env.db, ledger, { ...base, to: "EMERGENCY_FLATTEN_AUTHORIZED" })).toThrow(ShadowReArmError);
+    expect(() => recordShadowReArm(env.db, ledger, { ...base, actor: "  " })).toThrow(ShadowReArmError);
+    expect(() => recordShadowReArm(env.db, ledger, { ...base, reason: "" })).toThrow(ShadowReArmError);
+    expect(() => recordShadowReArm(env.db, ledger, { ...base, acknowledge: ["MISSING_DECISION_RECORD:B1_DETERMINISTIC:2026-03-27"] })).toThrow(/does not report/);
+    // Reported once, since cleared: the latest reconcile no longer reports it, so there is no occurrence to resolve.
+    ledger.append(SHADOW_RECONCILED, { charterHash, session: "2026-03-20", breaks: ["NEGATIVE_CASH:B1_DETERMINISTIC:2026-03-20"] }, afterClose("2026-03-20", 150));
+    ledger.append(SHADOW_RECONCILED, { charterHash, session: "2026-03-23", breaks: [] }, afterClose("2026-03-23", 150));
+    expect(() => recordShadowReArm(env.db, ledger, { ...base, acknowledge: ["NEGATIVE_CASH:B1_DETERMINISTIC:2026-03-20"] })).toThrow(/does not report/);
+    expect(events(env.db, SHADOW_HALT_REARM)).toHaveLength(0);
+    // A well-formed one is recorded.
+    recordShadowReArm(env.db, ledger, base);
+    expect(events(env.db, SHADOW_HALT_REARM)).toEqual([{ charterHash, to: "HALT_NEW_RISK", actor: "Owner", reason: "reviewed", acknowledgedBreaks: [] }]);
+  });
+
+  it("finds the decision the job will seal next from persisted run and seal state, not the wall clock (Codex P2s, PR #108)", () => {
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    const next = (now: UtcInstant) => upcomingShadowDecision(env.db, cal, { charterHash, decisionOffsetMinutes: 60, now });
+    const friday = { decisionAt: afterClose("2026-03-06", 60), session: "2026-03-06" };
+    const nextFriday = { decisionAt: afterClose("2026-03-13", 60), session: "2026-03-13" };
+    const runAt = afterClose("2026-03-06", 150);
+
+    expect(next("2026-03-06T15:00:00.000Z" as UtcInstant)).toEqual(friday); // Friday morning
+    expect(next(afterClose("2026-03-06", 90))).toEqual(friday); // past the instant, before the delayed run
+    // Due but not yet ticked: the scheduler still runs it late, inside its 24 h lookback - still Friday's.
+    expect(next(afterClose("2026-03-06", 150 + 60))).toEqual(friday);
+    // Never recorded and beyond the lookback: no tick will run it.
+    expect(next(afterClose("2026-03-06", 150 + 25 * 60))).toEqual(nextFriday);
+
+    // One sealed arm is not a finished decision: the job completes the pair.
+    env.db
+      .prepare("INSERT INTO decision_records (decision_at, sealed_at, strategy_id, strategy_version, charter_hash, arm, mode, new_risk_allowed, halt_state, record_json, record_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+      .run(friday.decisionAt, friday.decisionAt, "etf-trend-vol", "0.2.0", charterHash, "B0_PASSIVE", "SHADOW", 1, "NORMAL", "{}", "sha256:partial");
+    expect(next(afterClose("2026-03-06", 90))).toEqual(friday);
+
+    // A finished run for the instant, even one that sealed nothing (e.g. a visible skip), moves on.
+    env.db.prepare("INSERT INTO job_runs (idempotency_key, job_id, scheduled_for, status) VALUES (?,?,?,?)").run("k-fri", "shadow_decision", runAt, "succeeded");
+    expect(next(afterClose("2026-03-06", 160))).toEqual(nextFriday);
+  });
+
+  it("skips an instant whose claimed run outlived its deadline: the scheduler will never run it again (Codex P2, PR #108 round 7)", () => {
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    const next = (now: UtcInstant) => upcomingShadowDecision(env.db, cal, { charterHash, decisionOffsetMinutes: 60, now });
+    const friday = { decisionAt: afterClose("2026-03-06", 60), session: "2026-03-06" };
+    const nextFriday = { decisionAt: afterClose("2026-03-13", 60), session: "2026-03-13" };
+    const runAt = afterClose("2026-03-06", 150);
+    const claim = (status: "pending" | "running", startedAt: UtcInstant | null) => {
+      env.db.prepare("DELETE FROM job_runs").run();
+      env.db.prepare("INSERT INTO job_runs (idempotency_key, job_id, scheduled_for, started_at, status) VALUES (?,?,?,?,?)").run("k-fri", "shadow_decision", runAt, startedAt, status);
+    };
+    const deadlineMin = SHADOW_DECISION_DEADLINE_MS / 60_000;
+
+    // A run still inside its deadline is in progress: Friday's decision is the one being sealed.
+    claim("running", runAt);
+    expect(next(afterClose("2026-03-06", 150 + deadlineMin))).toEqual(friday);
+    // Past the deadline from its start, a crashed run is dead: claim() rejects the key, the detector marks it missed.
+    expect(next(afterClose("2026-03-06", 150 + deadlineMin + 1))).toEqual(nextFriday);
+    // The deadline counts from the start when there is one (a late start), else from the scheduled instant.
+    claim("running", afterClose("2026-03-06", 150 + 60));
+    expect(next(afterClose("2026-03-06", 150 + 60 + deadlineMin))).toEqual(friday);
+    claim("pending", null);
+    expect(next(afterClose("2026-03-06", 150 + deadlineMin + 1))).toEqual(nextFriday);
+  });
+
+  it("treats an instant as finished once every shadow arm is sealed, whatever the run state", async () => {
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    await env.scheduler.tick(afterClose("2026-03-06", 150)); // seals both arms
+    env.db.prepare("DELETE FROM job_runs").run(); // only the seal remains as evidence
+    expect(upcomingShadowDecision(env.db, cal, { charterHash, decisionOffsetMinutes: 60, now: afterClose("2026-03-06", 90) })).toEqual({ decisionAt: afterClose("2026-03-13", 60), session: "2026-03-13" });
+  });
+
+  it("shadow status classifies breaks as the NEXT decision will, not as of the moment it runs (Codex P2, PR #108)", () => {
+    // A break first reported Thursday 03-12. On Friday morning the next decision is Friday's, which compares it
+    // with Friday and holds the book on it - so status must call it unresolved, not fresh.
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    const brk = "MISSING_DECISION_RECORD:B1_DETERMINISTIC:2026-03-06";
+    new Ledger(env.db).append(SHADOW_RECONCILED, { charterHash, session: "2026-03-12", breaks: [brk] }, afterClose("2026-03-12", 150));
+    const status = shadowStatusForNextDecision(env.db, cal, { charterHash, decisionOffsetMinutes: 60, now: "2026-03-13T15:00:00.000Z" as UtcInstant });
+    expect(status.nextDecision).toEqual({ decisionAt: afterClose("2026-03-13", 60), session: "2026-03-13" });
+    expect(status.unresolvedBreaks).toEqual([brk]);
+    expect(status.freshBreaks).toEqual([]);
+  });
+
+  it("starts a decision only from records sealed by its instant: a late backfill cannot set the state (Codex P2, PR #108 round 6)", async () => {
+    // 03-13: B0 sealed on time (HALT_NEW_RISK), B1 backfilled after the 03-20 instant (HOLD_ONLY). 03-20: both arms
+    // backfilled after the 03-27 instant. Each decision sees only what existed when it was timestamp-locked.
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    const week1 = env.db.prepare("SELECT arm, record_json FROM decision_records").all() as { arm: string; record_json: string }[];
+    const seal = (arm: string, session: string, sealedAt: UtcInstant, haltState: "HALT_NEW_RISK" | "HOLD_ONLY") => {
+      const row = week1.find((r) => r.arm === arm);
+      if (!row) throw new Error(`no week-1 record for ${arm}`);
+      const rec = JSON.parse(row.record_json) as ProspectiveDecisionRecord;
+      appendDecisionRecord(env.db, { ...rec, decisionAt: afterClose(session, 60), sealedAt, gate: { newRiskAllowed: false, haltState, increasedRisk: [], blockedBy: ["test"] } });
+    };
+    seal("B0_PASSIVE", "2026-03-13", afterClose("2026-03-13", 61), "HALT_NEW_RISK");
+    seal("B1_DETERMINISTIC", "2026-03-13", afterClose("2026-03-20", 61), "HOLD_ONLY");
+    seal("B0_PASSIVE", "2026-03-20", afterClose("2026-03-27", 61), "HOLD_ONLY");
+    seal("B1_DETERMINISTIC", "2026-03-20", afterClose("2026-03-27", 61), "HOLD_ONLY");
+    const previousAt = (session: string) => readShadowHaltInputs(env.db, charterHash, afterClose(session, 60)).previous;
+    expect(previousAt("2026-03-20")).toEqual({ decisionAt: afterClose("2026-03-13", 60), haltStates: ["HALT_NEW_RISK"] });
+    expect(previousAt("2026-03-27")).toEqual({ decisionAt: afterClose("2026-03-13", 60), haltStates: ["HALT_NEW_RISK", "HOLD_ONLY"] });
+    // Control: once sealed before an instant, the backfill does count.
+    expect(previousAt("2026-03-30")).toEqual({ decisionAt: afterClose("2026-03-20", 60), haltStates: ["HOLD_ONLY", "HOLD_ONLY"] });
+  });
+
+  it("drops a malformed re-arm written to the ledger directly: relaxing a halt needs a well-formed owner action", () => {
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    const ledger = new Ledger(env.db);
+    const at = "2026-03-24T12:00:00.000Z" as UtcInstant;
+    ledger.append(SHADOW_HALT_REARM, { charterHash, to: "BOGUS", actor: "Owner", reason: "x", acknowledgedBreaks: [] }, at);
+    ledger.append(SHADOW_HALT_REARM, { charterHash, to: "NORMAL", actor: " ", reason: "x", acknowledgedBreaks: [] }, at);
+    ledger.append(SHADOW_HALT_REARM, { charterHash, to: "NORMAL", actor: "Owner", reason: "", acknowledgedBreaks: [] }, at);
+    ledger.append(SHADOW_HALT_REARM, { charterHash, to: "HALT_NEW_RISK", actor: "Owner", reason: "ok", acknowledgedBreaks: ["x", 7] }, at);
+    const { reArms } = readShadowHaltInputs(env.db, charterHash, "2026-03-25T00:00:00.000Z" as UtcInstant);
+    expect(reArms).toEqual([{ to: "HALT_NEW_RISK", actor: "Owner", at, reason: "ok", acknowledgedBreaks: ["x"] }]);
   });
 });
 

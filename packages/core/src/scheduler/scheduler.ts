@@ -46,7 +46,21 @@ export type JobDefinition = {
 
 export type DueRun = { jobId: string; scheduledFor: UtcInstant; idempotencyKey: string };
 
+/** The due window the long-running `serve` scheduler and the `run-jobs` CLI both use: a due run is still executed this late. */
+export const OPERATIONAL_DUE_LOOKBACK_MS = 24 * 3_600_000;
+
 export type RunStatus = "pending" | "running" | "succeeded" | "failed" | "missed" | "skipped_duplicate";
+
+/**
+ * The missed-run detector's staleness rule for a `pending` or `running` row, shared so a reader of job_runs
+ * cannot disagree with it: the claim has expired once its deadline, counted from its start (else its scheduled
+ * instant), has passed. No tick starts that instant again - claim() rejects the existing key. The deadline
+ * bounds the claim, not the work: execute() races a timer, which cannot pre-empt a synchronous handler, so an
+ * overrunning one may still finish and record its outcome.
+ */
+export function claimExpired(row: { scheduled_for: string; started_at: string | null }, deadlineMs: number, nowMs: number): boolean {
+  return Date.parse(row.started_at ?? row.scheduled_for) + deadlineMs < nowMs;
+}
 
 export type RunOutcome = DueRun & { status: "succeeded" | "failed" | "skipped_duplicate"; error?: string };
 
@@ -218,8 +232,7 @@ export class Scheduler {
     for (const row of stale) {
       const job = this.jobs.get(row.job_id);
       const deadlineMs = job?.deadlineMs ?? this.storedDeadline(row.job_id);
-      const anchor = Date.parse(row.started_at ?? row.scheduled_for);
-      if (anchor + deadlineMs >= nowMs) continue;
+      if (!claimExpired(row, deadlineMs, nowMs)) continue;
       const reason = row.status === "running" ? "stale_running" : "stale_pending";
       const run: MissedRun = {
         jobId: row.job_id,

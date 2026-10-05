@@ -12,7 +12,7 @@ import { openCoreDb } from "./db/open.ts";
 import { backupDatabase, verifyRestore } from "./db/backup.ts";
 import { Ledger } from "./ledger/ledger.ts";
 import { NyseCalendar } from "./calendar/nyse.ts";
-import { Scheduler } from "./scheduler/scheduler.ts";
+import { OPERATIONAL_DUE_LOOKBACK_MS, Scheduler } from "./scheduler/scheduler.ts";
 import { runHealth } from "./health/health.ts";
 import { serve, registerPhase0Jobs } from "./serve.ts";
 import { CORE_PACKAGE_NAME, CORE_VERSION } from "./version.ts";
@@ -25,6 +25,8 @@ import { splitPlan, type SplitKind } from "./research/walkforward.ts";
 import { enumerateGrid, enumerateTiers } from "./research/robustness.ts";
 import { buildCoverageReport } from "./research/coverage.ts";
 import { runEvaluation, type EvaluationProgress } from "./research/evaluate.ts";
+import { recordShadowReArm, ShadowReArmError } from "./decision/shadow-halt.ts";
+import { shadowStatusForNextDecision } from "./decision/shadow-job.ts";
 
 /**
  * blackgold-core CLI. Operational commands plus Phase 1 public-source ingestion. No broker, no model, no live path.
@@ -72,6 +74,13 @@ Phase 3 runtime-LLM analyst (requires ANTHROPIC_API_KEY in the environment; abst
                                             One analyst decision: seal a point-in-time packet, assess, archive the call.
                                             Factors are classified deterministically from the charter; an unclassified candidate is refused
 
+Shadow halt state (D-54; the owner's re-arm path - no order, no broker, no live mode):
+  shadow status --charter <charter.yaml>    The halt picture as the NEXT shadow decision will see it (its instant and session):
+                                            recorded state, pending re-arms, and every reconciliation break
+  shadow rearm --charter <charter.yaml> --to NORMAL|HALT_NEW_RISK|HOLD_ONLY --actor <name> --reason <text> [--acknowledge <break,...>]
+                                            Record an owner re-arm. Applied at the next decision, one step at a time; an
+                                            active fault still binds. --acknowledge resolves breaks the latest reconcile reports
+
 Configuration comes from BLACKGOLD_* environment variables (see config/schema/README.md).`;
 
 type CommandResult = { exitCode: number; output: unknown };
@@ -103,6 +112,32 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
   const now = nowUtc();
 
   switch (command) {
+    case "shadow": {
+      const [sub, ...rest] = args;
+      const o = parseOptions(rest, { charter: { type: "string" }, to: { type: "string" }, actor: { type: "string" }, reason: { type: "string" }, acknowledge: { type: "string" } });
+      const charterPath = o["charter"];
+      if (typeof charterPath !== "string") throw new UsageError("shadow requires --charter <charter.yaml>");
+      const loaded = loadCharterFile(charterPath);
+      const charterHash = loaded.charterHash;
+      if (sub === "status") {
+        const decisionOffsetMinutes = loaded.charter.rules.decision_offset_minutes;
+        return { exitCode: 0, output: withDb(config, (db) => shadowStatusForNextDecision(db, calendar, { charterHash, decisionOffsetMinutes, now })) };
+      }
+      if (sub === "rearm") {
+        const opt = (k: string): string => {
+          const v = o[k];
+          return typeof v === "string" ? v : "";
+        };
+        const acknowledge = opt("acknowledge").split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+        try {
+          return { exitCode: 0, output: withDb(config, (db) => recordShadowReArm(db, new Ledger(db), { charterHash, to: opt("to"), actor: opt("actor"), reason: opt("reason"), acknowledge, now })) };
+        } catch (err) {
+          if (err instanceof ShadowReArmError) throw new UsageError(err.message);
+          throw err;
+        }
+      }
+      throw new UsageError("shadow requires a subcommand: status | rearm");
+    }
     case "health": {
       const report = withDb(config, (db) => runHealth(config, db, calendar, now));
       return { exitCode: report.ok ? 0 : 1, output: report };
@@ -142,7 +177,7 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
         const ledger = new Ledger(db);
         // Phase 0: a single manual tick. The daily heartbeat may be caught up within the day, so the due
         // window is one day; anything older than that is reported as missed, never run late.
-        const scheduler = new Scheduler({ db, ledger, calendar, dueLookbackMs: 24 * 3_600_000, missedLookbackMs: 7 * 24 * 3_600_000 });
+        const scheduler = new Scheduler({ db, ledger, calendar, dueLookbackMs: OPERATIONAL_DUE_LOOKBACK_MS, missedLookbackMs: 7 * 24 * 3_600_000 });
         registerPhase0Jobs(scheduler, { config, calendar });
         const missed = scheduler.detectMissedRuns(now);
         const outcomes = await scheduler.tick(now);

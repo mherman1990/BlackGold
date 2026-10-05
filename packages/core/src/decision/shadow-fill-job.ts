@@ -10,6 +10,7 @@ import { appendShadowFillRecord, counterfactualFills, fillWindowObserved, shadow
 import { DEFAULT_MAX_FILL_BARS } from "../research/simulator.ts";
 import { fillDueSession, fillOwedSession, reconcileShadow } from "./shadow-reconcile.ts";
 import { closesAt, loadShadowReplayInputs, replayShadowArm } from "./shadow-book.ts";
+import { shadowJobOffsetMinutes } from "./shadow-job.ts";
 
 /**
  * The mode-gated `after_close` counterfactual fill + reconcile job (D-53 slice 3b): the scheduler seam that
@@ -61,7 +62,7 @@ export function registerShadowFillJob(scheduler: Scheduler, deps: { config: AppC
   // With equal offsets the scheduler executes same-instant runs in jobId order, and "shadow_decision" sorts
   // before "shadow_fill", so the decision run always precedes this one.
   const registeredOffsetMinutes = loadCharterFile(charterPath).charter.rules.decision_offset_minutes;
-  const jobOffsetMinutes = Math.max(150, registeredOffsetMinutes + 30);
+  const jobOffsetMinutes = shadowJobOffsetMinutes(registeredOffsetMinutes);
 
   scheduler.register({
     jobId: "shadow_fill",
@@ -129,7 +130,7 @@ export function registerShadowFillJob(scheduler: Scheduler, deps: { config: AppC
       const bars = new Map([...replayInputs.series].map(([entityId, es]) => [entityId, es.bars] as const));
 
       const allFills = [...priorFills];
-      const newRecords: { arm: Arm; decisionAt: UtcInstant; hash: string; fills: number; suppressed: number; unfilled: number }[] = [];
+      const newRecords: { arm: Arm; decisionAt: UtcInstant; hash: string; fills: number; suppressedEntries: number; suppressedExits: number; unfilled: number }[] = [];
 
       ctx.db.transaction(() => {
         // Oldest decision first, so each replay sees every earlier outcome, including ones from this run. Once
@@ -172,7 +173,9 @@ export function registerShadowFillJob(scheduler: Scheduler, deps: { config: AppC
           }
           const { hash } = appendShadowFillRecord(ctx.db, fillRecord);
           allFills.push(fillRecord);
-          newRecords.push({ arm: row.arm, decisionAt: row.decision_at, hash, fills: fillRecord.fills.length, suppressed: fillRecord.suppressedEntries.length, unfilled: fillRecord.unfilled.length });
+          // Entries and exits reported separately: a HOLD_ONLY freeze suppresses exits too, and an exit-only
+          // rebalance frozen by it must not read as "nothing suppressed" (Codex P2, PR #108).
+          newRecords.push({ arm: row.arm, decisionAt: row.decision_at, hash, fills: fillRecord.fills.length, suppressedEntries: fillRecord.suppressedEntries.length, suppressedExits: fillRecord.suppressedExits.length, unfilled: fillRecord.unfilled.length });
         }
 
         if (newRecords.length > 0) {

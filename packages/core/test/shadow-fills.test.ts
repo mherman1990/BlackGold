@@ -33,7 +33,7 @@ const costs = (delayBars = 1): ResolvedCosts => ({
   costModelVersion: 1,
 });
 
-const record = (targets: Record<string, string>, newRiskAllowed = true): ProspectiveDecisionRecord =>
+const record = (targets: Record<string, string>, newRiskAllowed = true, haltState: "NORMAL" | "HALT_NEW_RISK" | "HOLD_ONLY" = "NORMAL"): ProspectiveDecisionRecord =>
   ({
     recordVersion: 1,
     strategyId: "etf-trend-vol",
@@ -47,7 +47,7 @@ const record = (targets: Record<string, string>, newRiskAllowed = true): Prospec
     snapshotIds: [],
     targetWeights: Object.entries(targets).map(([entityId, weight]) => ({ entityId, weight })),
     cashWeight: "0",
-    gate: { newRiskAllowed, haltState: "NORMAL", increasedRisk: [], blockedBy: [] },
+    gate: { newRiskAllowed, haltState, increasedRisk: [], blockedBy: [] },
     constructionVersion: 1,
     notes: [],
   }) as unknown as ProspectiveDecisionRecord;
@@ -60,13 +60,14 @@ function fill(opts: {
   bars: Record<string, SimBar[]>;
   splits?: ShadowSplit[];
   delayBars?: number;
+  gate?: { newRiskAllowed: boolean; haltState: "NORMAL" | "HALT_NEW_RISK" | "HOLD_ONLY" };
 }): ShadowFillRecord {
   const positions = new Map(Object.entries(opts.positions ?? {}).map(([k, v]) => [k, new Dec(v)] as const));
   const prices = new Map(Object.entries(opts.prices).map(([k, v]) => [k, new Dec(v)] as const));
   let nav = new Dec(opts.cash);
   for (const [k, q] of positions) nav = nav.plus(q.times(prices.get(k) ?? ZERO));
   return counterfactualFills({
-    record: record(opts.targets),
+    record: record(opts.targets, opts.gate?.newRiskAllowed ?? true, opts.gate?.haltState ?? "NORMAL"),
     decisionRecordHash: "sha256:sealed",
     decisionSession: DECISION,
     computedAt: "2026-03-20T00:00:00.000Z" as UtcInstant,
@@ -251,5 +252,84 @@ describe("fillWindowObserved: completion counted in the entity's own bars (Codex
     expect(fillWindowObserved([...full, ...sessions(["2026-03-13"])], DECISION, 0, 5)).toBe(true);
     expect(fillWindowObserved(sessions(["2026-03-05", "2026-03-09"]), DECISION, 0, 5)).toBe(false); // no Friday bar at zero delay
     expect(fillWindowObserved(undefined, DECISION, 1, 5)).toBe(false);
+  });
+});
+
+describe("counterfactualFills: halt verdicts bind the fills (D-54)", () => {
+  const rotationUnder = (gate: { newRiskAllowed: boolean; haltState: "NORMAL" | "HALT_NEW_RISK" | "HOLD_ONLY" }) =>
+    fill({
+      targets: { QQQ: "1" },
+      positions: { XLV: "400" },
+      cash: "0",
+      prices: { QQQ: "200", XLV: "100" },
+      bars: {
+        QQQ: [bar("QQQ", "2026-03-06", "200", "200"), bar("QQQ", "2026-03-09", "200", "201")],
+        XLV: [bar("XLV", "2026-03-06", "100", "100"), bar("XLV", "2026-03-09", "100", "99")],
+      },
+      gate,
+    });
+
+  it("HOLD_ONLY freezes the book: neither the entry nor the exit trades, and both are on the record", () => {
+    const r = rotationUnder({ newRiskAllowed: false, haltState: "HOLD_ONLY" });
+    expect(r.fills).toEqual([]);
+    expect(r.suppressedEntries).toEqual(["QQQ"]);
+    expect(r.suppressedExits).toEqual(["XLV"]);
+  });
+
+  it("HOLD_ONLY records a held exit it could not price: a suspended holding is frozen and on the record (Codex P2, PR #108 round 5)", () => {
+    // VTI is held, untargeted, and has no decision-session close, so rebalanceOrders never builds its exit.
+    const r = fill({
+      targets: { QQQ: "1" },
+      positions: { XLV: "400", VTI: "10" },
+      cash: "0",
+      prices: { QQQ: "200", XLV: "100" },
+      bars: {
+        QQQ: [bar("QQQ", "2026-03-06", "200", "200"), bar("QQQ", "2026-03-09", "200", "201")],
+        XLV: [bar("XLV", "2026-03-06", "100", "100"), bar("XLV", "2026-03-09", "100", "99")],
+      },
+      gate: { newRiskAllowed: false, haltState: "HOLD_ONLY" },
+    });
+    expect(r.fills).toEqual([]);
+    expect(r.suppressedExits).toEqual(["VTI", "XLV"]);
+    // Control: an unpriced holding the target still wants has no known direction - unpriced, not an exit.
+    const keptInputs = {
+      targets: { QQQ: "0.5", VTI: "0.5" },
+      positions: { VTI: "10" },
+      cash: "40000",
+      prices: { QQQ: "200" },
+      bars: { QQQ: [bar("QQQ", "2026-03-06", "200", "200"), bar("QQQ", "2026-03-09", "200", "201")] },
+      gate: { newRiskAllowed: false, haltState: "HOLD_ONLY" as const },
+    };
+    const kept = fill(keptInputs);
+    expect(kept.suppressedExits).toEqual([]);
+    expect(kept.unpriced).toEqual(["VTI"]);
+    expect(kept.suppressedEntries).toEqual(["QQQ"]);
+    // An explicit zero is still a target line: rebalanceOrders trades it only past the band, so unpriced it has no
+    // known direction either - unpriced, not an exit.
+    const zero = fill({ ...keptInputs, targets: { QQQ: "1", VTI: "0" } });
+    expect(zero.suppressedExits).toEqual([]);
+    expect(zero.unpriced).toEqual(["VTI"]);
+  });
+
+  it("HOLD_ONLY keeps its exits on the record when a non-positive NAV stops sizing (Codex P2, PR #108 round 7)", () => {
+    // NAV = -5000 + 10 x 100 < 0: nothing can be sized, but XLV is held and the target removed it - a frozen exit.
+    const underwater = (targets: Record<string, string>, haltState: "NORMAL" | "HOLD_ONLY") =>
+      fill({ targets, positions: { XLV: "10" }, cash: "-5000", prices: { XLV: "100" }, bars: { XLV: [bar("XLV", "2026-03-06", "100", "100")] }, gate: { newRiskAllowed: haltState === "NORMAL", haltState } });
+    const r = underwater({ QQQ: "1" }, "HOLD_ONLY");
+    expect(r.fills).toEqual([]);
+    expect(r.suppressedExits).toEqual(["XLV"]);
+    expect(r.suppressedEntries).toEqual([]);
+    // Controls: a held line still targeted has no known direction; NORMAL suppresses nothing.
+    expect(underwater({ XLV: "1" }, "HOLD_ONLY").suppressedExits).toEqual([]);
+    expect(underwater({ QQQ: "1", XLV: "0" }, "HOLD_ONLY").suppressedExits).toEqual([]);
+    expect(underwater({ QQQ: "1" }, "NORMAL").suppressedExits).toEqual([]);
+  });
+
+  it("HALT_NEW_RISK keeps the exit and cancels only the entry (control: the two states differ)", () => {
+    const r = rotationUnder({ newRiskAllowed: false, haltState: "HALT_NEW_RISK" });
+    expect(qty(r, "XLV", "SELL").toFixed()).toBe("400");
+    expect(qty(r, "QQQ", "BUY").toFixed()).toBe("0");
+    expect(r.suppressedEntries).toEqual(["QQQ"]);
+    expect(r.suppressedExits).toEqual([]);
   });
 });
