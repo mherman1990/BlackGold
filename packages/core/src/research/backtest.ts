@@ -242,7 +242,18 @@ function mondayOf(session: IsoDate): string {
   return d.toISOString().slice(0, 10);
 }
 
-type EntitySeries = { bars: LoadedBar[]; actions: CorporateAction[]; tr: TRSeries; qualityLabels: string[] };
+export type EntitySeries = { bars: LoadedBar[]; actions: CorporateAction[]; tr: TRSeries; qualityLabels: string[] };
+
+/** The read-path subset `loadExecutionSeries` consumes; `BacktestInput` satisfies it structurally. */
+export type ExecutionSeriesInput = {
+  pit: ReadOnlyPointInTime;
+  calendar: ExchangeCalendar;
+  from: IsoDate;
+  to: IsoDate;
+  snapshotId?: string;
+  processingDelayMs?: number;
+  barsSourceId?: string;
+};
 
 /**
  * Load the execution and marking series.
@@ -256,8 +267,11 @@ type EntitySeries = { bars: LoadedBar[]; actions: CorporateAction[]; tr: TRSerie
  * on a session earlier than the decision that caused it, and none may land on the decision session itself
  * unless the run declared a zero execution delay (which is labelled OPTIMISTIC_DELAY and barred from
  * promotion evidence). Feature reads - the ones a decision is actually made from - go through the auditor.
+ *
+ * Exported for the shadow counterfactual-fill job (D-53 slice 3b), which must mark and fill the SAME way the
+ * backtest does - a separately-written read path could drift from the one the evidence was produced under.
  */
-function loadExecutionSeries(input: BacktestInput, entityId: string, decisionAt: UtcInstant): EntitySeries {
+export function loadExecutionSeries(input: ExecutionSeriesInput, entityId: string, decisionAt: UtcInstant): EntitySeries {
   const pit = input.pit;
   const raw = RawSeries.load({
     pit,

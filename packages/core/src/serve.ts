@@ -9,6 +9,7 @@ import { DEFAULT_BARS_SOURCE_ID } from "./market/series.ts";
 import { parseIngestArgs, runIngest } from "./ingest/run.ts";
 import { charterUniverseMembers, loadCharterFile } from "./strategy/charter.ts";
 import { registerShadowDecisionJob } from "./decision/shadow-job.ts";
+import { registerShadowFillJob } from "./decision/shadow-fill-job.ts";
 import { runHealth, type HealthReport } from "./health/health.ts";
 import { runFullVerification } from "./health/integrity.ts";
 import { buildStatusReport } from "./status/model.ts";
@@ -166,6 +167,10 @@ export function registerPhase0Jobs(scheduler: Scheduler, deps?: { config: AppCon
   // The mode-gated prospective shadow decision job (D-53 slice 2c). Registers itself only when a shadow
   // charter is configured AND the mode seals prospective decisions; see decision/shadow-job.ts.
   if (deps !== undefined) registerShadowDecisionJob(scheduler, deps);
+
+  // The counterfactual fill + reconcile job (D-53 slice 3b): fills each SEALED decision with the internal
+  // simulator and reconciles the shadow ledgers. Same gating; see decision/shadow-fill-job.ts.
+  if (deps !== undefined) registerShadowFillJob(scheduler, deps);
 }
 
 /**
