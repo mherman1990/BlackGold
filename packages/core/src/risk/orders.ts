@@ -30,6 +30,8 @@ import { instrumentLiquidityViolations } from "./liquidity.ts";
  * Checks, per order:
  *  - `BAD_QUANTITY` (non-positive or fractional: `fractionalShares` is false) and `QTY_CAP` (`maxOrderQuantity`).
  *  - `BAD_PRICE` (non-positive reference price: the notional is unknown) and `NOTIONAL_CAP` (`maxOrderNotionalUsd`).
+ *    Notional, participation and turnover price a sell at the higher of its limit and the bid, since a sell limit
+ *    below the market fills at about the bid; a buy's limit already bounds what it pays.
  *  - `ADV_PARTICIPATION`: notional at most the BINDING participation times 20-session dollar ADV (`ADV_UNKNOWN`
  *    for a buy without one; a sell without one skips the check). Binding is the stricter of `risk.yaml` `maxAdvParticipationPct` and the charter's
  *    `costs.max_participation_of_adv` - the cost model the backtest evidence assumed (the same stricter-of rule
@@ -57,7 +59,10 @@ export type SessionOrder = {
   side: "BUY" | "SELL";
   /** Whole shares, positive; the side carries the direction. */
   quantity: Dec;
-  /** Reference price in USD: the limit price, or the adverse side of the quote for a market order. */
+  /**
+   * Reference price in USD: the limit price, or the adverse side of the quote for a market order. The size caps
+   * price a SELL at the higher of this and the bid, because a sell limit is only a floor on its fill.
+   */
   price: Dec;
   /** 20-session average daily dollar volume (USD). */
   advUsd: Dec | undefined;
@@ -129,7 +134,13 @@ export function evaluateOrderLimits(input: OrderLimitsInput): RiskVerdict {
     if (!priceOk) {
       v.push({ code: "BAD_PRICE", detail: `${tag} reference price ${o.price.toFixed()} is not positive; the notional is unknown` });
     } else {
-      const notional = o.quantity.abs().times(o.price);
+      // The size caps bound what the order can trade, so they price it at the most it can fill for. A buy's limit
+      // already caps its price. A sell's limit is only a floor: one set below the market fills at about the bid,
+      // so a sell is priced at the higher of its limit and the bid (Codex P2, PR #109). With no valid quote a sell
+      // is priced at its own price, a lower bound. Missing data never traps an exit, and the gateway's
+      // fresh-quote requirement backstops it.
+      const sizingPrice = o.side === "SELL" && validQuote(o.quote) ? Dec.max(o.price, o.quote.bid) : o.price;
+      const notional = o.quantity.abs().times(sizingPrice);
       notionals.push(notional);
       if (notional.gt(notionalCap)) v.push({ code: "NOTIONAL_CAP", detail: `${tag} notional ${notional.toFixed(2)} USD exceeds maxOrderNotionalUsd ${p.orderLimits.maxOrderNotionalUsd}` });
       if (!advOk) {

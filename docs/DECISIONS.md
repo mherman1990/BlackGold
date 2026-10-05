@@ -1354,7 +1354,8 @@ limits"). These are the limit engines D-45 deferred.
    measurement it prevents is skipped rather than trapping the exit (Codex P2, PR #109). A malformed order
    (bad quantity or price) is rejected on either side.
    - **Per order:** quantity, USD notional, and ADV participation, binding at the stricter of `risk.yaml` 1% and
-     the charter cost model's 0.5%.
+     the charter cost model's 0.5%. The size caps price a sell at the higher of its limit and the bid, because a
+     sell limit is only a floor on its fill (Codex P2, PR #109). A buy's limit already bounds what it pays.
    - **Buys only:** the ADV and price floors, and the spread at order time, which fails closed when there is no
      quote. The price floor reads the quote mid, an instrument fact, never the order's own limit price (Codex P2,
      PR #109).
@@ -1367,7 +1368,7 @@ limits"). These are the limit engines D-45 deferred.
 4. **One shared instrument rule.** `instrumentLiquidityViolations` is used by both the gate path and the order
    engine, so the two layers cannot disagree on it.
 
-29 tests. 33 mutations were run, one per guard, and every one was killed: 25 initially, then 8 from two Codex rounds.
+30 tests. 36 mutations were run, one per guard, and every one was killed: 25 initially, then 11 from three Codex rounds.
 
 **What was not built.**
 

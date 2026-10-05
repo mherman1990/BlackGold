@@ -53,6 +53,19 @@ describe("evaluateOrderLimits: per-order size caps apply to every order, exits i
     expect(codes(run([order("XLF", "SELL", "30", "50.01")], { held: { XLF: "30" } }))).toEqual(["NOTIONAL_CAP"]);
   });
 
+  it("prices a sell at the higher of its limit and the bid: a limit below the market cannot dodge the caps (Codex P2, PR #109)", () => {
+    const q = (bid: string, ask: string) => ({ quote: { bid: new Dec(bid), ask: new Dec(ask) } });
+    // A $1 limit on 100 shares quoted 49.99/50.00 fills at about the bid: 4,999 USD, not 100.
+    const dodge = run([order("XLF", "SELL", "100", "1", q("49.99", "50.00"))], { held: { XLF: "100" }, navUsd: "10000" });
+    expect(codes(dodge)).toEqual(["NOTIONAL_CAP", "DAILY_TURNOVER"]);
+    // A limit above the market is priced at the limit: 110 x 14 = 1,540 USD breaches though the bid is only 10.
+    expect(codes(run([order("XLF", "SELL", "110", "14", q("9.99", "10.00"))], { held: { XLF: "110" } }))).toEqual(["NOTIONAL_CAP"]);
+    expect(codes(run([order("XLF", "SELL", "100", "14", q("9.99", "10.00"))], { held: { XLF: "100" } }))).toEqual([]);
+    // A buy keeps its limit, the most it can pay: 30 at a $49.50 limit under a 50.10/50.11 market is 1,485 USD,
+    // where pricing it at the bid (1,503) would breach.
+    expect(codes(run([order("XLF", "BUY", "30", "49.50", q("50.10", "50.11"))]))).toEqual([]);
+  });
+
   it("a non-positive reference price is malformed: the notional is unknown", () => {
     expect(codes(run([order("XLF", "SELL", "10", "0")], { held: { XLF: "10" } }))).toEqual(["BAD_PRICE"]);
   });
