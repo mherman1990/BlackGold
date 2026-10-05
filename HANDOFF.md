@@ -15,6 +15,13 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 ## 3. Current position
 
+**Newest first (2026-10-05).**
+
+- **0.1.13 is published and pinned** (`0.1.13@sha256:0b504052…7c66`; release run #14 from `1decc13`; both architectures; anonymously pullable). The shadow jobs ship unregistered (compose mode `RESEARCH`, no shadow charter). Updating the Pi is the owner's act.
+- **Slice 3b (PR #102) is on `main` with seven open Codex findings, four P1.** Three round-2 findings were answered "fixed in `02f381d`" but that commit was never pushed (the PR merged first); four round-3 findings were posted after the merge. Do not enable the shadow track until the repair PR lands. The repairs re-implement all seven: two-phase fills (sells before buys), shortfall from persisted fills, the zero-delay window end, the carried B1 book in decisions, fill-window completion counted in entity bars (with an owed bound one window later), split adjustment between decision and delayed fill, and no zero-delay backdating.
+- **The reconciler-to-halt wiring (D-54) comes after the repairs.** The shadow halt becomes sticky (each decision starts from the previous decision's recorded state), a reconciliation break unresolved past one session holds the book at `HOLD_ONLY`, `HOLD_ONLY` freezes the synthetic book (exits too), and the owner relaxes it through `shadow status` / `shadow rearm` (staged, one step per action, acknowledging breaks the reconciler actually reported).
+- **Before merging any PR here: confirm the PR head is the commit the review replies name, and that no Codex round is still running.** #94 and #102 both merged mid-round; #102 lost a whole round of fixes that way.
+
 **Read this first (2026-09-20).** The bullets below were written on 2026-09-08 and were not maintained since. They are kept because their detail about *how each piece works* is still accurate and useful, but several of their **status claims are superseded**. Where they disagree with this box, this box wins:
 
 - **PR #94 (D-51 step 2) merged as `17c787b`; PR #95 (test-suite headroom) as `cfef173`; PR #96 (the §16.1 gap-withhold repairs) as `e30e67b`. `main` is at `e30e67b`.** #94 was merged with a Codex round still in flight, so two accepted P1 fixes missed it; #96 carried them plus a third raised on #96 itself, and **all three are now in `main`**. The withhold is whole: both prongs withhold on a distorting session, the scan covers only sessions with an open position (read from `NavPoint.held`), and a recovery bar's `GAP` flag is not a trigger. Nothing about the gap withhold is outstanding. Releases through **0.1.12** are published; the app is installed and running on the Pi.
