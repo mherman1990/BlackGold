@@ -11,8 +11,8 @@ version: "0.2.0"
 # Until it is re-signed, the shadow track treats this file as a stale input and blocks new risk (fail closed).
 # To sign: set approvedBy and approvedAt. orderLimits.maxOrderNotionalUsd and maxOrderQuantity depend on the
 # sleeve size (D-55 conflict 2), which only the owner sets; set them here if they change, never in a prompt.
-approvedBy: null
-approvedAt: null
+approvedBy: Matt Herman
+approvedAt: 2026-10-05
 
 sleeve:
   maxPctOfLiquidInvestableAssets: "0.05"
