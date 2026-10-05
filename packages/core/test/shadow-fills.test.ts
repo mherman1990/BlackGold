@@ -276,6 +276,35 @@ describe("counterfactualFills: halt verdicts bind the fills (D-54)", () => {
     expect(r.suppressedExits).toEqual(["XLV"]);
   });
 
+  it("HOLD_ONLY records a held exit it could not price: a suspended holding is frozen and on the record (Codex P2, PR #108 round 5)", () => {
+    // VTI is held, untargeted, and has no decision-session close, so rebalanceOrders never builds its exit.
+    const r = fill({
+      targets: { QQQ: "1" },
+      positions: { XLV: "400", VTI: "10" },
+      cash: "0",
+      prices: { QQQ: "200", XLV: "100" },
+      bars: {
+        QQQ: [bar("QQQ", "2026-03-06", "200", "200"), bar("QQQ", "2026-03-09", "200", "201")],
+        XLV: [bar("XLV", "2026-03-06", "100", "100"), bar("XLV", "2026-03-09", "100", "99")],
+      },
+      gate: { newRiskAllowed: false, haltState: "HOLD_ONLY" },
+    });
+    expect(r.fills).toEqual([]);
+    expect(r.suppressedExits).toEqual(["VTI", "XLV"]);
+    // Control: an unpriced holding the target still wants has no known direction - unpriced, not an exit.
+    const kept = fill({
+      targets: { QQQ: "0.5", VTI: "0.5" },
+      positions: { VTI: "10" },
+      cash: "40000",
+      prices: { QQQ: "200" },
+      bars: { QQQ: [bar("QQQ", "2026-03-06", "200", "200"), bar("QQQ", "2026-03-09", "200", "201")] },
+      gate: { newRiskAllowed: false, haltState: "HOLD_ONLY" },
+    });
+    expect(kept.suppressedExits).toEqual([]);
+    expect(kept.unpriced).toEqual(["VTI"]);
+    expect(kept.suppressedEntries).toEqual(["QQQ"]);
+  });
+
   it("HALT_NEW_RISK keeps the exit and cancels only the entry (control: the two states differ)", () => {
     const r = rotationUnder({ newRiskAllowed: false, haltState: "HALT_NEW_RISK" });
     expect(qty(r, "XLV", "SELL").toFixed()).toBe("400");

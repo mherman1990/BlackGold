@@ -83,7 +83,10 @@ export type ShadowFillRecord = {
   fills: ShadowFill[];
   /** Orders the gate suppressed (`newRiskAllowed: false` cancels entries/adds, keeps exits). */
   suppressedEntries: string[];
-  /** Exits a HOLD_ONLY verdict suppressed: reconciliation uncertainty blocks risk-reducing orders too (D-54). */
+  /**
+   * Exits a HOLD_ONLY verdict suppressed: reconciliation uncertainty blocks risk-reducing orders too (D-54).
+   * Includes a held line the target removed that had no price at the decision mark.
+   */
   suppressedExits: string[];
   /**
    * Orders with quantity left unfilled after the simulator's fill window, with why: `CASH` (the order was fully
@@ -237,6 +240,15 @@ export function counterfactualFills(input: CounterfactualFillInput): ShadowFillR
     suppressedEntries.push(o.entityId);
     return false;
   });
+  // rebalanceOrders drops an exit it cannot price (a suspended or delisted holding), so the order list alone
+  // under-reports the freeze. A held line the target removes is an exit whatever its price: record it from the
+  // book (Codex P2, PR #108 round 5). A held line still targeted but unpriced has no known direction; it stays
+  // on `unpriced`.
+  if (hold) {
+    for (const [entityId, q] of book.positions) {
+      if (q.gt(0) && weights.get(entityId)?.gt(0) !== true && input.prices.get(entityId) === undefined) suppressedExits.push(entityId);
+    }
+  }
 
   // Phase 1: simulate every actionable order with no cash constraint, in decision-session units.
   type Worked = { entityId: string; side: "BUY" | "SELL"; quantity: Dec; decisionClose: Dec; splits: ShadowSplit[]; simUnfilled: Dec; applied: Dec; cashShort: boolean };
