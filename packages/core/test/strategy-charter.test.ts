@@ -70,7 +70,7 @@ describe("charter.yaml", () => {
     // resolution with no executable counterpart would be a decision the code silently ignores.
     const c = loaded();
     expect(c.charter_version).toBe("0.3.0");
-    expect(c.approval.open_decisions.map((d) => d.id)).toEqual(["OD-1", "OD-2", "OD-3", "OD-4", "OD-5", "OD-6", "OD-7", "OD-8", "OD-9", "OD-10"]);
+    expect(c.approval.open_decisions.map((d) => d.id)).toEqual(["OD-1", "OD-2", "OD-3", "OD-4", "OD-5", "OD-6", "OD-7", "OD-8", "OD-9", "OD-10", "OD-11", "OD-12", "OD-13"]);
     expect(c.approval.open_decisions.every((d) => d.resolution !== null)).toBe(true);
     expect(c.pass_fail.primary_metric).toBe("net_sharpe_difference_vs_primary_benchmark"); // OD-5: kept
     expect(c.pass_fail.promotion_co_gates).toEqual(["F2"]); // OD-5, OD-6
@@ -78,6 +78,8 @@ describe("charter.yaml", () => {
     expect(c.pass_fail.minimum_independent_decisions).toBe(100); // OD-8
     expect(c.benchmarks.secondary_2_readings).toEqual({ rescale: "WEEKLY_AT_DECISION_INSTANTS", ex_date_rebalance_income: "CASH_REALLOCATED_AT_OPEN" }); // OD-9
     expect(c.component_versions.features).toBe(2);
+    expect(c.component_versions.risk_policy).toBe(1); // OD-11, OD-12: the operative risk.yaml is 0.2.0
+    expect(c.costs.max_participation_of_adv).toBe("0.005"); // OD-12: unchanged; risk.yaml moved to it
     expect(c.approval.approval_ref).toBe("docs/DECISIONS.md#D-56");
   });
 

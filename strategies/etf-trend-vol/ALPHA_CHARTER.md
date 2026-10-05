@@ -5,7 +5,11 @@
 > **kept** and F2 becomes a **co-gate** on ACTIVE, read on chain-linked curves (§13, §16.2, §17; OD-5, OD-6); a
 > failed primary metric with Secondary 2 beaten goes to owner review and **never to ACTIVE** (§16.1, §17;
 > OD-7); §14.3's minimum is restated as the schedule's capacity, **100** blocks (OD-8); Secondary 2's two
-> readings are confirmed (§11; OD-9); the prospective clock runs **from registration** (§14.2; OD-10). Until the
+> readings are confirmed (§11; OD-9); the prospective clock runs **from registration** (§14.2; OD-10). Three of
+> D-55's conflicts are folded in: the operative `risk.yaml` must admit the one-pass weekly rebalance (§8; OD-11),
+> ADV participation is 0.5% in both files (§10; OD-12), and the stop-based initial-risk budget does not apply
+> (§8; OD-13). `config/examples/risk.yaml` 0.2.0 carries the policy side, **unsigned**, for the owner to sign
+> alongside this charter. Until the
 > owner signs the `approval:` block in `charter.yaml`, `assertRegistrable` refuses this version and **no version
 > is registrable** — 0.2.0 (signed 2026-09-12, D-50) is superseded in the tracked file and frozen at
 > `packages/core/test/fixtures/etf-trend-vol-charter-0.2.0-signed.yaml`. 0.3.0 inherits none of 0.2.0's
@@ -169,11 +173,13 @@ Rule enforced in code and tested: no feature at `decisionAt` may read a bar whos
 | Entry rule | Rank eligible ETFs by `mom_i` descending. Enter any ETF ranked 1..5 that is not held. |
 | Hold rule (hysteresis) | Keep a held ETF while it remains eligible AND ranked 1..7. |
 | Book-slot priority | When the entry and hold rules together name more than 5 ETFs, every eligible held ETF ranked 1..7 keeps its book slot ahead of any newcomer and the lowest-ranked newcomers are left out until the book holds 5; this priority governs the book slot only and does not extend to the section 9 step 4 correlated-cluster cap, which stays strictly rank-ordered. |
-| Exit rule | Exit at the next decision if `trend_i = 0`, OR `mom_i <= mom_cash`, OR rank > 7, OR compliance restriction added, OR the charter is paused. No price stop: volatility scaling and the trend flag are the loss control. |
+| Exit rule | Exit at the next decision if `trend_i = 0`, OR `mom_i <= mom_cash`, OR rank > 7, OR compliance restriction added, OR the charter is paused. No price stop: volatility scaling and the trend flag are the loss control. **0.3.0 (OD-13):** so `risk.yaml`'s initial-risk budget, which is measured to a stop, does not apply to this strategy; its loss controls are volatility scaling, these exits, and the drawdown halts. |
 | Holding period | Not fixed; expected median 8 to 20 weeks, minimum one week by construction |
 | Rebalance rule | Compute targets weekly (section 9). Trade a line only if the absolute weight gap exceeds 2.0 percentage points of NAV, or on entry/exit. Cash leg absorbs residual. |
 | Maximum positions | 5 risk ETFs plus cash |
 | New positions per session | At most 5 (a full turnover week is allowed at this size) |
+
+**0.3.0 (OD-11): one-pass execution.** A weekly decision executes as one pass of orders within the execution delay, which is what the backtest simulates. The operative `risk.yaml` must therefore admit the widest rebalance this table allows: 2 x 5 + 1 = 11 orders (every held ETF out, five new ones in, and the cash leg), 5 new positions, and gross turnover of 2 x (1 - 0.02) = 1.96 of NAV. `risk.yaml` 0.2.0 sets 11, 5 and 2.00, and a CI test fails if it ever stops admitting this. The per-order dollar and share caps scale with sleeve size and are the owner's to set (D-55 conflict 2).
 
 The decision is fully determined by the frozen list, the rule table above, and point-in-time data. Two independent implementations from this document must produce identical target weights on identical data; that is an acceptance test.
 
@@ -192,7 +198,7 @@ Signal strength enters sizing only through `vol_i` and `cov`, never through mome
 ## 10. Capacity and liquidity constraints
 
 - Every universe member trades hundreds of millions to tens of billions USD per day. A sleeve at the proposed cap (5% of liquid household assets) is orders of magnitude below 0.1% ADV participation for every name.
-- Hard constraint in `risk.yaml`: any single order at or below 0.5% of 20-session ADV and at or below the maximum order notional. If either would be exceeded, the order is split across sessions or rejected; it is never enlarged.
+- Hard constraint in `risk.yaml`: any single order at or below 0.5% of 20-session ADV and at or below the maximum order notional. (0.3.0, OD-12: `risk.yaml` said 1% from 0.1.0 until 0.3.0, against this section's 0.5%; it now says 0.5%, the figure the cost model always used.) If either would be exceeded, the order is split across sessions or rejected; it is never enlarged.
 - The strategy has effectively unlimited capacity at household scale. Capacity is not a falsifier here; cost and whipsaw are.
 
 ## 11. Benchmarks
@@ -362,7 +368,7 @@ Trivial. Fourteen daily series, a 13x13 covariance, and a rank. Compute under on
 
 ## 24. Open decisions blocking registration
 
-All ten carry a written resolution in `charter.yaml`. OD-1 to OD-4 were resolved for 0.1.0 (D-39, OD-4 revised for 0.2.0 under D-50); OD-5 to OD-10 are the owner's answers of 2026-10-05 (D-56) and bind when he signs 0.3.0.
+All thirteen carry a written resolution in `charter.yaml`. OD-1 to OD-4 were resolved for 0.1.0 (D-39, OD-4 revised for 0.2.0 under D-50); OD-5 to OD-13 are the owner's answers of 2026-10-05 (D-56) and bind when he signs 0.3.0.
 
 1. Compliance policy on diversified-ETF look-through (decides XLE, flags XLI/XLP). Look-through applies; XLE excluded.
 2. Live cash instrument (BIL, SGOV, or plain cash). BIL.
@@ -374,3 +380,6 @@ All ten carry a written resolution in `charter.yaml`. OD-1 to OD-4 were resolved
 8. Section 14.3's 150-block minimum against the schedule's 102. Restated as 100, the schedule's capacity.
 9. Secondary 2's re-scaling cadence and ex-date income on a rebalance session. Both confirmed as implemented.
 10. Whether prospective decisions count from registration or from ACTIVE. From registration.
+11. D-55 conflict 1: `risk.yaml`'s order caps against the one-pass weekly rebalance. The policy gives way: 11 orders, 5 new positions, 2.00 gross turnover.
+12. D-55 conflict 4: ADV participation 0.5% here, 1% in `risk.yaml`. 0.5% in both.
+13. D-55 conflict 6: the stop-based initial-risk budget for a charter with no stop. Not applicable to this strategy.

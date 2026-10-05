@@ -11,9 +11,13 @@
 # section 17's REGISTERED -> ACTIVE step, read on chain-linked curves (OD-5, OD-6); a failed primary with
 # Secondary 2 beaten goes to owner review and never to ACTIVE (OD-7); section 14.3's minimum is restated as
 # the schedule's capacity, 100 (OD-8); Secondary 2's two readings are confirmed (OD-9); the prospective clock
-# runs from registration (OD-10). component_versions.features moves 1 -> 2 to match the code
-# (FEATURES_VERSION 2, the corporate-action dedupe fix) - provenance only, proposed by Claude Code and
-# confirmed only by the signature.
+# runs from registration (OD-10). Three of D-55's conflicts were folded in on the owner's instruction the same
+# day: the operative risk.yaml must admit this charter's one-pass weekly rebalance (OD-11), ADV participation is
+# 0.005 in both files (OD-12), and the stop-based initial-risk budget does not apply to this no-stop strategy
+# (OD-13). OD-11 and OD-12 change config/examples/risk.yaml to 0.2.0, which is UNSIGNED and needs the owner's
+# signature alongside this one. component_versions.features 1 -> 2 (the code's FEATURES_VERSION since the
+# corporate-action dedupe fix) and risk_policy 0 -> 1 (the operative risk.yaml changes under this version) are
+# provenance, proposed by Claude Code and confirmed only by the signature.
 #
 # Any charter edit is a new strategy version: 0.3.0 inherits none of 0.2.0's evidence, and 0.2.0 has none to
 # lose (nothing registered, nothing citable). The signed 0.2.0 file is frozen at
@@ -41,7 +45,7 @@ approval:
   approval_date: null
   code_commit: null
   approval_ref: "docs/DECISIONS.md#D-56"
-  decision_refs: [D-08, D-09, D-10, D-15, D-19, D-24, D-50, D-51, D-56]
+  decision_refs: [D-08, D-09, D-10, D-15, D-19, D-24, D-50, D-51, D-55, D-56]
   conditions: []
   # ALPHA_CHARTER.md section 24. Each needs a written resolution before registration.
   open_decisions:
@@ -67,7 +71,9 @@ approval:
         Approved as they stand in config/examples/risk.yaml: maxSingleEtfWeightPct 0.20, minCashPct 0.02,
         maxAdvParticipationPct 0.01, targetAnnualizedVolPct 0.10. Note the question's own text previously said
         "0.5% ADV participation" while the file said 1%; the owner resolved that in favour of the file, and
-        the question text above is corrected to match. Owner decision, 2026-09-07 (D-39).
+        the question text above is corrected to match. Owner decision, 2026-09-07 (D-39). For 0.3.0 the
+        ADV participation figure is superseded by OD-12 (0.005) and the order and new-position counts by OD-11;
+        the other three values stand.
     - id: OD-4
       question: "Approval of the free market-data source after the capability probe (D-24, CR-09)."
       resolution: >-
@@ -139,6 +145,35 @@ approval:
         open from registration onward counts. The decisions are sealed either way, so the stricter reading would
         delay evidence without adding safety; promotion past SHADOW still requires ACTIVE under section 17.
         Owner decision, 2026-10-05 (D-56).
+    # OD-11..OD-13: D-55's conflicts 1, 4 and 6, folded into 0.3.0 on the owner's instruction (D-56).
+    - id: OD-11
+      question: "D-55 conflict 1: risk.yaml allowed 4 orders, 3 new positions and 25% gross turnover per session, while this charter rebalances weekly in one pass and the backtest models none of those caps. Which gives way?"
+      resolution: >-
+        The policy. The weekly rebalance executes in one pass, as section 8 and the backtest have it, and the
+        operative risk.yaml must admit that: at least 2 x max_positions + 1 = 11 orders per session (every held
+        ETF out, five new ones in, and the cash leg), at least max_new_positions_per_decision = 5 new positions,
+        and gross turnover of at least 2 x (1 - min_cash_weight) = 1.96 of NAV. risk.yaml 0.2.0 sets 11, 5 and
+        2.00, and the risk schema now admits gross turnover up to 2. A policy tighter than this would leave the
+        backtested execution unexecutable; that is a charter question, not a risk tweak, and a CI test fails on
+        it. The per-order USD notional and quantity caps scale with the sleeve size (D-55 conflict 2), which
+        only the owner sets and which never enters a prompt; until they admit a 20% position in one order, the
+        paper and live rungs would split or refuse an entry the backtest made whole. Owner decision,
+        2026-10-05 (D-56).
+    - id: OD-12
+      question: "D-55 conflict 4: ADV participation was 0.005 in this charter's cost model and section 10, and 0.01 in risk.yaml (OD-3). Which number?"
+      resolution: >-
+        0.005 in both. risk.yaml's liquidity.maxAdvParticipationPct moves 0.01 -> 0.005 and
+        costs.max_participation_of_adv stays 0.005. No behaviour changes anywhere: the backtest already used
+        0.005 and the order engine already bound the stricter of the two. It ends the drift OD-3 warned about,
+        and a CI test now holds the two equal. Owner decision, 2026-10-05 (D-56).
+    - id: OD-13
+      question: "D-55 conflict 6: risk.yaml's per-position initial-risk budget (maxInitialRiskPerPositionPct, and dailyNewRiskPctNav which sums it) is measured from entry to an approved stop. This charter has none. How does it apply?"
+      resolution: >-
+        It does not apply to this strategy. Section 8 sets no price stop: the loss controls are the volatility
+        scaling of section 9 step 5, the trend and momentum exits of section 8, and risk.yaml's drawdown halts
+        (HALT_NEW_RISK, then HOLD_ONLY). No proxy stop is defined, because one would be a policy invention that
+        changes what the strategy may buy. Declared here rather than in risk.yaml so the policy keeps the budget
+        for any future charter that does use stops. Owner decision, 2026-10-05 (D-56).
 
 universe:
   universe_id: etf_trend_vol_v0
@@ -359,5 +394,6 @@ component_versions:
   features: 2
   strategy_rules: 1
   portfolio_construction: 1
-  risk_policy: 0
+  # 0 -> 1 in 0.3.0: the operative risk.yaml moves to 0.2.0 under OD-11 and OD-12. Provenance.
+  risk_policy: 1
   cost_model: 1

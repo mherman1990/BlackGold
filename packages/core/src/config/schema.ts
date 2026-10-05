@@ -26,6 +26,14 @@ export const decString = z
  */
 export const ratioString = decString.regex(/^(0(\.\d+)?|1(\.0+)?)$/, "must be between 0 and 1");
 
+/**
+ * Gross traded notional over NAV in one session (buys plus sells), between 0 and 2 inclusive. Not a ratio
+ * in the 0..1 sense: a one-pass rebalance of a long-only, cash-funded book can sell everything it holds and
+ * buy everything it targets, and each side can reach the whole NAV, so 2 is the largest value one order per
+ * instrument can produce (D-56, OD-11). A regex for the same reason as `ratioString`. Matches 0, 0.x, 1, 1.x, 2, 2.0...
+ */
+export const grossTurnoverString = decString.regex(/^([01](\.\d+)?|2(\.0+)?)$/, "must be between 0 and 2");
+
 export const utcInstantString = z.iso.datetime({ message: "must be an ISO-8601 UTC instant ending in Z" });
 export const isoDateString = z.iso.date({ message: "must be a calendar date YYYY-MM-DD" });
 
@@ -238,7 +246,7 @@ export const RiskConfigSchema = z.object({
       maxOrderNotionalUsd: decString.default("1500"),
       maxOrderQuantity: decString.default("1000"),
       maxOrdersPerSession: z.number().int().nonnegative().default(4),
-      maxDailyTurnoverPctNav: ratioString.default("0.25"),
+      maxDailyTurnoverPctNav: grossTurnoverString.default("0.25"),
     })
     .default({ maxOrderNotionalUsd: "1500", maxOrderQuantity: "1000", maxOrdersPerSession: 4, maxDailyTurnoverPctNav: "0.25" }),
 
