@@ -13,6 +13,7 @@ import {
   LiveAuthorizationSchema,
   ModelManifestConfigSchema,
   processingDelayOverridesMs,
+  ratioString,
 } from "../src/index.ts";
 import { LIVE_MODES, MODES } from "@blackgold/shared";
 
@@ -58,6 +59,23 @@ describe("app config from environment", () => {
   it("rejects malformed values with a ConfigError", () => {
     expect(() => loadAppConfig({ BLACKGOLD_SCHEDULER_POLL_SECONDS: "1" })).toThrow(ConfigError);
     expect(() => loadAppConfig({ BLACKGOLD_MODE: "YOLO" })).toThrow(ConfigError);
+  });
+});
+
+describe("ratioString", () => {
+  it("bounds ratios to 0-1 with a pattern that survives into every emitted JSON schema (Codex P2)", () => {
+    for (const bad of ["-0.1", "2", "1.5", "1.01"]) {
+      expect(() => ratioString.parse(bad), bad).toThrow();
+    }
+    for (const ok of ["0", "0.0035", "0.10", "1", "1.0"]) {
+      expect(() => ratioString.parse(ok), ok).not.toThrow();
+    }
+    // The emitted schemas that carry ratio fields must enforce the same bound, so editor/CI
+    // validation of the owner's YAML matches runtime validation.
+    const RATIO_PATTERN = "^(0(\\\\.\\\\d+)?|1(\\\\.0+)?)$";
+    for (const f of ["risk.schema.json", "financial-picture.schema.json", "theme-membership.schema.json"]) {
+      expect(readFileSync(`${ROOT}config/schema/${f}`, "utf8"), f).toContain(RATIO_PATTERN);
+    }
   });
 });
 
