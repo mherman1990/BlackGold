@@ -1356,7 +1356,8 @@ limits"). These are the limit engines D-45 deferred.
    - **Per order:** quantity, USD notional, and ADV participation, binding at the stricter of `risk.yaml` 1% and
      the charter cost model's 0.5%.
    - **Buys only:** the ADV and price floors, and the spread at order time, which fails closed when there is no
-     quote.
+     quote. The price floor reads the quote mid, an instrument fact, never the order's own limit price (Codex P2,
+     PR #109).
    - **Long-only:** the session's sells of an entity may not exceed the shares held.
    - **Per session:** order count; new positions, binding at the stricter of `risk.yaml` 3 and the charter's 5;
      and gross turnover over NAV.
@@ -1366,7 +1367,7 @@ limits"). These are the limit engines D-45 deferred.
 4. **One shared instrument rule.** `instrumentLiquidityViolations` is used by both the gate path and the order
    engine, so the two layers cannot disagree on it.
 
-28 tests. 25 mutations were run, one per guard, and every one was killed.
+29 tests. 33 mutations were run, one per guard, and every one was killed: 25 initially, then 8 from two Codex rounds.
 
 **What was not built.**
 

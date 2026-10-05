@@ -86,6 +86,18 @@ describe("evaluateOrderLimits: buys are new risk and must clear the instrument a
     expect(codes(run([order("THIN", "BUY", "1", "10", { advUsd: new Dec("4000000") })]))).toEqual(["MIN_ADV"]);
   });
 
+  it("reads the price floor from the quote mid, never the order's own limit price (Codex P2, PR #109)", () => {
+    const q = (bid: string, ask: string) => ({ quote: { bid: new Dec(bid), ask: new Dec(ask) } });
+    // A $5.00 limit on a stock quoted 4.90/4.91 does not lift it over the floor: the market is below $5.
+    expect(codes(run([order("PENNY", "BUY", "100", "5.00", q("4.90", "4.91"))]))).toEqual(["MIN_PRICE"]);
+    // A $4.99 limit on a stock quoted 5.10/5.11 is a cheap bid on an instrument above the floor, not a penny stock.
+    expect(codes(run([order("XLF", "BUY", "100", "4.99", q("5.10", "5.11"))]))).toEqual([]);
+    // Boundary: a mid of exactly $5.00 passes.
+    expect(codes(run([order("XLF", "BUY", "100", "5.00", q("4.99", "5.01"))]))).toEqual([]);
+    // The mid, not either side: 4.995/5.004 has its ask above $5 but its mid below it.
+    expect(codes(run([order("PENNY", "BUY", "100", "5.00", q("4.995", "5.004"))]))).toEqual(["MIN_PRICE"]);
+  });
+
   it("spread: at 50 bps of mid passes, wider fails; a sell is not spread-checked", () => {
     // bid 99.75 / ask 100.25: 0.50 over a mid of 100 is exactly 50 bps.
     const at = order("XLF", "BUY", "10", "100.25", { quote: { bid: new Dec("99.75"), ask: new Dec("100.25") } });

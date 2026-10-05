@@ -35,7 +35,8 @@ import { instrumentLiquidityViolations } from "./liquidity.ts";
  *    `costs.max_participation_of_adv` - the cost model the backtest evidence assumed (the same stricter-of rule
  *    `evaluateRiskLimits` applies to `max_positions`).
  *  - Buys only (new risk): the shared instrument rule ({@link instrumentLiquidityViolations}: `MIN_ADV`,
- *    `MIN_PRICE`), and the spread at order time - `SPREAD` over `maxSpreadBps` of the quote mid, `BAD_QUOTE` for
+ *    `MIN_PRICE`, the price floor read from the quote mid, never the order's limit price), and the spread at order
+ *    time - `SPREAD` over `maxSpreadBps` of the quote mid, `BAD_QUOTE` for
  *    a crossed or non-positive quote, and `SPREAD_UNOBSERVED` when there is no quote (fails closed: end-of-day
  *    data carries none, so nothing before the paper rung can clear a buy here).
  *  - `SELL_EXCEEDS_HELD`: long-only, so the session's sells of an entity may not exceed the shares held.
@@ -87,12 +88,22 @@ export function bindingNewPositionsPerSession(policy: RiskConfig, charter: Chart
   return Math.min(policy.positionLimits.maxNewPositionsPerSession, charter.rules.max_new_positions_per_decision);
 }
 
+/** A two-sided market: a positive bid and an ask not below it. */
+function validQuote(q: OrderQuote | undefined): q is OrderQuote {
+  return q !== undefined && q.bid.gt(0) && !q.ask.lt(q.bid);
+}
+
+/** The observed market price: the quote mid. An instrument fact, unlike the order's own reference price. */
+function quoteMid(q: OrderQuote): Dec {
+  return q.ask.plus(q.bid).div(TWO);
+}
+
 function spreadViolations(policy: RiskConfig, o: SessionOrder): LimitViolation[] {
   const tag = `BUY ${o.entityId}`;
   if (o.quote === undefined) return [{ code: "SPREAD_UNOBSERVED", detail: `${tag} has no quote at order time; the spread cannot be checked, so new risk fails closed` }];
   const { bid, ask } = o.quote;
-  if (!bid.gt(0) || ask.lt(bid)) return [{ code: "BAD_QUOTE", detail: `${tag} quote bid ${bid.toFixed()} ask ${ask.toFixed()} is not a valid market` }];
-  const spreadBps = ask.minus(bid).div(ask.plus(bid).div(TWO)).times(BPS);
+  if (!validQuote(o.quote)) return [{ code: "BAD_QUOTE", detail: `${tag} quote bid ${bid.toFixed()} ask ${ask.toFixed()} is not a valid market` }];
+  const spreadBps = ask.minus(bid).div(quoteMid(o.quote)).times(BPS);
   if (spreadBps.gt(new Dec(policy.liquidity.maxSpreadBps))) return [{ code: "SPREAD", detail: `${tag} spread ${spreadBps.toFixed(1)} bps exceeds maxSpreadBps ${policy.liquidity.maxSpreadBps}` }];
   return [];
 }
@@ -129,8 +140,11 @@ export function evaluateOrderLimits(input: OrderLimitsInput): RiskVerdict {
     }
 
     if (o.side === "BUY") {
-      // Unknown ADV or price is already reported above; the shared rule then adds only the floors.
-      if (priceOk && advOk) v.push(...instrumentLiquidityViolations(p, o.entityId, { advUsd: o.advUsd, price: o.price }));
+      // The floors are instrument facts, so they read the observed market price (the quote mid), never the order's
+      // own reference price: a limit price says what the order will pay, not what the instrument trades at (Codex
+      // P2, PR #109). Unknown ADV is already reported above, and a missing or invalid quote fails the buy closed
+      // in spreadViolations, so the shared rule then adds only the floors.
+      if (advOk && validQuote(o.quote)) v.push(...instrumentLiquidityViolations(p, o.entityId, { advUsd: o.advUsd, price: quoteMid(o.quote) }));
       v.push(...spreadViolations(p, o));
       if (!(input.held.get(o.entityId)?.gt(0) ?? false)) entries.add(o.entityId);
     } else {
