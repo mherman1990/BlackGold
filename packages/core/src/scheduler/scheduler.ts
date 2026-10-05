@@ -53,8 +53,10 @@ export type RunStatus = "pending" | "running" | "succeeded" | "failed" | "missed
 
 /**
  * The missed-run detector's staleness rule for a `pending` or `running` row, shared so a reader of job_runs
- * cannot disagree with it: the claim is dead once its deadline, counted from its start (else its scheduled
- * instant), has passed. The scheduler never executes that instant again - claim() rejects the existing key.
+ * cannot disagree with it: the claim has expired once its deadline, counted from its start (else its scheduled
+ * instant), has passed. No tick starts that instant again - claim() rejects the existing key. The deadline
+ * bounds the claim, not the work: execute() races a timer, which cannot pre-empt a synchronous handler, so an
+ * overrunning one may still finish and record its outcome.
  */
 export function claimExpired(row: { scheduled_for: string; started_at: string | null }, deadlineMs: number, nowMs: number): boolean {
   return Date.parse(row.started_at ?? row.scheduled_for) + deadlineMs < nowMs;

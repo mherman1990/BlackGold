@@ -292,17 +292,23 @@ describe("counterfactualFills: halt verdicts bind the fills (D-54)", () => {
     expect(r.fills).toEqual([]);
     expect(r.suppressedExits).toEqual(["VTI", "XLV"]);
     // Control: an unpriced holding the target still wants has no known direction - unpriced, not an exit.
-    const kept = fill({
+    const keptInputs = {
       targets: { QQQ: "0.5", VTI: "0.5" },
       positions: { VTI: "10" },
       cash: "40000",
       prices: { QQQ: "200" },
       bars: { QQQ: [bar("QQQ", "2026-03-06", "200", "200"), bar("QQQ", "2026-03-09", "200", "201")] },
-      gate: { newRiskAllowed: false, haltState: "HOLD_ONLY" },
-    });
+      gate: { newRiskAllowed: false, haltState: "HOLD_ONLY" as const },
+    };
+    const kept = fill(keptInputs);
     expect(kept.suppressedExits).toEqual([]);
     expect(kept.unpriced).toEqual(["VTI"]);
     expect(kept.suppressedEntries).toEqual(["QQQ"]);
+    // An explicit zero is still a target line: rebalanceOrders trades it only past the band, so unpriced it has no
+    // known direction either - unpriced, not an exit.
+    const zero = fill({ ...keptInputs, targets: { QQQ: "1", VTI: "0" } });
+    expect(zero.suppressedExits).toEqual([]);
+    expect(zero.unpriced).toEqual(["VTI"]);
   });
 
   it("HOLD_ONLY keeps its exits on the record when a non-positive NAV stops sizing (Codex P2, PR #108 round 7)", () => {
@@ -315,6 +321,7 @@ describe("counterfactualFills: halt verdicts bind the fills (D-54)", () => {
     expect(r.suppressedEntries).toEqual([]);
     // Controls: a held line still targeted has no known direction; NORMAL suppresses nothing.
     expect(underwater({ XLV: "1" }, "HOLD_ONLY").suppressedExits).toEqual([]);
+    expect(underwater({ QQQ: "1", XLV: "0" }, "HOLD_ONLY").suppressedExits).toEqual([]);
     expect(underwater({ QQQ: "1" }, "NORMAL").suppressedExits).toEqual([]);
   });
 

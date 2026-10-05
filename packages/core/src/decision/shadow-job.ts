@@ -95,9 +95,11 @@ const FINISHED_RUN_STATES = new Set(["succeeded", "failed", "missed", "skipped_d
  *    pair by accepting the identical existing arm and sealing the other), or
  *  - the scheduler has recorded a finished run for its job instant (succeeded - sealed or visibly skipped - failed,
  *    missed, or a duplicate), or
- *  - its claimed run (pending or running) has outlived the job's deadline: a crash left it behind, claim() will
- *    reject the key, and the missed-run detector will mark it missed - by the scheduler's own rule,
- *    {@link claimExpired} (Codex P2, PR #108 round 7), or
+ *  - its claimed run (pending or running) has outlived the job's deadline: claim() will reject the key, so no tick
+ *    starts it again, and the missed-run detector will mark it missed - by the scheduler's own rule,
+ *    {@link claimExpired} (Codex P2, PR #108 round 7). Usually a crash left the row behind. The deadline cannot
+ *    pre-empt the synchronous handler, so an overrunning run may still commit; until it does, status reads the
+ *    following week. That is display only: the decision's own reads are timestamp-locked to its instant, or
  *  - no run is recorded and the instant is already beyond the scheduler's due lookback, so no tick will run it.
  *
  * A run that is due but not yet ticked therefore stays upcoming: the scheduler executes it late, inside its

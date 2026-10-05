@@ -85,8 +85,8 @@ export type ShadowFillRecord = {
   suppressedEntries: string[];
   /**
    * Exits a HOLD_ONLY verdict suppressed: reconciliation uncertainty blocks risk-reducing orders too (D-54).
-   * Includes a held line the target removed that had no price at the decision mark, or that a non-positive NAV
-   * left the book unable to size.
+   * Includes a held line absent from the target that had no price at the decision mark (no stored close at or
+   * before it), or that a non-positive NAV left the book unable to size.
    */
   suppressedExits: string[];
   /**
@@ -215,9 +215,11 @@ export function counterfactualFills(input: CounterfactualFillInput): ShadowFillR
   for (const w of record.targetWeights) weights.set(w.entityId, new Dec(w.weight));
   // A HOLD_ONLY verdict freezes every held line the target removes, whether or not the book can size or price
   // it, so these exits are read from the book, never only from order construction (Codex P2s, PR #108 rounds
-  // 5 and 7). A held line still targeted has no known direction without sizing.
+  // 5 and 7). "Removes" means absent from the target, exactly rebalanceOrders' unconditional EXIT: a line still
+  // targeted - an explicit zero included, which rebalanceOrders trades only past the band - has no known
+  // direction without sizing.
   const hold = record.gate.haltState === "HOLD_ONLY";
-  const removedHeld = hold ? [...book.positions].filter(([id, q]) => q.gt(0) && weights.get(id)?.gt(0) !== true).map(([id]) => id) : [];
+  const removedHeld = hold ? [...book.positions].filter(([id, q]) => q.gt(0) && !weights.has(id)).map(([id]) => id) : [];
 
   // A non-positive synthetic NAV cannot size a book; record the honest empty outcome rather than throwing a
   // run away (shareTargets throws on nav <= 0 by design - sizing a real book from nothing is an error there).
@@ -245,8 +247,9 @@ export function counterfactualFills(input: CounterfactualFillInput): ShadowFillR
     suppressedEntries.push(o.entityId);
     return false;
   });
-  // rebalanceOrders drops an exit it cannot price (a suspended or delisted holding), so the order list alone
-  // under-reports the freeze; add those from the book. A held line still targeted but unpriced stays on `unpriced`.
+  // rebalanceOrders drops an exit it cannot price, so the order list alone under-reports the freeze; add those
+  // from the book. Rare: closesAt carries the last close forward, so this needs a holding with no stored close at
+  // or before the decision session. A held line still targeted but unpriced stays on `unpriced`.
   for (const entityId of removedHeld) if (input.prices.get(entityId) === undefined) suppressedExits.push(entityId);
 
   // Phase 1: simulate every actionable order with no cash constraint, in decision-session units.
