@@ -1349,7 +1349,10 @@ limits"). These are the limit engines D-45 deferred.
 3. **Order-level limits as a predicate, not wired** (`risk/orders.ts`, `evaluateOrderLimits`). Over one
    session's orders it names every breach and never re-sizes, splits or drops an order. Charter §10 says an
    over-cap order "is split across sessions or rejected; it is never enlarged". Choosing between those is the
-   consumer's job, and a breaching exit must be sliced, never simply blocked.
+   consumer's job, and a breaching exit must be sliced, never simply blocked. Missing or unmeasurable data
+   (ADV, a positive NAV, a quote) fails closed for buys only. Slicing cannot cure missing data, so for a sell the
+   measurement it prevents is skipped rather than trapping the exit (Codex P2, PR #109). A malformed order
+   (bad quantity or price) is rejected on either side.
    - **Per order:** quantity, USD notional, and ADV participation, binding at the stricter of `risk.yaml` 1% and
      the charter cost model's 0.5%.
    - **Buys only:** the ADV and price floors, and the spread at order time, which fails closed when there is no

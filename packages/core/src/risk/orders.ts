@@ -19,11 +19,19 @@ import { instrumentLiquidityViolations } from "./liquidity.ts";
  * the shadow book is synthetic (`SHADOW_INITIAL_CASH` is not dollars), so a USD notional cap has no meaning
  * against it until the owner decides what sleeve size the shadow book models (D-55).
  *
+ * Three kinds of breach, and how each treats an exit (Codex P2, PR #109):
+ *  - **Malformed orders** (`BAD_QUANTITY`, `BAD_PRICE`) are rejected on either side. The order itself is wrong,
+ *    and a zero price would let an exit skip the notional cap.
+ *  - **Size and count caps** apply to every order, exits included. Slicing across sessions cures them.
+ *  - **Missing or unmeasurable data** (`ADV_UNKNOWN`, `BAD_NAV`, `SPREAD_UNOBSERVED`) fails closed for BUYS only.
+ *    Slicing cannot cure missing data, so failing an exit on it would trap the position indefinitely. For a
+ *    sell, the measurement it prevents is simply skipped.
+ *
  * Checks, per order:
  *  - `BAD_QUANTITY` (non-positive or fractional: `fractionalShares` is false) and `QTY_CAP` (`maxOrderQuantity`).
  *  - `BAD_PRICE` (non-positive reference price: the notional is unknown) and `NOTIONAL_CAP` (`maxOrderNotionalUsd`).
- *  - `ADV_UNKNOWN` and `ADV_PARTICIPATION`: notional at most the BINDING participation times 20-session dollar
- *    ADV. Binding is the stricter of `risk.yaml` `maxAdvParticipationPct` and the charter's
+ *  - `ADV_PARTICIPATION`: notional at most the BINDING participation times 20-session dollar ADV (`ADV_UNKNOWN`
+ *    for a buy without one; a sell without one skips the check). Binding is the stricter of `risk.yaml` `maxAdvParticipationPct` and the charter's
  *    `costs.max_participation_of_adv` - the cost model the backtest evidence assumed (the same stricter-of rule
  *    `evaluateRiskLimits` applies to `max_positions`).
  *  - Buys only (new risk): the shared instrument rule ({@link instrumentLiquidityViolations}: `MIN_ADV`,
@@ -36,8 +44,9 @@ import { instrumentLiquidityViolations } from "./liquidity.ts";
  *  - `MAX_ORDERS_PER_SESSION` (`maxOrdersPerSession`).
  *  - `MAX_NEW_POSITIONS`: entities bought from flat, at most the stricter of `risk.yaml`
  *    `maxNewPositionsPerSession` and the charter's `max_new_positions_per_decision`.
- *  - `BAD_NAV` and `DAILY_TURNOVER`: gross traded notional (buys plus sells) over NAV, at most
- *    `maxDailyTurnoverPctNav`. Gross is the stricter reading of a cap the policy does not define further.
+ *  - `DAILY_TURNOVER`: gross traded notional (buys plus sells) over NAV, at most `maxDailyTurnoverPctNav`. Gross is
+ *    the stricter reading of a cap the policy does not define further. A non-positive NAV leaves turnover
+ *    unmeasurable: `BAD_NAV` when the session buys, unchecked when it only sells.
  */
 
 export type OrderQuote = { bid: Dec; ask: Dec };
@@ -112,8 +121,9 @@ export function evaluateOrderLimits(input: OrderLimitsInput): RiskVerdict {
       const notional = o.quantity.abs().times(o.price);
       notionals.push(notional);
       if (notional.gt(notionalCap)) v.push({ code: "NOTIONAL_CAP", detail: `${tag} notional ${notional.toFixed(2)} USD exceeds maxOrderNotionalUsd ${p.orderLimits.maxOrderNotionalUsd}` });
-      if (!advOk) v.push({ code: "ADV_UNKNOWN", detail: `${tag} has no usable ADV; participation cannot be checked` });
-      else if (o.advUsd !== undefined && notional.gt(participation.times(o.advUsd))) {
+      if (!advOk) {
+        if (o.side === "BUY") v.push({ code: "ADV_UNKNOWN", detail: `${tag} has no usable ADV; participation cannot be checked, so new risk fails closed` });
+      } else if (o.advUsd !== undefined && notional.gt(participation.times(o.advUsd))) {
         v.push({ code: "ADV_PARTICIPATION", detail: `${tag} notional ${notional.toFixed(2)} USD exceeds ${participation.toFixed()} of ADV ${o.advUsd.toFixed(0)} USD` });
       }
     }
@@ -141,7 +151,7 @@ export function evaluateOrderLimits(input: OrderLimitsInput): RiskVerdict {
     v.push({ code: "MAX_NEW_POSITIONS", detail: `${entries.size} new positions exceed the binding cap ${maxNew} (risk.yaml ${p.positionLimits.maxNewPositionsPerSession}, charter ${input.charter.rules.max_new_positions_per_decision})` });
   }
   if (!input.navUsd.gt(0)) {
-    v.push({ code: "BAD_NAV", detail: `NAV ${input.navUsd.toFixed()} USD is not positive; turnover cannot be measured` });
+    if (orders.some((o) => o.side === "BUY")) v.push({ code: "BAD_NAV", detail: `NAV ${input.navUsd.toFixed()} USD is not positive; turnover cannot be measured, so new risk fails closed` });
   } else if (orders.length > 0) {
     const turnover = sumDec(notionals).div(input.navUsd);
     if (turnover.gt(new Dec(p.orderLimits.maxDailyTurnoverPctNav))) {

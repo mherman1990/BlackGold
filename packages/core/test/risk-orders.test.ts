@@ -68,9 +68,13 @@ describe("evaluateOrderLimits: per-order size caps apply to every order, exits i
     expect(bindingAdvParticipation(POLICY, loose).toFixed()).toBe("0.01");
   });
 
-  it("fails closed when ADV is unknown, for any side", () => {
-    expect(codes(run([order("XLF", "SELL", "10", "50", { advUsd: undefined })], { held: { XLF: "10" } }))).toEqual(["ADV_UNKNOWN"]);
+  it("fails a buy closed when ADV is unknown, but never traps an exit on it (Codex P2, PR #109)", () => {
     expect(codes(run([order("XLF", "BUY", "10", "50", { advUsd: undefined })]))).toEqual(["ADV_UNKNOWN"]);
+    // Slicing cannot cure missing data, so a sell without ADV skips the participation check instead of failing.
+    expect(codes(run([order("XLF", "SELL", "10", "50", { advUsd: undefined })], { held: { XLF: "10" } }))).toEqual([]);
+    expect(codes(run([order("XLF", "SELL", "10", "50", { advUsd: new Dec("0") })], { held: { XLF: "10" } }))).toEqual([]);
+    // The size caps still bind the same exit: those slicing does cure.
+    expect(codes(run([order("XLF", "SELL", "31", "50", { advUsd: undefined })], { held: { XLF: "31" } }))).toEqual(["NOTIONAL_CAP"]);
   });
 });
 
@@ -135,8 +139,12 @@ describe("evaluateOrderLimits: per-session caps", () => {
     expect(codes(run(pair, { navUsd: "9999.99", held: { XLV: "25" } }))).toEqual(["DAILY_TURNOVER"]);
   });
 
-  it("fails closed on a non-positive NAV: turnover cannot be measured", () => {
+  it("fails a buying session closed on a non-positive NAV, but never traps a sells-only session (Codex P2, PR #109)", () => {
     expect(codes(run([order("XLF", "BUY", "1", "50")], { navUsd: "0" }))).toEqual(["BAD_NAV"]);
+    expect(codes(run([order("XLF", "BUY", "1", "50"), order("XLV", "SELL", "1", "50")], { navUsd: "-1", held: { XLV: "1" } }))).toEqual(["BAD_NAV"]);
+    // Turnover is unmeasurable, so an exit-only session is not failed on it; its per-order caps still bind.
+    expect(codes(run([order("XLV", "SELL", "1", "50")], { navUsd: "0", held: { XLV: "1" } }))).toEqual([]);
+    expect(codes(run([order("XLV", "SELL", "31", "50")], { navUsd: "0", held: { XLV: "31" } }))).toEqual(["NOTIONAL_CAP"]);
   });
 });
 
