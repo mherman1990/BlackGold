@@ -51,6 +51,15 @@ export const OPERATIONAL_DUE_LOOKBACK_MS = 24 * 3_600_000;
 
 export type RunStatus = "pending" | "running" | "succeeded" | "failed" | "missed" | "skipped_duplicate";
 
+/**
+ * The missed-run detector's staleness rule for a `pending` or `running` row, shared so a reader of job_runs
+ * cannot disagree with it: the claim is dead once its deadline, counted from its start (else its scheduled
+ * instant), has passed. The scheduler never executes that instant again - claim() rejects the existing key.
+ */
+export function claimExpired(row: { scheduled_for: string; started_at: string | null }, deadlineMs: number, nowMs: number): boolean {
+  return Date.parse(row.started_at ?? row.scheduled_for) + deadlineMs < nowMs;
+}
+
 export type RunOutcome = DueRun & { status: "succeeded" | "failed" | "skipped_duplicate"; error?: string };
 
 export type MissedRun = DueRun & { reason: "never_recorded" | "stale_pending" | "stale_running" };
@@ -221,8 +230,7 @@ export class Scheduler {
     for (const row of stale) {
       const job = this.jobs.get(row.job_id);
       const deadlineMs = job?.deadlineMs ?? this.storedDeadline(row.job_id);
-      const anchor = Date.parse(row.started_at ?? row.scheduled_for);
-      if (anchor + deadlineMs >= nowMs) continue;
+      if (!claimExpired(row, deadlineMs, nowMs)) continue;
       const reason = row.status === "running" ? "stale_running" : "stale_pending";
       const run: MissedRun = {
         jobId: row.job_id,

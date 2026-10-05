@@ -85,7 +85,8 @@ export type ShadowFillRecord = {
   suppressedEntries: string[];
   /**
    * Exits a HOLD_ONLY verdict suppressed: reconciliation uncertainty blocks risk-reducing orders too (D-54).
-   * Includes a held line the target removed that had no price at the decision mark.
+   * Includes a held line the target removed that had no price at the decision mark, or that a non-positive NAV
+   * left the book unable to size.
    */
   suppressedExits: string[];
   /**
@@ -210,14 +211,19 @@ export function counterfactualFills(input: CounterfactualFillInput): ShadowFillR
     cashAtDecision: book.cash.toFixed(),
   };
 
+  const weights = new Map<string, Dec>();
+  for (const w of record.targetWeights) weights.set(w.entityId, new Dec(w.weight));
+  // A HOLD_ONLY verdict freezes every held line the target removes, whether or not the book can size or price
+  // it, so these exits are read from the book, never only from order construction (Codex P2s, PR #108 rounds
+  // 5 and 7). A held line still targeted has no known direction without sizing.
+  const hold = record.gate.haltState === "HOLD_ONLY";
+  const removedHeld = hold ? [...book.positions].filter(([id, q]) => q.gt(0) && weights.get(id)?.gt(0) !== true).map(([id]) => id) : [];
+
   // A non-positive synthetic NAV cannot size a book; record the honest empty outcome rather than throwing a
   // run away (shareTargets throws on nav <= 0 by design - sizing a real book from nothing is an error there).
   if (!book.nav.gt(0)) {
-    return { ...base, fills: [], suppressedEntries: [], suppressedExits: [], unfilled: [], unpriced: [], executionShortfall: "0", labels: [SHADOW_BOOK_NON_POSITIVE_NAV] };
+    return { ...base, fills: [], suppressedEntries: [], suppressedExits: removedHeld.sort(), unfilled: [], unpriced: [], executionShortfall: "0", labels: [SHADOW_BOOK_NON_POSITIVE_NAV] };
   }
-
-  const weights = new Map<string, Dec>();
-  for (const w of record.targetWeights) weights.set(w.entityId, new Dec(w.weight));
 
   const st = shareTargets({ nav: book.nav, weights, prices: input.prices });
   const orders = rebalanceOrders({ nav: book.nav, targets: st.targets, current: book.positions, prices: input.prices, bandPctPoints: input.bandPctPoints });
@@ -227,7 +233,6 @@ export function counterfactualFills(input: CounterfactualFillInput): ShadowFillR
   // reconciliation or order-state uncertainty blocks risk-reducing orders too (AUTOMATION_AND_LIVE_GATES
   // section 7 - "do not touch anything until the picture is reconciled"; the owner-approved close it allows
   // does not exist in shadow).
-  const hold = record.gate.haltState === "HOLD_ONLY";
   const suppressedEntries: string[] = [];
   const suppressedExits: string[] = [];
   const actionable = orders.filter((o) => {
@@ -241,14 +246,8 @@ export function counterfactualFills(input: CounterfactualFillInput): ShadowFillR
     return false;
   });
   // rebalanceOrders drops an exit it cannot price (a suspended or delisted holding), so the order list alone
-  // under-reports the freeze. A held line the target removes is an exit whatever its price: record it from the
-  // book (Codex P2, PR #108 round 5). A held line still targeted but unpriced has no known direction; it stays
-  // on `unpriced`.
-  if (hold) {
-    for (const [entityId, q] of book.positions) {
-      if (q.gt(0) && weights.get(entityId)?.gt(0) !== true && input.prices.get(entityId) === undefined) suppressedExits.push(entityId);
-    }
-  }
+  // under-reports the freeze; add those from the book. A held line still targeted but unpriced stays on `unpriced`.
+  for (const entityId of removedHeld) if (input.prices.get(entityId) === undefined) suppressedExits.push(entityId);
 
   // Phase 1: simulate every actionable order with no cash constraint, in decision-session units.
   type Worked = { entityId: string; side: "BUY" | "SELL"; quantity: Dec; decisionClose: Dec; splits: ShadowSplit[]; simUnfilled: Dec; applied: Dec; cashShort: boolean };

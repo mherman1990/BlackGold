@@ -4,7 +4,7 @@ import { addDays, addMs, canonicalJson, sha256Hex, type Db, type IsoDate, type U
 import { processingDelayOverridesMs, RestrictedListConfigSchema, RiskConfigSchema, ThemeMembershipConfigSchema, type AppConfig } from "../config/schema.ts";
 import { parseYamlConfig } from "../config/load.ts";
 import type { ExchangeCalendar } from "../calendar/types.ts";
-import { OPERATIONAL_DUE_LOOKBACK_MS, type Scheduler } from "../scheduler/scheduler.ts";
+import { claimExpired, OPERATIONAL_DUE_LOOKBACK_MS, type Scheduler } from "../scheduler/scheduler.ts";
 import { PointInTimeRepository } from "../data/pit/repository.ts";
 import { EntityMap } from "../market/entity-map.ts";
 import { loadCharterFile, type Charter } from "../strategy/charter.ts";
@@ -81,6 +81,9 @@ export function shadowJobOffsetMinutes(decisionOffsetMinutes: number): number {
 /** The arms a shadow decision seals; an instant is sealed only when every one is present (`prospectiveTargetBooks`). */
 const SHADOW_DECISION_ARMS = ["B0_PASSIVE", "B1_DETERMINISTIC"] as const;
 
+/** The decision job's handler deadline; also how long its claimed run may stay pending or running. */
+export const SHADOW_DECISION_DEADLINE_MS = 10 * 60_000;
+
 /** Scheduler run states after which the job will not run that instant again. */
 const FINISHED_RUN_STATES = new Set(["succeeded", "failed", "missed", "skipped_duplicate"]);
 
@@ -92,6 +95,9 @@ const FINISHED_RUN_STATES = new Set(["succeeded", "failed", "missed", "skipped_d
  *    pair by accepting the identical existing arm and sealing the other), or
  *  - the scheduler has recorded a finished run for its job instant (succeeded - sealed or visibly skipped - failed,
  *    missed, or a duplicate), or
+ *  - its claimed run (pending or running) has outlived the job's deadline: a crash left it behind, claim() will
+ *    reject the key, and the missed-run detector will mark it missed - by the scheduler's own rule,
+ *    {@link claimExpired} (Codex P2, PR #108 round 7), or
  *  - no run is recorded and the instant is already beyond the scheduler's due lookback, so no tick will run it.
  *
  * A run that is due but not yet ticked therefore stays upcoming: the scheduler executes it late, inside its
@@ -113,7 +119,9 @@ export function upcomingShadowDecision(
     ).map((r) => Date.parse(r.decision_at)),
   );
   const runs = new Map(
-    (db.prepare("SELECT scheduled_for, status FROM job_runs WHERE job_id = 'shadow_decision'").all() as { scheduled_for: string; status: string }[]).map((r) => [Date.parse(r.scheduled_for), r.status] as const),
+    (db.prepare("SELECT scheduled_for, started_at, status FROM job_runs WHERE job_id = 'shadow_decision'").all() as { scheduled_for: string; started_at: string | null; status: string }[]).map(
+      (r) => [Date.parse(r.scheduled_for), r] as const,
+    ),
   );
   // Start early enough that a run the scheduler can still execute late cannot be skipped, however large the offset.
   const start = calendar.previousSession(addMs(args.now, -(jobOffsetMs + dueLookbackMs)));
@@ -123,9 +131,12 @@ export function upcomingShadowDecision(
     const decisionAt = addMs(close, args.decisionOffsetMinutes * 60_000);
     if (sealed.has(Date.parse(decisionAt))) continue;
     const runAtMs = Date.parse(addMs(close, jobOffsetMs));
-    const status = runs.get(runAtMs);
-    if (status !== undefined && FINISHED_RUN_STATES.has(status)) continue;
-    if (status === undefined && runAtMs + dueLookbackMs <= nowMs) continue;
+    const run = runs.get(runAtMs);
+    if (run === undefined) {
+      if (runAtMs + dueLookbackMs <= nowMs) continue;
+    } else if (FINISHED_RUN_STATES.has(run.status) || claimExpired(run, SHADOW_DECISION_DEADLINE_MS, nowMs)) {
+      continue;
+    }
     return { decisionAt, session };
   }
   throw new RangeError(`no upcoming weekly decision session found after ${start}`);
@@ -216,7 +227,7 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
     jobId: "shadow_decision",
     name: "Seal the prospective shadow decision records for the configured charter",
     schedule: { kind: "after_close", offsetMs: jobOffsetMinutes * 60_000 },
-    deadlineMs: 10 * 60_000,
+    deadlineMs: SHADOW_DECISION_DEADLINE_MS,
     handler: (ctx) => {
       // Defence in depth: the registration gate above already excludes non-sealing modes, and the sealer
       // itself refuses them, but a job must never rely on its registration site alone.

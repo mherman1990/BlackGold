@@ -305,6 +305,19 @@ describe("counterfactualFills: halt verdicts bind the fills (D-54)", () => {
     expect(kept.suppressedEntries).toEqual(["QQQ"]);
   });
 
+  it("HOLD_ONLY keeps its exits on the record when a non-positive NAV stops sizing (Codex P2, PR #108 round 7)", () => {
+    // NAV = -5000 + 10 x 100 < 0: nothing can be sized, but XLV is held and the target removed it - a frozen exit.
+    const underwater = (targets: Record<string, string>, haltState: "NORMAL" | "HOLD_ONLY") =>
+      fill({ targets, positions: { XLV: "10" }, cash: "-5000", prices: { XLV: "100" }, bars: { XLV: [bar("XLV", "2026-03-06", "100", "100")] }, gate: { newRiskAllowed: haltState === "NORMAL", haltState } });
+    const r = underwater({ QQQ: "1" }, "HOLD_ONLY");
+    expect(r.fills).toEqual([]);
+    expect(r.suppressedExits).toEqual(["XLV"]);
+    expect(r.suppressedEntries).toEqual([]);
+    // Controls: a held line still targeted has no known direction; NORMAL suppresses nothing.
+    expect(underwater({ XLV: "1" }, "HOLD_ONLY").suppressedExits).toEqual([]);
+    expect(underwater({ QQQ: "1" }, "NORMAL").suppressedExits).toEqual([]);
+  });
+
   it("HALT_NEW_RISK keeps the exit and cancels only the entry (control: the two states differ)", () => {
     const r = rotationUnder({ newRiskAllowed: false, haltState: "HALT_NEW_RISK" });
     expect(qty(r, "XLV", "SELL").toFixed()).toBe("400");

@@ -8,7 +8,7 @@ import { addMs, Dec, isoDate, sha256Hex, type Db, type UtcInstant } from "@black
 import { Ledger, NyseCalendar, PointInTimeRepository, Scheduler, corporateActionObservation, openCoreDb } from "../src/index.ts";
 import { parseAppConfig } from "../src/config/load.ts";
 import type { AppConfig } from "../src/config/schema.ts";
-import { registerShadowDecisionJob, shadowStatusForNextDecision, upcomingShadowDecision } from "../src/decision/shadow-job.ts";
+import { registerShadowDecisionJob, SHADOW_DECISION_DEADLINE_MS, shadowStatusForNextDecision, upcomingShadowDecision } from "../src/decision/shadow-job.ts";
 import { registerShadowFillJob, SHADOW_FILLS_RECORDED, SHADOW_INCIDENT, SHADOW_RECONCILED } from "../src/decision/shadow-fill-job.ts";
 import { appendShadowFillRecord, shadowFillRecords, SHADOW_FILL_RECORD_VERSION, type ShadowFillRecord } from "../src/decision/shadow-fills.ts";
 import { fillDueSession, fillOwedSession, fillWindowEndSession, reconcileShadow } from "../src/decision/shadow-reconcile.ts";
@@ -519,6 +519,31 @@ describe("reconciler breaks feed the next decision's halt (D-54)", () => {
     // A finished run for the instant, even one that sealed nothing (e.g. a visible skip), moves on.
     env.db.prepare("INSERT INTO job_runs (idempotency_key, job_id, scheduled_for, status) VALUES (?,?,?,?)").run("k-fri", "shadow_decision", runAt, "succeeded");
     expect(next(afterClose("2026-03-06", 160))).toEqual(nextFriday);
+  });
+
+  it("skips an instant whose claimed run outlived its deadline: the scheduler will never run it again (Codex P2, PR #108 round 7)", () => {
+    const env = setup("SHADOW");
+    const charterHash = loadCharterFile(env.charterPath).charterHash;
+    const next = (now: UtcInstant) => upcomingShadowDecision(env.db, cal, { charterHash, decisionOffsetMinutes: 60, now });
+    const friday = { decisionAt: afterClose("2026-03-06", 60), session: "2026-03-06" };
+    const nextFriday = { decisionAt: afterClose("2026-03-13", 60), session: "2026-03-13" };
+    const runAt = afterClose("2026-03-06", 150);
+    const claim = (status: "pending" | "running", startedAt: UtcInstant | null) => {
+      env.db.prepare("DELETE FROM job_runs").run();
+      env.db.prepare("INSERT INTO job_runs (idempotency_key, job_id, scheduled_for, started_at, status) VALUES (?,?,?,?,?)").run("k-fri", "shadow_decision", runAt, startedAt, status);
+    };
+    const deadlineMin = SHADOW_DECISION_DEADLINE_MS / 60_000;
+
+    // A run still inside its deadline is in progress: Friday's decision is the one being sealed.
+    claim("running", runAt);
+    expect(next(afterClose("2026-03-06", 150 + deadlineMin))).toEqual(friday);
+    // Past the deadline from its start, a crashed run is dead: claim() rejects the key, the detector marks it missed.
+    expect(next(afterClose("2026-03-06", 150 + deadlineMin + 1))).toEqual(nextFriday);
+    // The deadline counts from the start when there is one (a late start), else from the scheduled instant.
+    claim("running", afterClose("2026-03-06", 150 + 60));
+    expect(next(afterClose("2026-03-06", 150 + 60 + deadlineMin))).toEqual(friday);
+    claim("pending", null);
+    expect(next(afterClose("2026-03-06", 150 + deadlineMin + 1))).toEqual(nextFriday);
   });
 
   it("treats an instant as finished once every shadow arm is sealed, whatever the run state", async () => {
