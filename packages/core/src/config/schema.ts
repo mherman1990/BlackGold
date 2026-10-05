@@ -17,8 +17,12 @@ export const decString = z
   .regex(DECIMAL_RE, "must be a decimal string such as \"0.05\"")
   .refine((s) => !s.startsWith("-"), "must be non-negative");
 
-/** Ratio between 0 and 1 inclusive, as a decimal string. */
-export const ratioString = decString.refine((s) => Number(s) <= 1, "must be between 0 and 1");
+/**
+ * Ratio between 0 and 1 inclusive, as a decimal string. The bound is a .regex (not a .refine) so it
+ * survives into the JSON Schemas emitted under config/schema/: editor/CI validation of the owner's
+ * YAML then matches runtime validation. Matches 0, 0.x, 1, 1.0...
+ */
+export const ratioString = decString.regex(/^(0(\.\d+)?|1(\.0+)?)$/, "must be between 0 and 1");
 
 export const utcInstantString = z.iso.datetime({ message: "must be an ISO-8601 UTC instant ending in Z" });
 export const isoDateString = z.iso.date({ message: "must be a calendar date YYYY-MM-DD" });
@@ -396,9 +400,7 @@ export const ThemeMembershipConfigSchema = z.object({
    * Max aggregate weight of restricted-theme issuers, as a fraction of ETF NAV, at or below which a
    * diversified ETF is admissible. Charter section 2.2 proposes "0.10"; the owner sets it.
    */
-  // A .regex form of ratioString's 0-1 bound so it survives into the emitted JSON Schema (Codex P2):
-  // editor/CI validation of the owner's YAML then matches runtime validation. Matches 0, 0.x, 1, 1.0...
-  maxAggregateThemeWeightPct: ratioString.regex(/^(0(\.\d+)?|1(\.0+)?)$/, "must be a ratio between 0 and 1 such as \"0.10\""),
+  maxAggregateThemeWeightPct: ratioString,
   /** Max age in days of a published holdings file before look-through is unknown and compliance fails closed. */
   maxHoldingsAgeDays: z.number().int().positive(),
   /**

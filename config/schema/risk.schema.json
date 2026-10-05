@@ -39,7 +39,14 @@
         "maxPctOfLiquidInvestableAssets": {
           "default": "0.05",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "cashFundedOnly": {
           "default": true,
@@ -148,17 +155,38 @@
         "maxSingleStockWeightPct": {
           "default": "0.05",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "maxSingleEtfWeightPct": {
           "default": "0.20",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "maxInitialRiskPerPositionPct": {
           "default": "0.0035",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "maxOpenPositions": {
           "default": 10,
@@ -175,7 +203,14 @@
         "dailyNewRiskPctNav": {
           "default": "0.01",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         }
       }
     },
@@ -192,27 +227,62 @@
         "maxSectorWeightPct": {
           "default": "0.20",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "maxThemeWeightPct": {
           "default": "0.20",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "maxFactorWeightPct": {
           "default": "0.30",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "maxCorrelatedClusterWeightPct": {
           "default": "0.30",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "correlationClusterThreshold": {
           "default": "0.70",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         }
       }
     },
@@ -227,17 +297,38 @@
         "maxGrossExposurePct": {
           "default": "1.00",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "maxNetExposurePct": {
           "default": "1.00",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "minCashPct": {
           "default": "0.02",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         }
       }
     },
@@ -261,7 +352,14 @@
         "targetAnnualizedVolPct": {
           "default": "0.10",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "maxScaleFactor": {
           "default": "1.0",
@@ -288,7 +386,14 @@
         "maxAdvParticipationPct": {
           "default": "0.01",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "minAdvUsd": {
           "default": "5000000",
@@ -335,7 +440,14 @@
         "maxDailyTurnoverPctNav": {
           "default": "0.25",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         }
       }
     },
@@ -403,12 +515,26 @@
         "maxAbnormalMovePct": {
           "default": "0.20",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "maxCrossSourceDeviationPct": {
           "default": "0.02",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "requireTwoSources": {
           "default": true,
@@ -429,17 +555,38 @@
         "dailyLossPct": {
           "default": "0.02",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "haltNewRiskDrawdownPct": {
           "default": "0.08",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "holdOnlyDrawdownPct": {
           "default": "0.10",
           "type": "string",
-          "pattern": "^-?\\d+(\\.\\d+)?$"
+          "allOf": [
+            {
+              "pattern": "^-?\\d+(\\.\\d+)?$"
+            },
+            {
+              "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+            }
+          ]
         },
         "manualRearmRequired": {
           "default": true,

@@ -72,7 +72,14 @@
                 },
                 "additionalProperties": {
                   "type": "string",
-                  "pattern": "^-?\\d+(\\.\\d+)?$"
+                  "allOf": [
+                    {
+                      "pattern": "^-?\\d+(\\.\\d+)?$"
+                    },
+                    {
+                      "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+                    }
+                  ]
                 }
               },
               "sector": {
@@ -84,7 +91,14 @@
                 },
                 "additionalProperties": {
                   "type": "string",
-                  "pattern": "^-?\\d+(\\.\\d+)?$"
+                  "allOf": [
+                    {
+                      "pattern": "^-?\\d+(\\.\\d+)?$"
+                    },
+                    {
+                      "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+                    }
+                  ]
                 }
               },
               "style": {
@@ -96,7 +110,14 @@
                 },
                 "additionalProperties": {
                   "type": "string",
-                  "pattern": "^-?\\d+(\\.\\d+)?$"
+                  "allOf": [
+                    {
+                      "pattern": "^-?\\d+(\\.\\d+)?$"
+                    },
+                    {
+                      "pattern": "^(0(\\.\\d+)?|1(\\.0+)?)$"
+                    }
+                  ]
                 }
               }
             }
