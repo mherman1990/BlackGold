@@ -1,8 +1,7 @@
 # Machine-readable companion to ALPHA_CHARTER.md. The prose charter is the specification a human reads;
 # this file is the only form the code executes.
 #
-# STATUS: DRAFT (charter_version 0.3.0) - AWAITING OWNER SIGNATURE. The approval block below is unsigned;
-# this banner only describes it, and must be corrected in the same change that signs it.
+# STATUS: ARPPOVED (charter_version 0.3.0) 
 #
 # 0.3.0 is the one-batch cut the 2026-09-21 decision packet called for: every charter question that would
 # otherwise reset the prospective clock after registration, settled together before it. The owner answered
@@ -37,8 +36,7 @@ prose_charter: strategies/etf-trend-vol/ALPHA_CHARTER.md
 runtime_llm_in_signal: false
 arms: [B0_PASSIVE, B1_DETERMINISTIC]
 
-approval: APPROVED
-  # UNSIGNED. To sign: set `state` to APPROVED and fill `approved_by`, `approval_date`, `code_commit`.
+approval:
   # Claude Code must not fill these (CLAUDE.md carve-out). 0.2.0 was signed 2026-09-12 against 115dae4 (D-50).
   state: APPROVED
   approved_by: Matt Herman
