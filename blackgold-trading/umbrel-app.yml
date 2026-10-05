@@ -15,7 +15,8 @@ releaseNotes: >-
   0.1.13 ships the prospective shadow track: sealed weekly decision records,
   simulated fills against a synthetic book, and a ledger reconciler, plus ETF
   theme look-through from published SSGA holdings. All of it stays off on this
-  release's settings (research mode, no shadow charter configured). Research
+  release's settings (research mode, no shadow charter configured), and it must
+  stay off: the shadow fills carry known defects being repaired. Research
   evaluation now computes the charter's registered primary metric as a
   difference of Sharpe ratios, builds the vol-targeted Secondary 2 comparator,
   and returns one verdict over the pooled walk-forward splits; numbers from

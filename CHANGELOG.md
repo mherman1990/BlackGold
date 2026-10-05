@@ -18,6 +18,13 @@ Puts the D-53 shadow track and the corrected research evaluation on the Pi. Ever
   ships `RESEARCH` with no charter. Even when enabled, sealing waits for a registered rung-1 experiment for the
   exact charter hash, and the baked-in policy files (`/app/config/examples`) are fake and unapproved, so B1 new
   risk fails closed until your signed restricted list and theme membership replace them.
+- **Do not enable the shadow track on 0.1.13: it ships with known open defects.** PR #102 (slice 3b) merged
+  with seven accepted review findings unaddressed: three round-2 fixes described as done were never pushed,
+  and four round-3 findings arrived after the merge. Four are P1. In particular, decisions are sealed against
+  an empty book instead of the carried shadow book, rotation buys can be clamped by ticker sort order, and a
+  split between a decision and its delayed fill can make the replay throw and roll back every later fill run.
+  They are being repaired in a follow-up PR. The shadow code is inert on this release, so the defects cannot
+  run on the Pi; they ship only because the research corrections below are worth having now.
 - **ETF theme look-through.** `ingest ssga-holdings --etfs XLI,XLP` fetches SSGA SPDR daily-holdings workbooks
   into the point-in-time store (`etf_holdings.ssga.<ETF>`). Manual only; no schedule runs it.
 - **Research evaluation is corrected and extended.** `research evaluate` now computes ALPHA_CHARTER §13's
@@ -35,8 +42,9 @@ Puts the D-53 shadow track and the corrected research evaluation on the Pi. Ever
 
 **Why it matters**
 
-- The shadow runner has to be on the Pi before the prospective clock can start. Shipping it now, inert, means
-  enabling it later is a compose change rather than a release on the critical path.
+- The research evaluation on the Pi now computes the charter's registered primary metric and §16.1 verdict.
+  The shadow runner is included but not ready: enabling it needs the slice-3b repairs and a compose change
+  (the mode and charter path are compose-level settings), so it arrives in a later release.
 - **Do not compare a 0.1.12 evaluation number with a 0.1.13 one.** `REPORT_VERSION` 1 -> 5, `EVALUATION_VERSION`
   1 -> 4, `BACKTEST_VERSION` 1 -> 5, `FEATURES_VERSION` 1 -> 2. Every primary-metric figure from the 2026-09-13
   runs is an information ratio and is superseded. Those runs were non-evidential anyway.
