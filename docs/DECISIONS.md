@@ -55,7 +55,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-53 | (Slices 1, 2a, 2b, 3a-1 and both halves of 3a-2 merged as PRs #81, #82, #83, #85, #86, #87; 3a-3 and 2c merged as PRs #100, #101; 3b built 2026-10-05; only 4 remains, blocked on the owner's paper keys + D-12.) Build the paper/shadow track toward live as bounded per-rung PRs (docs/AUTOMATION_AND_LIVE_GATES.md): (1) the sealed prospective decision record + append-only ledger + SHADOW/PAPER mode guard; (2) the shadow decision loop — 2a the pure per-arm target book, 2b the pure gate-and-seal function, 2c the mode-gated `after_close` job; (3) counterfactual fills + reconciler; (4) the Alpaca **paper** broker adapter + order lifecycle. Building the machinery does not climb the ladder: Rung-2 shadow **evidence** still cannot precede the Rung-1 experiment, and a strategy still has to pass its own gate (D-51). No live mode, `LIVE_AUTHORIZATION`, or broker credential is added by any slice; slice 4 needs the owner's paper keys and the D-12 sleeve decision | **Proposed** 2026-09-14 by Claude Code (owner chose the paper/shadow track this session) | prospective decision loop; PAPER rung needs paper Alpaca keys + D-12 |
 | D-54 | Reconciler breaks feed the shadow halt state: a break unresolved past one session holds both arms `HOLD_ONLY` (literal §8); shadow halts are sticky and relax only through a staged owner re-arm (`shadow rearm`), with each acknowledgement scoped to the break occurrence it resolves | **Proposed** 2026-10-05 by Claude Code; reading (a) owner-confirmed provisionally (Matt: "go with literal §8 for now"); readings (b) and (c) open | Experiment registration (reading (c)) |
 | D-55 | Liquidity and order-level limits. A decision-time liquidity check (ADV and price floors, fail-closed) is the decision gate's fourth verdict. A pure order-level predicate (size, ADV participation, spread, long-only, per-session counts, turnover) is built but not wired. The per-position initial-risk budget is not built, because the charter has no stop. Six conflicts between `risk.yaml`, the charter and the synthetic shadow book are the owner's | **Proposed** 2026-10-05 by Claude Code (Matt: "start on the liquidity and order-level limits"). Conflicts 1, 4 and 6 resolved under D-56; 2, 3 and 5 open | Wiring the order-level predicate (conflicts 2 and 3) |
-| D-56 | The etf-trend-vol 0.3.0 charter bundle: keep the Sharpe-difference primary metric and add F2 as a promotion co-gate on chain-linked curves (OD-5, OD-6); a failed primary with Secondary 2 beaten goes to owner review, never ACTIVE (OD-7); §14.3's minimum restated as the schedule's capacity, 100 (OD-8); Secondary 2's two readings confirmed (OD-9); the prospective clock runs from registration (OD-10) | **Accepted** 2026-10-05 by Matt (answers in session), including D-55's conflicts 1, 4 and 6 folded in as OD-11 to OD-13; binding when he signs `charter_version` 0.3.0, which cites it, and `risk.yaml` 0.2.0 | Experiment registration (0.3.0 and `risk.yaml` 0.2.0 are unsigned) |
+| D-56 | The etf-trend-vol 0.3.0 charter bundle: keep the Sharpe-difference primary metric and add F2 as a promotion co-gate on chain-linked curves (OD-5, OD-6); a failed primary with Secondary 2 beaten goes to owner review, never ACTIVE (OD-7); §14.3's minimum restated as the schedule's capacity, 100 (OD-8); Secondary 2's two readings confirmed (OD-9); the prospective clock runs from registration (OD-10) | **Accepted** 2026-10-05 by Matt (answers in session), including D-55's conflicts 1, 4 and 6 folded in as OD-11 to OD-13; **owner-signed** 2026-10-05 with `charter_version` 0.3.0 (`code_commit 58d4474`) and `risk.yaml` 0.2.0, merged as PR #111 | - |
 | D-57 | B-2: Claude Code may build a second automated public corporate-actions adapter plus a machine reconciler, and the owner audits and approves the reconciled ≥2-source file per universe before ingest; the citable evaluation runs from a separate store with no Tiingo action rows | **Accepted** 2026-10-05 by Matt. Amends D-29 and D-49 | Citable evidence (the adapter and reconciler are a future PR) |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
@@ -815,7 +815,7 @@ the signed hash (`sha256:5c7f94da…`, unchanged across that correction).
 
 **Status:** Proposed 2026-09-13 by Claude Code. **Decided 2026-10-05 by Matt under D-56 (OD-5): keep the
 Sharpe-difference primary metric, and make F2 a co-gate on section 17's REGISTERED -> ACTIVE step, read on
-chain-linked curves (OD-6). Binding when he signs 0.3.0.** Step 3 below is therefore answered; the entry is
+chain-linked curves (OD-6). Binding since he signed 0.3.0 on 2026-10-05.** Step 3 below is therefore answered; the entry is
 kept as written for its history.
 
 **Where it came from.** Two single-split `research evaluate` runs on 2026-09-13 (charter 0.2.0, source
@@ -1437,8 +1437,11 @@ order predicate forms and sends nothing. No `risk.yaml` or charter value is chan
 
 **Status:** Accepted 2026-10-05 by Matt, answering each question of the decision packet's charter bundle
 (`docs/analysis/2026-09-21-rung5-decision-packet.md`, D-packet-1) in session, every one with the recommended
-option. **The answers bind when he signs the 0.3.0 approval block**, which cites this entry as `approval_ref`.
-Until then 0.3.0 is DRAFT and no version of the charter is registrable.
+option. **Signed the same day**, from his own account: the 0.3.0 approval block (commits `5bd26ee`, `e91e65b`;
+`code_commit 58d4474`, `approval_ref` this entry) and `risk.yaml` 0.2.0 (`228dd8b`, `ef39638`, `9e501c7`), merged
+as PR #111 (`355556f`). `charter show` reports `registrable: true` and
+`charterHash sha256:1435253d4d584be507a1d012f7fa98bf6b85b602c8892f731b59d208740c3197`. Registrable is not
+registered: registration is the owner-gated next step, from the separate evaluation store (D-57).
 
 This record exists for the reason D-39 did: a decision made in a chat session is not a written owner decision,
 and `approval.approval_ref` needs something citable. Claude Code transcribed the answers into `charter.yaml`
@@ -1505,9 +1508,9 @@ folded into 0.3.0, so the version is cut once. He chose the recommended option f
 | OD-12 | 4: ADV participation, 0.5% in the charter and 1% in `risk.yaml` | **0.5% in both**; no behaviour change, since the backtest and the order engine already used 0.5% | `risk.yaml` 0.2.0: 0.005; OD-3's 1% marked superseded |
 | OD-13 | 6: a stop-based initial-risk budget for a charter with no stop | **Not applicable to this strategy**, declared in the charter so `risk.yaml` keeps it for charters with stops | charter only; nothing was built |
 
-**`risk.yaml` 0.2.0 is unsigned.** Its 2026-09-08 approval (D-48) was cleared rather than carried, so Matt's
-name never stands on values he did not sign. Until he re-signs it, the shadow track reads it as a stale policy
-input and blocks new risk; nothing is enabled today, so nothing stops. The two USD-scaled order caps
+**`risk.yaml` 0.2.0 was drafted unsigned and signed by Matt on 2026-10-05** (`approvedAt 2026-10-05T00:00:00Z`).
+Its 2026-09-08 approval (D-48) had been cleared rather than carried, so Matt's name never stood on values he
+had not signed; while it was unsigned the shadow track read it as a stale policy input and blocked new risk. The two USD-scaled order caps
 (`maxOrderNotionalUsd` 1,500 and `maxOrderQuantity` 1,000) are unchanged. They depend on the sleeve size
 (D-55 conflict 2), which only Matt sets and which never enters a prompt. Until they admit a 20% position in a
 single order, the paper and live rungs would split or refuse an entry the backtest made whole.

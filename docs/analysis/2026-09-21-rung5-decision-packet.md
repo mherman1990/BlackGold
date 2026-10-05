@@ -1,8 +1,8 @@
 # Decision packet — the critical path to Rung 5 (LIVE_MANUAL)
 
 > **2026-10-05: D-packet-1 and D-packet-2 are decided.** Matt answered every question in both, each with
-> the recommended option: the charter bundle is `docs/DECISIONS.md` D-56 and is drafted as `charter_version`
-> 0.3.0 (DRAFT, awaiting his signature); B-2 is D-57. Two things refine this packet. (1) Item (a)'s co-gate
+> the recommended option: the charter bundle is `docs/DECISIONS.md` D-56, cut as `charter_version` 0.3.0 and
+> owner-signed the same day (PR #111); B-2 is D-57. Two things refine this packet. (1) Item (a)'s co-gate
 > needed a definition across windows that each restart from cash; the owner chose the chain-linked curve
 > (OD-6). (2) Item (c)'s numbers, checked against `splitPlan` and the calendar: the schedule reaches 102
 > blocks and the whole design window only 138, so 150 was never reachable. D-packet-3 and D-packet-4 are

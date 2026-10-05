@@ -1,6 +1,6 @@
 # Alpha Charter: `etf-trend-vol`
 
-> **0.3.0 — DRAFT, awaiting owner signature (D-56).** This prose describes **0.3.0**, the one-batch cut that
+> **0.3.0 — APPROVED, owner-signed 2026-10-05 against `code_commit 58d4474` (D-56).** This prose describes **0.3.0**, the one-batch cut that
 > settles every charter question before an experiment is registered: the Sharpe-difference primary metric is
 > **kept** and F2 becomes a **co-gate** on ACTIVE, read on chain-linked curves (§13, §16.2, §17; OD-5, OD-6); a
 > failed primary metric with Secondary 2 beaten goes to owner review and **never to ACTIVE** (§16.1, §17;
@@ -8,10 +8,9 @@
 > readings are confirmed (§11; OD-9); the prospective clock runs **from registration** (§14.2; OD-10). Three of
 > D-55's conflicts are folded in: the operative `risk.yaml` must admit the one-pass weekly rebalance (§8; OD-11),
 > ADV participation is 0.5% in both files (§10; OD-12), and the stop-based initial-risk budget does not apply
-> (§8; OD-13). `config/examples/risk.yaml` 0.2.0 carries the policy side, **unsigned**, for the owner to sign
-> alongside this charter. Until the
-> owner signs the `approval:` block in `charter.yaml`, `assertRegistrable` refuses this version and **no version
-> is registrable** — 0.2.0 (signed 2026-09-12, D-50) is superseded in the tracked file and frozen at
+> (§8; OD-13). `config/examples/risk.yaml` 0.2.0 carries the policy side and was signed alongside this charter.
+> `charter show` reports `registrable: true`, `charterHash sha256:1435253d…`. 0.2.0 (signed 2026-09-12, D-50) is
+> superseded in the tracked file and frozen at
 > `packages/core/test/fixtures/etf-trend-vol-charter-0.2.0-signed.yaml`. 0.3.0 inherits none of 0.2.0's
 > evidence, and 0.2.0 had none: nothing was registered and no run is citable.
 
@@ -24,7 +23,7 @@
 | Companion schema | `strategies/etf-trend-vol/charter.yaml` (the only form the code executes) |
 | Owner | Matt Herman |
 | Author of draft | Black Gold Discovery Pack (0.1.0); Claude Code prepared 0.2.0 and 0.3.0 for the owner's signature |
-| Approval state | DRAFT in `charter.yaml`; the 0.3.0 answers are the owner's (D-56, 2026-10-05) and bind when he signs. D-32 owner-confirmed (§8). Registration hash assigned at experiment registration. |
+| Approval state | APPROVED in `charter.yaml` (approved_by Matt Herman, 2026-10-05, `code_commit 58d4474`, D-56); the 0.3.0 answers are the owner's. D-32 owner-confirmed (§8). Registration hash assigned at experiment registration. |
 | Intended phase | Phase 2 (first deterministic Alpha Charter), then Phase 5 shadow/paper |
 | Runtime LLM in signal | No |
 
@@ -32,7 +31,7 @@ Every number in this document was a PROPOSED default, FROZEN into each owner-sig
 
 ## Owner approval block
 
-> **The binding approval is the `approval:` block in `charter.yaml`**, which for 0.3.0 is **unsigned**. The owner signs it by setting `state: APPROVED` and filling `approved_by`, `approval_date` and `code_commit`; `approval_ref` already points at `docs/DECISIONS.md#D-56`. That block is the only form the code executes and the one `assertRegistrable` checks. The template below is a non-binding human mirror; Claude Code did not fill it in (signing is the owner's act), and the owner may countersign it here but need not.
+> **The binding approval is the `approval:` block in `charter.yaml`**, which the owner signed for 0.3.0 on 2026-10-05: `state: APPROVED`, `approved_by: Matt Herman`, `approval_date: 2026-10-05`, `code_commit: 58d4474`, `approval_ref: docs/DECISIONS.md#D-56`. That block is the only form the code executes and the one `assertRegistrable` checks. The template below is a non-binding human mirror; Claude Code did not fill it in (signing is the owner's act), and the owner may countersign it here but need not.
 
 ```
 Charter:        etf-trend-vol 0.3.0
@@ -368,7 +367,7 @@ Trivial. Fourteen daily series, a 13x13 covariance, and a rank. Compute under on
 
 ## 24. Open decisions blocking registration
 
-All thirteen carry a written resolution in `charter.yaml`. OD-1 to OD-4 were resolved for 0.1.0 (D-39, OD-4 revised for 0.2.0 under D-50); OD-5 to OD-13 are the owner's answers of 2026-10-05 (D-56) and bind when he signs 0.3.0.
+All thirteen carry a written resolution in `charter.yaml`. OD-1 to OD-4 were resolved for 0.1.0 (D-39, OD-4 revised for 0.2.0 under D-50); OD-5 to OD-13 are the owner's answers of 2026-10-05 (D-56), binding since he signed 0.3.0 that day.
 
 1. Compliance policy on diversified-ETF look-through (decides XLE, flags XLI/XLP). Look-through applies; XLE excluded.
 2. Live cash instrument (BIL, SGOV, or plain cash). BIL.

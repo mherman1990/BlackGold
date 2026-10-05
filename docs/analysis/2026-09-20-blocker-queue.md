@@ -74,7 +74,7 @@ forbidden from doing (`CLAUDE.md`, "What standing authorization never covers") o
 simply does not have the information for.
 
 > **2026-10-05: B-1 and B-2 are decided** (D-56, D-57). B-1: the Sharpe-difference primary metric is kept and
-> F2 becomes a promotion co-gate, drafted into `charter_version` 0.3.0 for Matt's signature. B-2: Claude Code
+> F2 becomes a promotion co-gate, cut as `charter_version` 0.3.0 and owner-signed the same day (PR #111). B-2: Claude Code
 > may build the second adapter and reconciler, with Matt approving each reconciled file before ingest, and the
 > citable evaluation runs from a separate store. The text below is the question as it stood.
 

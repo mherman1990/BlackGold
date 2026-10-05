@@ -1,31 +1,32 @@
 # Machine-readable companion to ALPHA_CHARTER.md. The prose charter is the specification a human reads;
 # this file is the only form the code executes.
 #
-# STATUS: ARPPOVED (charter_version 0.3.0) 
+# STATUS: APPROVED (charter_version 0.3.0) - owner-signed 2026-10-05 against code_commit 58d4474 (D-56), with
+# config/examples/risk.yaml 0.2.0 signed alongside it. Merged to main as PR #111. The approval block below is
+# the signature; this banner only describes it.
 #
 # 0.3.0 is the one-batch cut the 2026-09-21 decision packet called for: every charter question that would
 # otherwise reset the prospective clock after registration, settled together before it. The owner answered
-# each on 2026-10-05; the answers are recorded as OD-5..OD-10 below and in docs/DECISIONS.md#D-56, and become
-# binding when he signs. In short: the Sharpe-difference primary metric is KEPT, and F2 becomes a co-gate on
+# each on 2026-10-05; the answers are recorded as OD-5..OD-13 below and in docs/DECISIONS.md#D-56, and became
+# binding when he signed. In short: the Sharpe-difference primary metric is KEPT, and F2 becomes a co-gate on
 # section 17's REGISTERED -> ACTIVE step, read on chain-linked curves (OD-5, OD-6); a failed primary with
 # Secondary 2 beaten goes to owner review and never to ACTIVE (OD-7); section 14.3's minimum is restated as
 # the schedule's capacity, 100 (OD-8); Secondary 2's two readings are confirmed (OD-9); the prospective clock
 # runs from registration (OD-10). Three of D-55's conflicts were folded in on the owner's instruction the same
 # day: the operative risk.yaml must admit this charter's one-pass weekly rebalance (OD-11), ADV participation is
 # 0.005 in both files (OD-12), and the stop-based initial-risk budget does not apply to this no-stop strategy
-# (OD-13). OD-11 and OD-12 change config/examples/risk.yaml to 0.2.0, which is UNSIGNED and needs the owner's
-# signature alongside this one. component_versions.features 1 -> 2 (the code's FEATURES_VERSION since the
+# (OD-13). OD-11 and OD-12 change config/examples/risk.yaml to 0.2.0, which the owner signed alongside this
+# charter. component_versions.features 1 -> 2 (the code's FEATURES_VERSION since the
 # corporate-action dedupe fix) and risk_policy 0 -> 1 (the operative risk.yaml changes under this version) are
-# provenance, proposed by Claude Code and confirmed only by the signature.
+# provenance, proposed by Claude Code and confirmed by the signature.
 #
 # Any charter edit is a new strategy version: 0.3.0 inherits none of 0.2.0's evidence, and 0.2.0 has none to
 # lose (nothing registered, nothing citable). The signed 0.2.0 file is frozen at
 # packages/core/test/fixtures/etf-trend-vol-charter-0.2.0-signed.yaml with its hash sha256:5c7f94da...0d25.
 #
-# TO SIGN (the owner's act, from his own account - Claude Code must never fill these, CLAUDE.md carve-out):
-# set approval.state to APPROVED and fill approved_by, approval_date and code_commit (the commit you reviewed);
-# then change the first line of this banner to say APPROVED. Until then `assertRegistrable` refuses this file
-# and the strategy-charter tripwire test is red - the gate working, not a defect.
+# Signing is the owner's act and always is: Claude Code prepares a charter version and must never fill its
+# approval block (CLAUDE.md carve-out). A future version starts at DRAFT again, and the strategy-charter
+# tripwire test failing on an unsigned charter is the gate working.
 #
 # Comments here are not hash-covered: charterHash is sha256 over the canonical JSON of the PARSED charter
 # (charter.ts), so no banner edit can alter a hash.

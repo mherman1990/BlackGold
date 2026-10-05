@@ -173,7 +173,9 @@ describe("registrability gate", () => {
     // The owner resolved all four open decisions and settled the XLE condition on 2026-09-07 (D-39), then signed
     // the approval block on 2026-09-08 (charter_version 0.1.0, code_commit 474d0dc, ref docs/DECISIONS.md#D-39).
     // The tracked charter has since been re-cut to 0.2.0 to adopt Tiingo bars, and the owner signed that version
-    // too on 2026-09-12 (code_commit 115dae4, ref docs/DECISIONS.md#D-50). The assertions below are deliberately
+    // too on 2026-09-12 (code_commit 115dae4, ref docs/DECISIONS.md#D-50). It was re-cut once more to 0.3.0 for
+    // the charter bundle, which the owner signed on 2026-10-05 (code_commit 58d4474, ref docs/DECISIONS.md#D-56);
+    // this test was red on that PR's branch until he did, as intended. The assertions below are deliberately
     // version-agnostic: they pin the signed, registrable *state*, not one version's signature, so a future
     // charter version starting at DRAFT fails this test until the owner signs it. This was the tripwire that
     // forced signing to be a visible, reviewed change; now
