@@ -54,6 +54,16 @@ export function requiredHistorySessions(p: FeatureParams): number {
   return Math.max(p.momentumLookbackSessions + 1, p.trendSmaSessions, p.volatilitySessions + 1, p.advSessions);
 }
 
+/**
+ * The first date `computeFeatures` reads bars and corporate actions from, for a decision on `decisionSession`.
+ * Calendar sessions run about 252 a year, so 8/5 calendar days per session plus 30 days of slack is a safe floor.
+ * Integer arithmetic only: float literals are banned in this repository. Exported so the corporate-action
+ * reconciliation covers exactly the warm-up the engine reads (D-58).
+ */
+export function featureLoadStart(decisionSession: IsoDate, params: FeatureParams): IsoDate {
+  return addDays(decisionSession, -Math.ceil((requiredHistorySessions(params) * 8) / 5) - 30);
+}
+
 export const INSUFFICIENT_HISTORY = "INSUFFICIENT_HISTORY";
 export const NO_BAR_AT_DECISION = "NO_BAR_AT_DECISION";
 export const NOT_IN_COVARIANCE_WINDOW = "NOT_IN_COVARIANCE_WINDOW";
@@ -300,10 +310,7 @@ export function computeFeatures(deps: FeatureEngineDeps, input: ComputeFeaturesI
   const { params } = input;
   if (params.momentumSkipSessions >= params.momentumLookbackSessions) throw new RangeError("momentum skip must be shorter than the lookback");
   const decisionSession = deps.calendar.previousSession(input.decisionAt);
-  // Calendar sessions run about 252 a year, so 8/5 calendar days per session plus 30 days of slack is a
-  // safe floor. Integer arithmetic only: float literals are banned in this repository.
-  const need = requiredHistorySessions(params);
-  const from = addDays(decisionSession, -Math.ceil((need * 8) / 5) - 30);
+  const from = featureLoadStart(decisionSession, params);
 
   const entities = [...new Set([...input.riskEntities, input.cashEntityId])];
   const loaded = new Map<string, Loaded>();

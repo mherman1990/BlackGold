@@ -46,7 +46,7 @@ const split = (source: string, entityId: string, exDate: string, ratio: string):
 
 const OPTS: ReconcileOptions = {
   dataset: "etf-test",
-  window: { from: D("2008-01-01"), to: D("2018-12-31") },
+  windows: [{ from: D("2008-01-01"), to: D("2018-12-31") }],
   entities: ["VTI", "XLK", "BIL"],
   preferredSources: [ISSUER],
   amountTolerance: N(DEFAULT_AMOUNT_TOLERANCE),
@@ -155,6 +155,21 @@ describe("reconcileCorporateActions: scope", () => {
     const r = run([cash(VENDOR, "VTI", "2005-03-24", "0.4"), cash(VENDOR, "SPY", "2018-03-16", "1.1"), cash(ISSUER, "VTI", "2018-03-22", "0.5"), cash(VENDOR, "VTI", "2018-03-22", "0.5")]);
     expect(r.file.actions).toHaveLength(1);
     expect(r.report.oneSided).toEqual([]);
+  });
+
+  it("reads several windows, ignoring the stretch between them on every side", () => {
+    const two = { windows: [{ from: D("2008-01-01"), to: D("2010-12-31") }, { from: D("2016-01-01"), to: D("2018-12-31") }] };
+    const r = run([cash(ISSUER, "VTI", "2009-03-23", "0.5"), cash(VENDOR, "VTI", "2009-03-23", "0.5"), cash(VENDOR, "VTI", "2013-03-21", "0.6"), cash(ISSUER, "VTI", "2017-03-23", "0.7"), cash(VENDOR, "VTI", "2017-03-23", "0.7")], two);
+    expect(r.file.actions.map((e) => e.action["exDate"])).toEqual(["2009-03-23", "2017-03-23"]);
+    expect(r.report.oneSided).toEqual([]);
+    expect(r.report.windows).toEqual(two.windows);
+    expect(r.file.notes).toContain("2008-01-01..2010-12-31 and 2016-01-01..2018-12-31");
+  });
+
+  it("refuses no window, or one that ends before it starts", () => {
+    const recs = [cash(ISSUER, "VTI", "2009-03-23", "0.5"), cash(VENDOR, "VTI", "2009-03-23", "0.5")];
+    expect(() => run(recs, { windows: [] })).toThrow(/at least one ex-date window/);
+    expect(() => run(recs, { windows: [{ from: D("2010-01-01"), to: D("2009-12-31") }] })).toThrow(/ends before it starts/);
   });
 
   it("shows a source that is silent for an entity in the per-entity counts", () => {
@@ -317,14 +332,14 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     expect(run(xlf, { ...opts, structural: [ENTRY, agreeing] }).report.setAside[0]?.structuralKind).toBe("DELISTING+SPINOFF");
   });
 
-  it("ignores a structural action outside the window or universe, and then sets nothing aside", () => {
-    for (const o of [{ ...opts, entities: ["VTI"] }, { ...opts, window: { from: D("2017-01-01"), to: D("2018-12-31") } }]) {
+  it("ignores a structural action outside the windows or universe, and then sets nothing aside", () => {
+    for (const o of [{ ...opts, entities: ["VTI"] }, { ...opts, windows: [{ from: D("2017-01-01"), to: D("2018-12-31") }] }]) {
       const r = run([...xlf, cash(SSGA, "VTI", "2017-03-23", "0.5"), cash(VENDOR, "VTI", "2017-03-23", "0.5")], o);
       expect(r.file.actions.some((e) => e.action["kind"] === "SPINOFF")).toBe(false);
       expect(r.report.setAside).toEqual([]);
       // Not written, but never silent: the audit sees what was left out and why.
       expect(r.report.structuralOutOfScope).toEqual([
-        { index: 0, kind: "SPINOFF", entityId: "XLF", exDate: "2016-09-19", reason: o.entities.includes("XLF") ? "outside the window" : "entity not in scope" },
+        { index: 0, kind: "SPINOFF", entityId: "XLF", exDate: "2016-09-19", reason: o.entities.includes("XLF") ? "outside the windows" : "entity not in scope" },
       ]);
     }
     // A mis-cased entity is a typo for one in scope, not another entity: refused, not dropped (Codex, PR #114).
@@ -432,19 +447,19 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
       expect(() => run(recs, { ...opts, structural: [delisting({}, "2016-09-16"), reaching] })).toThrow(/structural\[1\] supersedes vendor:tiingo-eod CASH_DIVIDEND on 2016-09-21: an action classifies records on its own date/);
     });
 
-    it("counts a terminal action outside the window: it still ends the series inside it", () => {
+    it("counts a terminal action outside the windows: it still ends the series inside them", () => {
       const early = { action: { kind: "MERGER", entityId: "XLF", acquirer: "ACQ", terms: { cashPerShare: "25" }, effective: "2015-12-15" }, sources: SOURCES };
-      const window = { from: D("2016-01-01"), to: D("2016-12-31") };
-      expect(() => run(xlf.slice(0, 2), { ...opts, window, structural: [early] })).toThrow(/fall after one outside the window: XLF 2016-09-16: issuer:ssga-distributions CASH_DIVIDEND 0.114386 \(after its MERGER 2015-12-15\)/);
+      const windows = [{ from: D("2016-01-01"), to: D("2016-12-31") }];
+      expect(() => run(xlf.slice(0, 2), { ...opts, windows, structural: [early] })).toThrow(/fall after one outside the windows: XLF 2016-09-16: issuer:ssga-distributions CASH_DIVIDEND 0.114386 \(after its MERGER 2015-12-15\)/);
       const spin = { action: { ...SPINOFF, exDate: "2016-02-01" }, sources: SOURCES };
-      expect(() => run([cash(SSGA, "VTI", "2016-03-01", "0.5"), cash(VENDOR, "VTI", "2016-03-01", "0.5")], { ...opts, entities: ["XLF", "VTI"], window, structural: [spin, early] })).toThrow(
+      expect(() => run([cash(SSGA, "VTI", "2016-03-01", "0.5"), cash(VENDOR, "VTI", "2016-03-01", "0.5")], { ...opts, entities: ["XLF", "VTI"], windows, structural: [spin, early] })).toThrow(
         /the XLF SPINOFF 2016-02-01 falls after XLF's series ends with its MERGER 2015-12-15/,
       );
       // It counts towards one terminal action per entity, too.
-      expect(() => run(xlf.slice(0, 2), { ...opts, window, structural: [early, delisting()] })).toThrow(/XLF has two terminal actions, MERGER 2015-12-15 and DELISTING 2016-09-20/);
+      expect(() => run(xlf.slice(0, 2), { ...opts, windows, structural: [early, delisting()] })).toThrow(/XLF has two terminal actions, MERGER 2015-12-15 and DELISTING 2016-09-20/);
       // One after the window ends nothing inside it, and is listed as out of scope.
       const late = { ...early, action: { ...early.action, effective: "2017-03-01" } };
-      expect(run(xlf.slice(0, 2), { ...opts, window, structural: [late] }).report.structuralOutOfScope).toEqual([{ index: 0, kind: "MERGER", entityId: "XLF", exDate: "2017-03-01", reason: "outside the window" }]);
+      expect(run(xlf.slice(0, 2), { ...opts, windows, structural: [late] }).report.structuralOutOfScope).toEqual([{ index: 0, kind: "MERGER", entityId: "XLF", exDate: "2017-03-01", reason: "outside the windows" }]);
     });
 
     it("refuses a spin-off after the series end, whatever the order the entries come in", () => {

@@ -19,6 +19,7 @@ import { CORE_PACKAGE_NAME, CORE_VERSION } from "./version.ts";
 import { ArtifactStore } from "./data/artifacts/store.ts";
 import { PointInTimeRepository } from "./data/pit/repository.ts";
 import { INGEST_USAGE, parseIngestArgs, parseOptions, resolveUniverseIngest, runIngest, UsageError } from "./ingest/run.ts";
+import { parseReconcileArgs, RECONCILE_USAGE, runReconcile } from "./ingest/reconcile-corporate-actions.ts";
 import { admittedRiskEtfs, charterRange, charterUniverseMembers, loadCharterFile, registrabilityReasons } from "./strategy/charter.ts";
 import { classifyCandidateFactors } from "./strategy/factors.ts";
 import { splitPlan, type SplitKind } from "./research/walkforward.ts";
@@ -53,6 +54,10 @@ Phase 1 research kernel (public sources only; requires BLACKGOLD_SEC_USER_AGENT_
   pit latest --source <id> [--entity <id>]  Newest availableAt and the newest row for a source
   snapshot create --dataset <name> --description <text>
   artifacts verify [--sample N]             Verify stored artifacts; failures quarantine referencing rows (default sample 100)
+  ${RECONCILE_USAGE.split("\n").join("\n  ")}
+                                            D-57/D-58: build the UNSIGNED >=2-source corporate-actions file for a charter and its
+                                            report, from Tiingo's rows in THIS (research) store, State Street (fetched) and the owner's
+                                            files. Writes two new files and one ledger event; appends no observation
 
 Phase 2 research (deterministic charters only; computes nothing that a DRAFT charter may cite as evidence):
   charter show --path <charter.yaml>        Parse, hash, and report whether the charter may be registered
@@ -229,6 +234,16 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
       try {
         const report = await runIngest({ db, config, calendar }, request);
         return { exitCode: 0, output: report };
+      } finally {
+        db.close();
+      }
+    }
+    case "reconcile": {
+      const request = parseReconcileArgs(args);
+      mkdirSync(config.dataDir, { recursive: true });
+      const { db } = openCoreDb(config);
+      try {
+        return { exitCode: 0, output: await runReconcile({ db, config, calendar }, request) };
       } finally {
         db.close();
       }

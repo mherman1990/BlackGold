@@ -227,7 +227,54 @@ Name a record on a later date with its `exDate`, for example
 the action's own date. A delisting can therefore keep a genuine dividend on its last trade date and supersede a
 later payout from the same source.
 
-The command that runs all of this and writes the unsigned file plus its report is the next PR (D-57 PR-B2).
+### Building the file: `reconcile corporate-actions` (D-57, D-58)
+
+Run it against the **research store**, the data directory where `ingest tiingo-actions` has run. Tiingo's records
+are read from there and written nowhere else. It needs `BLACKGOLD_SEC_USER_AGENT_CONTACT`, because it fetches
+State Street through the allowlisted client.
+
+```bash
+node packages/core/dist/main.js reconcile corporate-actions \
+  --charter strategies/etf-trend-vol/charter.yaml \
+  --out reconciled-1.json --report reconciled-1.report.json \
+  --vanguard VTI=vti.json,VTV=vtv.json,VUG=vug.json \
+  --ishares IWM=iShares-Russell-2000-ETF_fund.xls \
+  [--curated curated.csv] [--structural structural.json]
+```
+
+**What it reads:**
+- The charter sets the scope: its universe, cash and benchmarks.
+- It also sets the windows: DESIGN and RECENT, each with the feature warm-up in front. The holdout's middle is
+  never read.
+
+**What it writes:**
+- Two new files, which it never overwrites: an existing path is refused, so a signed file can't be clobbered.
+  - the unsigned vendored file;
+  - its report.
+- A raw artifact for every input.
+- One `corporate_actions.reconciled` ledger event.
+
+It appends no observation to any store.
+
+**The loop:**
+
+1. **Run it once without `--curated`.** The report's `toCurate` lists every action only Tiingo reports.
+2. **Curate those rows from the issuers' documents.** Then rerun with `--curated`, writing to new paths. Each run's
+   `toCurate` shrinks to what is left.
+3. **Audit the final file against its report.** Check these sections:
+   - `reconcile.disagreements`: sources that disagree;
+   - `reconcile.oneSided`: actions only one source reports;
+   - `reconcile.setAside`: records set aside beside a structural action;
+   - `reconcile.structuralOutOfScope`: curated structural actions left out, and why;
+   - `issuer.ssgaNavHistory`: splits, jumps and gaps;
+   - `issuer.ssgaPayDateDropped`;
+   - `vendor.revisedActions`.
+4. **Sign it:** fill `approval.approvedBy` and `approval.approvedAt`.
+5. **Ingest it into a fresh evaluation data directory** that has never had `ingest tiingo-actions` run against it
+   (D-57(b)). Load the bars with `ingest universe --actions none`, then
+   `ingest corporate-actions --file reconciled-N.json`, then take the snapshot.
+
+An action still single-sourced when you sign stays flagged on ingest, and any run that touches it stays uncitable.
 
 ## Step 2c — or load corporate actions automatically from Tiingo (D-49, research-only)
 
