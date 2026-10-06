@@ -1,4 +1,4 @@
-import { compareInstants, utc, type UtcInstant } from "@blackgold/shared";
+import { compareInstants, hashJson, sha256Hex, utc, type UtcInstant } from "@blackgold/shared";
 import { z } from "zod";
 import type { ArtifactStore } from "../artifacts/store.ts";
 import type { PointInTimeObservation } from "../pit/types.ts";
@@ -25,9 +25,16 @@ import { SchemaDriftError, type AdapterContext, type FetchOutcome, type ParseCon
  * observation with correct provenance. The `action` object is exactly the stored value shape, so it is
  * validated by `corporateActionFromValue` - the same strict parser the read path uses - rather than a second,
  * drifting validator.
+ *
+ * **Owner approval is required (D-57).** A file is ingested only when its `approval` block is signed and its
+ * `actionsHash` is the hash of the `actions` it carries. Since D-57 the ≥2-source file may be machine-reconciled
+ * rather than hand-curated, and the point of the operator-curated rule survives only if nothing becomes evidence
+ * until the owner has audited it: so an unsigned file, an approval dated after the ingest, or actions that no
+ * longer hash to what was approved all refuse the whole file before a single observation is produced. The
+ * reconciler pre-fills `actionsHash`; the owner fills `approvedBy` and `approvedAt`, and Claude Code never does.
  */
-export const ADAPTER_VERSION = "1.0.0";
-export const PARSER_VERSION = "1.0.0";
+export const ADAPTER_VERSION = "1.1.0";
+export const PARSER_VERSION = "1.1.0";
 
 /** Label for SchemaDrift errors; the per-action source id is `corporate_action.<KIND>` from the model. */
 const SOURCE_KIND = "corporate_action.vendored";
@@ -56,14 +63,67 @@ const EntrySchema = z
   })
   .strict();
 
+const ApprovalSchema = z
+  .object({
+    /** The owner's name. `null` until he signs; never filled by Claude Code. */
+    approvedBy: z.string().nullable(),
+    /** ISO-8601 UTC instant of the signature. `null` until he signs. */
+    approvedAt: z.string().nullable(),
+    /** `corporateActionsHash` of `actions` as approved. Any later edit to an action stops the file ingesting. */
+    actionsHash: z.string().regex(/^sha256:[0-9a-f]{64}$/, "must be sha256:<64 hex>"),
+  })
+  .strict();
+
 const FileSchema = z
   .object({
     /** Identifies the vendored set; part of each observation locator so multiple files coexist without collision. */
     dataset: z.string().min(1),
     notes: z.string().optional(),
+    /** Required: the owner's sign-off on exactly these actions (D-57). */
+    approval: ApprovalSchema,
     actions: z.array(EntrySchema),
   })
   .strict();
+
+/**
+ * The hash an approval binds to: sha256 of the canonical JSON of the file's `actions` array, exactly as written
+ * (before any schema default is applied), so the reconciler that writes the file and the ingest that checks it
+ * hash the same bytes' meaning.
+ */
+export function corporateActionsHash(actions: unknown): string {
+  return `sha256:${hashJson(actions)}`;
+}
+
+/** The file is not signed, or its signature does not cover what it now contains (D-57). Nothing is ingested. */
+export class UnapprovedCorporateActionsError extends Error {
+  readonly reasons: string[];
+  constructor(reasons: string[]) {
+    super(`Corporate-actions file is not owner-approved for ingest: ${reasons.join("; ")}`);
+    this.name = "UnapprovedCorporateActionsError";
+    this.reasons = reasons;
+  }
+}
+
+function approvalProblems(approval: z.infer<typeof ApprovalSchema>, rawActions: unknown, ingestedAt: UtcInstant): string[] {
+  const reasons: string[] = [];
+  if (approval.approvedBy === null || approval.approvedBy.trim() === "") reasons.push("approval.approvedBy is unsigned");
+  if (approval.approvedAt === null) {
+    reasons.push("approval.approvedAt is empty");
+  } else {
+    let at: UtcInstant | undefined;
+    try {
+      at = utc(approval.approvedAt);
+    } catch {
+      reasons.push("approval.approvedAt must be an ISO-8601 UTC instant ending in Z");
+    }
+    if (at !== undefined && compareInstants(at, ingestedAt) > 0) {
+      reasons.push(`approval.approvedAt ${approval.approvedAt} is after this ingest (${ingestedAt}); an approval cannot cover an ingest that precedes it`);
+    }
+  }
+  const actual = corporateActionsHash(rawActions);
+  if (actual !== approval.actionsHash) reasons.push(`the actions hash to ${actual}, not the approved ${approval.actionsHash}: they changed after approval`);
+  return reasons;
+}
 
 /** availableAt = max(announcedAt, exDateStart); the repository rejects anything earlier than the effective date. */
 function resolveAvailableAt(announcedAt: string | undefined, effectiveStart: UtcInstant): UtcInstant {
@@ -86,6 +146,9 @@ export function parseCorporateActions(bytes: Uint8Array, ctx: CorporateActionsPa
   }
   const parsed = FileSchema.safeParse(json);
   if (!parsed.success) throw new SchemaDriftError(SOURCE_KIND, parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+  // Before any action is read: an unapproved file produces no observations at all, not a partial set.
+  const problems = approvalProblems(parsed.data.approval, (json as { actions: unknown }).actions, ctx.ingestedAt);
+  if (problems.length > 0) throw new UnapprovedCorporateActionsError(problems);
   const dataset = ctx.dataset ?? parsed.data.dataset;
 
   const seen = new Set<string>();
@@ -116,13 +179,17 @@ export function parseCorporateActions(bytes: Uint8Array, ctx: CorporateActionsPa
 }
 
 /**
- * Store the vendored file as one content-addressed artifact and parse it into observations. No network. The
+ * Parse the vendored file into observations, then store it as one content-addressed artifact. No network. The
  * whole file shares one rawContentHash, so a re-ingest of the identical file deduplicates end to end.
+ *
+ * Parsing comes first so a refused file - unapproved, or failing validation - leaves nothing behind, not even an
+ * artifact. The hash is the store's own (`sha256:` of the raw bytes), so the observations carry the hash the
+ * artifact is then stored under.
  */
 export function ingestCorporateActions(store: ArtifactStore, bytes: Uint8Array, ctx: CorporateActionsContext): FetchOutcome<Record<string, unknown>> {
-  const put = store.put(bytes, { locator: "vendor/corporate-actions", mime: "application/json", retention: "market" });
-  const parseCtx: CorporateActionsParseContext = { calendar: ctx.calendar, ingestedAt: ctx.ingestedAt, rawContentHash: put.hash };
+  const parseCtx: CorporateActionsParseContext = { calendar: ctx.calendar, ingestedAt: ctx.ingestedAt, rawContentHash: `sha256:${sha256Hex(bytes)}` };
   if (ctx.dataset !== undefined) parseCtx.dataset = ctx.dataset;
   const observations = parseCorporateActions(bytes, parseCtx);
+  const put = store.put(bytes, { locator: "vendor/corporate-actions", mime: "application/json", retention: "market" });
   return { artifacts: [{ hash: put.hash, locator: "vendor/corporate-actions", deduplicated: put.deduplicated, bytesRaw: put.bytesRaw }], observations };
 }

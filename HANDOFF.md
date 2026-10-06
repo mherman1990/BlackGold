@@ -7,7 +7,7 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 1085 tests (unit 1018, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
+4. `npm ci && npm run check`. All of lint, typecheck, 1111 tests (unit 1044, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
 
 ## 2. Repository guard
 
@@ -15,7 +15,28 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 ## 3. Current position
 
-**Newest first (2026-10-05).**
+**Newest first (2026-10-06).**
+
+- **D-57 PR-A: the approval gate and the reconciler.**
+  - **The approval gate:**
+    - `parseCorporateActions` refuses any vendored file whose `approval` block is unsigned, dated after the
+      ingest, or bound to an `actionsHash` the actions no longer match.
+    - **Never fill `approvedBy` or `approvedAt` in a real file.** They are the owner's, like a charter
+      signature.
+    - Tests build signed fixtures through `signed()`, so each test fails on the defect it names rather than on
+      a missing signature.
+  - **The reconciler:** `reconcileCorporateActions` is pure. It turns records into `{ file, report }`, and
+    `sourceActionsFromObservations` adapts any corporate-action adapter's output, Tiingo's included.
+    - **Never make it drop an action** to get a cleaner file. Unverified means written single-sourced and
+      reported.
+  - **Next is PR-B: the issuer adapter(s) and a `reconcile` CLI that writes the file and report.**
+    - Read `docs/analysis/2026-10-06-d57-second-source-survey.md` first.
+    - SSGA is buildable now.
+    - **Its 2016-09-19 XLF row is the XLRE spin-off in a dollar column.** Exclude cash records on a structural
+      action's ex-date and report them; do not convert them.
+    - The Vanguard, BlackRock, QQQ and Nasdaq questions are the owner's.
+
+**2026-10-05.**
 
 - **Charter 0.3.0 and `risk.yaml` 0.2.0 are owner-signed and merged (PR #111, `355556f`, 2026-10-05).** The charter is APPROVED against `code_commit 58d4474`, `charterHash sha256:1435253d4d584be507a1d012f7fa98bf6b85b602c8892f731b59d208740c3197`, `registrable: true`. **Nothing is registered yet.** Registration is Matt's next act, from the separate evaluation store (D-57) after reconciled corporate actions are ingested there, per §5. Any charter edit from here is 0.4.0 and starts at DRAFT.
 - **`risk.yaml` 0.2.0 (D-56 addendum, OD-11 to OD-13: D-55's conflicts 1, 4 and 6).** Its counts and turnover cap now admit the charter's one-pass weekly rebalance (11 orders, 5 new, 2.00 gross; the schema admits gross turnover up to 2), ADV participation is 0.5% in both files, and the stop-based risk budget is declared not applicable in the charter. Never edit its approval or the two USD order caps: both are Matt's. `risk-orders.test.ts` fails if the operative file stops admitting the rebalance.
