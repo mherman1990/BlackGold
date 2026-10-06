@@ -1,10 +1,10 @@
 import { addDays, Dec, type IsoDate, type UtcInstant } from "@blackgold/shared";
-import { corporateActionFromValue } from "../market/types.ts";
+import { actionEffectiveDate, actionEntityId, corporateActionFromValue } from "../market/types.ts";
 import type { PointInTimeObservation } from "./pit/types.ts";
 import { corporateActionsHash } from "./adapters/corporate-actions.ts";
 
 /**
- * Machine reconciliation of corporate actions across independent public sources (D-57).
+ * Machine reconciliation of corporate actions across independent public sources (D-57, D-58).
  *
  * D-29 made the ≥2-source vendored file the only promotion-eligible corporate-action path, and D-57 lets machines
  * build it: each source's records are fetched and cross-checked here, and the result is a vendored file in
@@ -19,17 +19,21 @@ import { corporateActionsHash } from "./adapters/corporate-actions.ts";
  * flags `UNVERIFIED_SINGLE_SOURCE` - so any run touching it stays uncitable - and it is listed in the report for
  * the owner to resolve. Reconciliation can make the evidence citable; it can never make it look better than it is.
  *
- * Pure: records in, file and report out. Only CASH_DIVIDEND and SPLIT are reconciled. Structural actions
- * (SPINOFF, MERGER, DELISTING) are a handful of cases the owner adds by hand with their own sources.
+ * Pure: records in, file and report out. CASH_DIVIDEND and SPLIT are reconciled. Structural actions (SPINOFF,
+ * MERGER, DELISTING) are a handful of cases the owner curates with their own sources (D-58): they pass through as
+ * written, and any cash or split record on the same entity and date is SET ASIDE and reported rather than written,
+ * because an issuer can list a spin-off in its dividend column (SSGA's XLF row of 2016-09-19 is the XLRE ratio)
+ * and writing both would count one event twice. Setting aside is the one place a record does not reach the file,
+ * and only ever beside the structural action that already accounts for that date.
  */
-export const RECONCILE_VERSION = 1;
+export const RECONCILE_VERSION = 2;
 
 type SourceBase = {
   /** Written into `sources`, e.g. `vendor:tiingo-eod` or `issuer:ssga-distributions`. */
   source: string;
   entityId: string;
   exDate: IsoDate;
-  /** Where the record came from (an artifact hash or URL), for the report. */
+  /** Where the record came from (an artifact hash, URL, or document), for the report. */
   locator: string;
   /** Declaration or first public record, when the source gives one. */
   announcedAt?: UtcInstant | undefined;
@@ -43,6 +47,11 @@ export type SourceSplit = SourceBase & { kind: "SPLIT"; ratio: Dec };
 
 export type SourceAction = SourceCashDividend | SourceSplit;
 
+/** An owner-curated structural action, in the vendored file's entry shape (D-58). Written as given. */
+export type StructuralEntry = { action: Record<string, unknown>; sources: string[]; announcedAt?: string | undefined };
+
+const STRUCTURAL_KINDS = new Set(["SPINOFF", "MERGER", "DELISTING"]);
+
 export type ReconcileOptions = {
   dataset: string;
   /** Inclusive ex-date window. Records outside it are ignored on every side, so a longer history is not "one-sided". */
@@ -50,14 +59,17 @@ export type ReconcileOptions = {
   /** Entities in scope. A record for any other entity is ignored. */
   entities: readonly string[];
   /**
-   * The primary source - an issuer. When sources agree, the file carries its values (amount, pay date,
-   * announcement); when they disagree, its value is the one written, single-sourced, for the owner to resolve.
+   * The primary sources - issuers - in priority order. For each action the first of these that reports it carries
+   * the file's values (amount, pay date, announcement); when sources disagree, its value is the one written,
+   * single-sourced, for the owner to resolve. An action none of them reports carries the alphabetically first source.
    */
-  preferredSource: string;
+  preferredSources: readonly string[];
   /** Largest absolute per-share difference read as agreement on a cash dividend. Split ratios must match exactly. */
   amountTolerance: Dec;
   /** How far apart two ex-dates may be to be reported as a likely match. Never used to reconcile. */
   nearMatchDays?: number;
+  /** Owner-curated structural actions, written as given. In-scope ones set aside same-day cash and split records. */
+  structural?: readonly StructuralEntry[];
 };
 
 export const DEFAULT_AMOUNT_TOLERANCE = "0.0001";
@@ -74,19 +86,30 @@ export type ReconcileFinding = {
   written: { source: string; value: string };
 };
 
+export type SetAsideFinding = {
+  entityId: string;
+  exDate: IsoDate;
+  /** The structural action that accounts for this entity and date. */
+  structuralKind: string;
+  /** The records not written because of it. */
+  records: { source: string; kind: SourceAction["kind"]; value: string; locator: string }[];
+};
+
 export type ReconcileReport = {
   reconcileVersion: number;
   dataset: string;
   sources: string[];
-  preferredSource: string;
+  preferredSources: string[];
   window: { from: IsoDate; to: IsoDate };
   entities: string[];
   amountTolerance: string;
-  counts: { actions: number; verified: number; singleSource: number; disagreements: number; oneSided: number };
+  counts: { actions: number; verified: number; singleSource: number; structural: number; disagreements: number; oneSided: number; setAside: number };
   /** Two or more sources report the action on the same ex-date, with values outside tolerance. */
   disagreements: ReconcileFinding[];
   /** Exactly one source reports the action on this ex-date. */
   oneSided: ReconcileFinding[];
+  /** Cash and split records on the entity and date of a curated structural action, not written. */
+  setAside: SetAsideFinding[];
   /** Per entity, how many actions each source reported in the window: a source that is silent for an entity is visible here. */
   perEntity: { entityId: string; bySource: Record<string, number>; verified: number; singleSource: number }[];
 };
@@ -106,6 +129,7 @@ export class ReconcileInputError extends Error {
 }
 
 const keyOf = (r: { entityId: string; kind: string; exDate: IsoDate }): string => `${r.entityId}|${r.kind}|${r.exDate}`;
+const dayOf = (r: { entityId: string; exDate: IsoDate }): string => `${r.entityId}|${r.exDate}`;
 const valueOf = (r: SourceAction): Dec => (r.kind === "CASH_DIVIDEND" ? r.amount : r.ratio);
 
 function agrees(a: SourceAction, b: SourceAction, tolerance: Dec): boolean {
@@ -131,19 +155,64 @@ function storedAction(r: SourceAction): Record<string, unknown> {
   return raw;
 }
 
+type Entry = ReconciledFile["actions"][number];
+
+/** Validate the curated structural entries; return the in-scope ones with their entity, kind and date. */
+function structuralInScope(entries: readonly StructuralEntry[], entities: ReadonlySet<string>, window: { from: IsoDate; to: IsoDate }) {
+  const out: { key: string; day: string; entityId: string; exDate: IsoDate; kind: string; entry: Entry }[] = [];
+  const seen = new Set<string>();
+  for (const [i, s] of entries.entries()) {
+    let action;
+    try {
+      action = corporateActionFromValue(s.action);
+    } catch (err) {
+      throw new ReconcileInputError(`structural[${i}]: ${err instanceof Error ? err.message : "malformed action"}`);
+    }
+    if (!STRUCTURAL_KINDS.has(action.kind)) throw new ReconcileInputError(`structural[${i}] is ${action.kind}; only SPINOFF, MERGER and DELISTING are curated as structural`);
+    const entityId = actionEntityId(action);
+    const exDate = actionEffectiveDate(action);
+    if (!entities.has(entityId) || exDate < window.from || exDate > window.to) continue;
+    const key = keyOf({ entityId, kind: action.kind, exDate });
+    if (seen.has(key)) throw new ReconcileInputError(`structural action ${key} is given twice`);
+    seen.add(key);
+    const entry: Entry = { action: s.action, sources: [...s.sources] };
+    if (s.announcedAt !== undefined) entry.announcedAt = s.announcedAt;
+    out.push({ key, day: dayOf({ entityId, exDate }), entityId, exDate, kind: action.kind, entry });
+  }
+  return out;
+}
+
 /**
  * Reconcile records from two or more sources into an unsigned vendored file and a report.
  *
- * Throws `ReconcileInputError` when the input itself is wrong - fewer than two sources, a source reporting the
- * same entity, kind and ex-date twice (an adapter must sum a distribution's components first), or a record the
- * action parser rejects - because guessing past any of those would put a fabricated number into evidence.
+ * Throws `ReconcileInputError` when the input itself is wrong - fewer than two sources, no record from any
+ * preferred source, a source reporting the same entity, kind and ex-date twice (an adapter must sum a
+ * distribution's components first), a record the action parser rejects, or a malformed or duplicated structural
+ * entry - because guessing past any of those would put a fabricated number into evidence.
  */
 export function reconcileCorporateActions(records: readonly SourceAction[], opts: ReconcileOptions): { file: ReconciledFile; report: ReconcileReport } {
   const entities = new Set(opts.entities);
-  const inScope = records.filter((r) => entities.has(r.entityId) && r.exDate >= opts.window.from && r.exDate <= opts.window.to);
   const sources = [...new Set(records.map((r) => r.source))].sort();
   if (sources.length < 2) throw new ReconcileInputError(`reconciliation needs at least two sources; got ${sources.length === 0 ? "none" : sources.join(", ")}`);
-  if (!sources.includes(opts.preferredSource)) throw new ReconcileInputError(`the preferred source ${opts.preferredSource} supplied no records`);
+  if (opts.preferredSources.length === 0) throw new ReconcileInputError("name at least one preferred source");
+  if (!opts.preferredSources.some((p) => sources.includes(p))) throw new ReconcileInputError(`none of the preferred sources (${opts.preferredSources.join(", ")}) supplied records`);
+
+  const structural = structuralInScope(opts.structural ?? [], entities, opts.window);
+  const structuralDays = new Map(structural.map((s) => [s.day, s]));
+
+  const inWindow = records.filter((r) => entities.has(r.entityId) && r.exDate >= opts.window.from && r.exDate <= opts.window.to);
+  const setAsideByDay = new Map<string, SetAsideFinding>();
+  const inScope: SourceAction[] = [];
+  for (const r of inWindow) {
+    const s = structuralDays.get(dayOf(r));
+    if (s === undefined) {
+      inScope.push(r);
+      continue;
+    }
+    const finding = setAsideByDay.get(s.day) ?? { entityId: s.entityId, exDate: s.exDate, structuralKind: s.kind, records: [] };
+    finding.records.push({ source: r.source, kind: r.kind, value: valueOf(r).toFixed(), locator: r.locator });
+    setAsideByDay.set(s.day, finding);
+  }
 
   const groups = new Map<string, Map<string, SourceAction>>();
   for (const r of inScope) {
@@ -164,26 +233,26 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
       .sort((a, b) => (a.exDate < b.exDate ? -1 : a.exDate > b.exDate ? 1 : a.source < b.source ? -1 : 1));
   };
 
-  const entries: ReconciledFile["actions"] = [];
+  const keyed: { key: string; entry: Entry }[] = structural.map((s) => ({ key: s.key, entry: s.entry }));
   const disagreements: ReconcileFinding[] = [];
   const oneSided: ReconcileFinding[] = [];
-  const keys = [...groups.keys()].sort();
-  for (const key of keys) {
+  for (const key of [...groups.keys()].sort()) {
     const bySource = groups.get(key);
     if (bySource === undefined) continue;
     const present = [...bySource.keys()].sort();
-    // The preferred source's record carries the file's values when it has one; otherwise the only information
-    // available is the other side's, and it is written single-sourced.
-    const chosen = bySource.get(opts.preferredSource) ?? bySource.get(present[0] ?? "");
+    // The first preferred source that reports the action carries the file's values; failing all of them, the
+    // only information available is another source's, and it is written single-sourced.
+    const preferred = opts.preferredSources.find((p) => bySource.has(p));
+    const chosen = bySource.get(preferred ?? present[0] ?? "");
     if (chosen === undefined) continue;
     const agreeing = present.filter((s) => {
       const r = bySource.get(s);
       return r !== undefined && agrees(chosen, r, opts.amountTolerance);
     });
     const verified = agreeing.length >= 2;
-    const entry: ReconciledFile["actions"][number] = { action: storedAction(chosen), sources: verified ? agreeing : [chosen.source] };
+    const entry: Entry = { action: storedAction(chosen), sources: verified ? agreeing : [chosen.source] };
     if (chosen.announcedAt !== undefined) entry.announcedAt = chosen.announcedAt;
-    entries.push(entry);
+    keyed.push({ key, entry });
 
     if (!verified || agreeing.length < present.length) {
       const finding: ReconcileFinding = {
@@ -202,20 +271,26 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
     }
   }
 
+  // One order for the whole file, structural entries included, so the same inputs always hash the same.
+  const entries = keyed.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)).map((k) => k.entry);
+  const setAside = [...setAsideByDay.values()].sort((a, b) => (dayOf(a) < dayOf(b) ? -1 : dayOf(a) > dayOf(b) ? 1 : 0));
+  for (const f of setAside) f.records.sort((a, b) => (a.source < b.source ? -1 : a.source > b.source ? 1 : a.kind < b.kind ? -1 : 1));
+
+  const isVerified = (e: Entry): boolean => new Set(e.sources).size >= 2;
   const actionsHash = corporateActionsHash(entries);
-  const verifiedCount = entries.filter((e) => e.sources.length >= 2).length;
+  const verifiedCount = entries.filter(isVerified).length;
   const perEntity = [...entities].sort().map((entityId) => {
     const bySource: Record<string, number> = {};
     for (const s of sources) bySource[s] = inScope.filter((r) => r.entityId === entityId && r.source === s).length;
-    const mine = entries.filter((e) => e.action["entityId"] === entityId);
-    return { entityId, bySource, verified: mine.filter((e) => e.sources.length >= 2).length, singleSource: mine.filter((e) => e.sources.length < 2).length };
+    const mine = entries.filter((e) => actionEntityId(corporateActionFromValue(e.action)) === entityId);
+    return { entityId, bySource, verified: mine.filter(isVerified).length, singleSource: mine.filter((e) => !isVerified(e)).length };
   });
 
   const report: ReconcileReport = {
     reconcileVersion: RECONCILE_VERSION,
     dataset: opts.dataset,
     sources,
-    preferredSource: opts.preferredSource,
+    preferredSources: [...opts.preferredSources],
     window: opts.window,
     entities: [...entities].sort(),
     amountTolerance: opts.amountTolerance.toFixed(),
@@ -223,17 +298,20 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
       actions: entries.length,
       verified: verifiedCount,
       singleSource: entries.length - verifiedCount,
+      structural: structural.length,
       disagreements: disagreements.length,
       oneSided: oneSided.length,
+      setAside: setAside.reduce((n, f) => n + f.records.length, 0),
     },
     disagreements,
     oneSided,
+    setAside,
     perEntity,
   };
 
   const file: ReconciledFile = {
     dataset: opts.dataset,
-    notes: `Machine-reconciled (reconcile v${RECONCILE_VERSION}) from ${sources.join(", ")} over ex-dates ${opts.window.from}..${opts.window.to}, cash tolerance ${opts.amountTolerance.toFixed()} per share, preferred source ${opts.preferredSource}. ${verifiedCount} of ${entries.length} actions are confirmed by two or more sources; the rest carry one source and are flagged UNVERIFIED_SINGLE_SOURCE on ingest. UNSIGNED: ingest refuses this file until the owner audits it against its report and fills approval.approvedBy and approval.approvedAt (D-57).`,
+    notes: `Machine-reconciled (reconcile v${RECONCILE_VERSION}) from ${sources.join(", ")} over ex-dates ${opts.window.from}..${opts.window.to}, cash tolerance ${opts.amountTolerance.toFixed()} per share, preferred sources ${opts.preferredSources.join(" > ")}, with ${structural.length} owner-curated structural action(s). ${verifiedCount} of ${entries.length} actions are confirmed by two or more sources; the rest carry one source and are flagged UNVERIFIED_SINGLE_SOURCE on ingest. UNSIGNED: ingest refuses this file until the owner audits it against its report and fills approval.approvedBy and approval.approvedAt (D-57).`,
     approval: { approvedBy: null, approvedAt: null, actionsHash },
     actions: entries,
   };
@@ -242,7 +320,7 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
 
 /**
  * Corporate-action observations (any adapter's) as reconciliation records for `source`. Only CASH_DIVIDEND and
- * SPLIT are carried; the rest are structural and reconciled by hand.
+ * SPLIT are carried; the rest are structural and curated by the owner.
  */
 export function sourceActionsFromObservations(observations: readonly PointInTimeObservation<Record<string, unknown>>[], source: string): SourceAction[] {
   const out: SourceAction[] = [];

@@ -1,0 +1,8 @@
+# FORMAT EXAMPLE ONLY (D-58). These two rows are illustrative and were not read from any document: do not reconcile
+# them as data. One row per distribution or split, transcribed from the issuer's own document. `value` is the total
+# cash per share (income and capital gains summed) for CASH_DIVIDEND, or new shares per old share for SPLIT.
+# `pay_date` is optional and for cash only. `document` names the page the number came from. Lines starting with #
+# are ignored. See docs/runbooks/first-ingestion.md, Step 2b.
+source,entity,kind,ex_date,value,pay_date,document
+issuer:vanguard-annual-report,VTI,CASH_DIVIDEND,2010-03-24,0.4900,2010-03-29,"Example only: Vanguard Total Stock Market Index Fund annual report, p. 14"
+issuer:invesco-distribution-notice,QQQ,CASH_DIVIDEND,2010-12-20,0.3000,,"Example only: Invesco QQQ distribution notice, December 2010"

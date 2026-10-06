@@ -57,6 +57,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-55 | Liquidity and order-level limits. A decision-time liquidity check (ADV and price floors, fail-closed) is the decision gate's fourth verdict. A pure order-level predicate (size, ADV participation, spread, long-only, per-session counts, turnover) is built but not wired. The per-position initial-risk budget is not built, because the charter has no stop. Six conflicts between `risk.yaml`, the charter and the synthetic shadow book are the owner's | **Proposed** 2026-10-05 by Claude Code (Matt: "start on the liquidity and order-level limits"). Conflicts 1, 4 and 6 resolved under D-56; 2, 3 and 5 open | Wiring the order-level predicate (conflicts 2 and 3) |
 | D-56 | The etf-trend-vol 0.3.0 charter bundle: keep the Sharpe-difference primary metric and add F2 as a promotion co-gate on chain-linked curves (OD-5, OD-6); a failed primary with Secondary 2 beaten goes to owner review, never ACTIVE (OD-7); §14.3's minimum restated as the schedule's capacity, 100 (OD-8); Secondary 2's two readings confirmed (OD-9); the prospective clock runs from registration (OD-10) | **Accepted** 2026-10-05 by Matt (answers in session), including D-55's conflicts 1, 4 and 6 folded in as OD-11 to OD-13; **owner-signed** 2026-10-05 with `charter_version` 0.3.0 (`code_commit 58d4474`) and `risk.yaml` 0.2.0, merged as PR #111 | - |
 | D-57 | B-2: Claude Code may build a second automated public corporate-actions adapter plus a machine reconciler, and the owner audits and approves the reconciled ≥2-source file per universe before ingest; the citable evaluation runs from a separate store with no Tiingo action rows | **Accepted** 2026-10-05 by Matt. Amends D-29 and D-49 | Citable evidence (approval gate and reconciler built 2026-10-06; the second-source adapter waits on the owner's source decisions) |
+| D-58 | D-57's second corporate-actions sources: SSGA is fetched automatically; BlackRock (IWM) and Vanguard (VTI, VTV, VUG) are read only from files the owner downloads; the gaps no issuer feed covers (VTI/VTV/VUG before 2016-12, and all of QQQ) close with owner-curated entries from the issuers' own documents; Nasdaq's feed is not used | **Accepted** 2026-10-06 by Matt ("use your recommendations on all three"). Scopes D-57 | Citable evidence |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -1577,6 +1578,41 @@ and the owner's ACTIVE acceptance, not the clock. Per `HANDOFF.md` §5 the recon
   - The owner decides:
     - which issuers may be fetched automatically, given their terms;
     - how those gaps close.
+
+---
+
+## D-58 Where D-57's second corporate-actions source comes from
+
+**Status:** Accepted 2026-10-06 by Matt: "use your recommendations on all three", answering the three questions in
+`docs/analysis/2026-10-06-d57-second-source-survey.md`. Scopes D-57; changes nothing it decided.
+
+1. **Automated fetching: SSGA only.**
+   - Black Gold fetches State Street's all-funds distribution workbook and each SPDR fund's NAV history from
+     `www.ssga.com`, which is already on the egress allowlist. This covers the nine SPDR funds and SPY.
+   - **BlackRock and Vanguard are never fetched by code.** Their terms ban robots and repeated automated access.
+     The owner downloads their files in a browser (iShares' fund workbook for IWM, Vanguard's distribution JSON for
+     VTI, VTV and VUG), and the same parsers read them locally, with no egress.
+2. **The gaps close with owner-curated entries.**
+   - Gaps: VTI, VTV and VUG before 2016-12 (Vanguard's file holds its latest 40 distributions only), and all of QQQ
+     (Invesco blocks automated access and offers no file the survey could find).
+   - The owner records each distribution from the issuer's own documents in a curated file, one row per
+     distribution, naming the document. The reconciler treats that file as one more source.
+   - This is the original D-29 path, kept for the part no feed reaches.
+3. **Nasdaq's dividend API is not used,** since its `robots.txt` disallows everything.
+
+**Splits.** SSGA's distribution workbook lists none, so SSGA splits come from its NAV history:
+- a split is read only where the one-day NAV ratio and the shares-outstanding ratio both sit near the same
+  standard ratio;
+- any other large one-day jump is reported, never turned into a record.
+
+Splits at the other issuers come from curated entries.
+
+**Structural actions** (spin-offs, mergers, delistings) are curated by the owner and passed through the reconciler
+as written. A cash or split record from any source on the same entity and date is set aside and reported. The case
+that forced this: SSGA lists the XLF → XLRE spin-off as a 0.139146 row on 2016-09-19 in its dollar column.
+
+**Claude Code's limits are unchanged.** It never fills a curated value it has not been given, and it never signs
+the reconciled file.
 
 ---
 

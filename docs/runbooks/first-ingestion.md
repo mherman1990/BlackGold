@@ -145,6 +145,55 @@ The owner fills `approvedBy` and `approvedAt` after auditing the file against th
 Code never does. Editing an action afterwards invalidates the signature, so make corrections first, recompute
 the hash, then sign.
 
+### Where the second source comes from (D-58)
+
+The reconciler compares Tiingo's records with an issuer's. Per D-58, an issuer source arrives in one of three
+ways.
+
+**Fetched by Black Gold:** State Street (XLK XLF XLV XLI XLP XLU XLY, BIL, SPY). This covers distributions, plus
+splits read from each fund's NAV history.
+
+**Downloaded by you, in a browser, then passed as files.** Black Gold never fetches these, because the sites'
+terms bar automated access.
+
+- **IWM:** on the iShares Russell 2000 ETF page, choose "Detailed Holdings and Analytics". It saves as
+  `iShares-Russell-2000-ETF_fund.xls`.
+- **VTI, VTV, VUG:** open each URL below and save the JSON it shows. The file does not name its fund, so keep the
+  fund in the file name.
+
+  ```
+  https://advisors.vanguard.com/investments/products/api/funds/0970/pricing/distributions   (VTI)
+  https://advisors.vanguard.com/investments/products/api/funds/0966/pricing/distributions   (VTV)
+  https://advisors.vanguard.com/investments/products/api/funds/0967/pricing/distributions   (VUG)
+  ```
+
+  These reach back only to late 2016.
+
+**Curated by you,** for what no feed reaches. Record each distribution from the issuer's own documents (annual or
+semi-annual reports, distribution notices) in a CSV laid out like
+`config/examples/curated-corporate-actions.example.csv`:
+
+- **VTI, VTV and VUG:** every distribution with an ex-date from 2007-06-01 through 2016-11-30, about 38 per fund.
+  Add VTI's June 2008 split as a `SPLIT` row.
+- **QQQ:** every distribution with an ex-date in 2007-06-01 → 2018-12-31 and 2025-01-01 → 2026-09-06, about 53.
+  Nothing for 2019–2024: the holdout stays sealed. If Invesco's QQQ page offers a distribution-history download,
+  save that instead; a reader for it is a small addition and saves the typing.
+
+That is about 170 rows. In each row:
+- `value` is the TOTAL per share that went ex that day, income and capital gains summed;
+- `source` names the publisher, e.g. `issuer:vanguard-annual-report`;
+- `document` names the page the number came from.
+
+The reconciler checks each row against Tiingo. One that agrees is verified; one that does not is written
+single-sourced and listed in the report for you to settle.
+
+**Structural actions** (spin-offs, mergers, delistings) go in a separate JSON file, laid out like
+`config/examples/curated-structural.example.json`. It holds the XLF → XLRE spin-off, which needs the ratio and
+date checked against State Street's notice, plus XLRE's first close. The reconciler writes each one as given and
+sets aside any same-day cash record, because State Street lists that spin-off's share ratio in its dividend column.
+
+The command that runs all of this and writes the unsigned file plus its report is the next PR (D-57 PR-B2).
+
 ## Step 2c — or load corporate actions automatically from Tiingo (D-49, research-only)
 
 If you are pulling bars from Tiingo (`ingest tiingo-bars`, deeper history than the free IEX feed — see

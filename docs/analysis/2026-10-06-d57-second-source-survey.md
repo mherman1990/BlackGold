@@ -1,6 +1,11 @@
 # D-57: where a second corporate-actions source can come from
 
-**Date:** 2026-10-06. **Author:** Claude Code. **Status:** survey for PR-B. Nothing here is decided.
+**Date:** 2026-10-06. **Author:** Claude Code. **Status:** decided the same day: Matt accepted all three
+recommendations ("use your recommendations on all three"), recorded as **D-58**.
+
+**Correction to (a) below.** "Roughly 80 dividends" assumed Nasdaq would cover QQQ from 2012-06. With Nasdaq
+ruled out, QQQ needs every distribution in both windows (about 53), on top of VTI, VTV and VUG for 2007-06 →
+2016-11 (about 114). The owner's curation is therefore **about 170 rows**.
 
 D-57 lets Claude Code build a second automated corporate-actions source that is independent of Tiingo, plus a
 reconciler that writes the ≥2-source file the owner signs. PR-A builds the reconciler and the signing gate.

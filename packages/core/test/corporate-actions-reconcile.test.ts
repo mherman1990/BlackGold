@@ -48,7 +48,7 @@ const OPTS: ReconcileOptions = {
   dataset: "etf-test",
   window: { from: D("2008-01-01"), to: D("2018-12-31") },
   entities: ["VTI", "XLK", "BIL"],
-  preferredSource: ISSUER,
+  preferredSources: [ISSUER],
   amountTolerance: N(DEFAULT_AMOUNT_TOLERANCE),
 };
 
@@ -107,7 +107,7 @@ describe("reconcileCorporateActions: nothing is dropped", () => {
 
   it("writes the preferred source's value whatever its name sorts as", () => {
     // Prefer the vendor here: it sorts after the issuer, so a fall back to the first source alphabetically shows.
-    const r = run([cash(ISSUER, "XLK", "2018-06-18", "0.20"), cash(VENDOR, "XLK", "2018-06-18", "0.25")], { preferredSource: VENDOR });
+    const r = run([cash(ISSUER, "XLK", "2018-06-18", "0.20"), cash(VENDOR, "XLK", "2018-06-18", "0.25")], { preferredSources: [VENDOR] });
     expect(entryFor(r, "XLK", "2018-06-18")).toMatchObject({ sources: [VENDOR], action: { amount: "0.25" } });
     expect(r.report.disagreements[0]?.written).toEqual({ source: VENDOR, value: "0.25" });
   });
@@ -198,9 +198,10 @@ describe("reconcileCorporateActions: the output is exactly what ingest reads, an
 });
 
 describe("reconcileCorporateActions: input it refuses rather than guess past", () => {
-  it("needs two sources, and the preferred one among them", () => {
+  it("needs two sources, and at least one preferred source among them", () => {
     expect(() => run([cash(ISSUER, "VTI", "2018-03-22", "0.5")])).toThrow(ReconcileInputError);
-    expect(() => run([cash(VENDOR, "VTI", "2018-03-22", "0.5"), cash("vendor:other", "VTI", "2018-03-22", "0.5")])).toThrow(/preferred source/);
+    expect(() => run([cash(VENDOR, "VTI", "2018-03-22", "0.5"), cash("vendor:other", "VTI", "2018-03-22", "0.5")])).toThrow(/preferred sources/);
+    expect(() => run([cash(ISSUER, "VTI", "2018-03-22", "0.5"), cash(VENDOR, "VTI", "2018-03-22", "0.5")], { preferredSources: [] })).toThrow(/at least one preferred source/);
   });
 
   it("refuses a source reporting the same distribution twice: components must be summed first", () => {
@@ -210,6 +211,104 @@ describe("reconcileCorporateActions: input it refuses rather than guess past", (
   it("refuses a record the action parser rejects", () => {
     expect(() => run([cash(ISSUER, "VTI", "2018-12-24", "-0.10"), cash(VENDOR, "VTI", "2018-12-24", "0.75")])).toThrow(ReconcileInputError);
     expect(() => run([cash(ISSUER, "VTI", "2018-12-24", "0.75", { payDate: "2018-12-20" }), cash(VENDOR, "VTI", "2018-12-24", "0.75")])).toThrow(ReconcileInputError);
+  });
+});
+
+describe("reconcileCorporateActions: several issuers (D-58)", () => {
+  // Names chosen so that priority order and alphabetical order disagree.
+  const CURATED = "issuer:zz-annual-report";
+  const EXCHANGE = "exchange:aa-notices";
+
+  it("carries the first preferred source that reports an action, in priority order, not alphabetical", () => {
+    const r = run(
+      [
+        cash(ISSUER, "VTI", "2018-12-24", "0.75"),
+        cash(CURATED, "VTI", "2018-12-24", "0.80"),
+        cash(CURATED, "QQQ", "2010-12-20", "0.30"),
+        cash(EXCHANGE, "QQQ", "2010-12-20", "0.33"),
+      ],
+      { preferredSources: [ISSUER, CURATED], entities: ["VTI", "QQQ"] },
+    );
+    expect(entryFor(r, "VTI", "2018-12-24")).toMatchObject({ sources: [ISSUER], action: { amount: "0.75" } });
+    // ISSUER is silent on QQQ, so CURATED - second in priority, last alphabetically - carries it.
+    expect(entryFor(r, "QQQ", "2010-12-20")).toMatchObject({ sources: [CURATED], action: { amount: "0.3" } });
+    expect(r.report.preferredSources).toEqual([ISSUER, CURATED]);
+  });
+
+  it("verifies a curated record against the vendor like any other source", () => {
+    const r = run([cash(CURATED, "VUG", "2012-03-23", "0.2100"), cash(VENDOR, "VUG", "2012-03-23", "0.21")], { preferredSources: [ISSUER, CURATED], entities: ["VUG"] });
+    expect(entryFor(r, "VUG", "2012-03-23")?.sources).toEqual([CURATED, VENDOR]);
+  });
+});
+
+describe("reconcileCorporateActions: owner-curated structural actions (D-58)", () => {
+  const SSGA = "issuer:ssga-distributions";
+  const SPINOFF = { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0.139146", exDate: "2016-09-19", childFirstClose: "33.12" };
+  const structural = [{ action: SPINOFF, sources: ["issuer:ssga-press-release", "exchange:nyse-arca-notice"], announcedAt: "2016-08-31T20:00:00Z" }];
+  const xlf = [
+    cash(SSGA, "XLF", "2016-09-16", "0.114386"),
+    cash(VENDOR, "XLF", "2016-09-16", "0.1144"),
+    // The spin-off as each source's dividend column shows it: SSGA writes the share ratio, the vendor a cash value.
+    cash(SSGA, "XLF", "2016-09-19", "0.139146"),
+    cash(VENDOR, "XLF", "2016-09-19", "4.61"),
+  ];
+  const opts = { preferredSources: [SSGA], entities: ["XLF"], structural };
+
+  it("writes the structural action as given and sets aside every cash record on its entity and date", () => {
+    const r = run(xlf, opts);
+    expect(r.file.actions.map((e) => e.action["kind"])).toEqual(["CASH_DIVIDEND", "SPINOFF"]);
+    expect(r.file.actions[1]).toEqual(structural[0]);
+    expect(entryFor(r, "XLF", "2016-09-16")?.sources).toEqual([SSGA, VENDOR]);
+    expect(r.report.setAside).toEqual([
+      {
+        entityId: "XLF",
+        exDate: "2016-09-19",
+        structuralKind: "SPINOFF",
+        records: [
+          { source: SSGA, kind: "CASH_DIVIDEND", value: "0.139146", locator: `${SSGA}/XLF/2016-09-19` },
+          { source: VENDOR, kind: "CASH_DIVIDEND", value: "4.61", locator: `${VENDOR}/XLF/2016-09-19` },
+        ],
+      },
+    ]);
+    // Set aside, not one-sided or disputed: the structural action accounts for that date.
+    expect(r.report.counts).toMatchObject({ actions: 2, verified: 2, structural: 1, setAside: 2, disagreements: 0, oneSided: 0 });
+    expect(r.report.perEntity).toEqual([{ entityId: "XLF", bySource: { [SSGA]: 1, [VENDOR]: 1 }, verified: 2, singleSource: 0 }]);
+  });
+
+  it("sets aside a split on the structural date too, but nothing on other dates", () => {
+    const r = run([...xlf, split(VENDOR, "XLF", "2016-09-19", "2"), cash(VENDOR, "XLF", "2016-09-20", "0.01")], opts);
+    expect(r.report.setAside[0]?.records.map((x) => x.kind)).toEqual(["CASH_DIVIDEND", "CASH_DIVIDEND", "SPLIT"]);
+    expect(entryFor(r, "XLF", "2016-09-20")?.sources).toEqual([VENDOR]);
+  });
+
+  it("ignores a structural action outside the window or universe, and then sets nothing aside", () => {
+    for (const o of [{ ...opts, entities: ["VTI"] }, { ...opts, window: { from: D("2017-01-01"), to: D("2018-12-31") } }]) {
+      const r = run([...xlf, cash(SSGA, "VTI", "2017-03-23", "0.5"), cash(VENDOR, "VTI", "2017-03-23", "0.5")], o);
+      expect(r.file.actions.some((e) => e.action["kind"] === "SPINOFF")).toBe(false);
+      expect(r.report.setAside).toEqual([]);
+    }
+    const inWindow = run([...xlf], { ...opts, structural: [] });
+    expect(inWindow.report.disagreements.map((f) => f.exDate)).toEqual(["2016-09-19"]);
+  });
+
+  it("writes a single-sourced structural action, which ingest then flags", () => {
+    const r = run(xlf, { ...opts, structural: [{ action: SPINOFF, sources: ["issuer:ssga-press-release"] }] });
+    expect(r.report.counts).toMatchObject({ verified: 1, singleSource: 1 });
+    const signedFile = { ...r.file, approval: { ...r.file.approval, approvedBy: "Test Owner", approvedAt: "2026-10-06T00:00:00Z" } };
+    const bytes = new TextEncoder().encode(JSON.stringify(signedFile));
+    const obs = parseCorporateActions(bytes, { calendar: new NyseCalendar(), ingestedAt: utc("2026-12-01T00:00:00Z"), rawContentHash: `sha256:${sha256Hex(bytes)}` });
+    const spin = obs.find((o) => corporateActionFromValue(o.value).kind === "SPINOFF");
+    expect(spin?.qualityFlags).toEqual([UNVERIFIED_SINGLE_SOURCE]);
+    // One source named twice is still one source, as ingest counts it.
+    const twice = run(xlf, { ...opts, structural: [{ action: SPINOFF, sources: ["issuer:ssga-press-release", "issuer:ssga-press-release"] }] });
+    expect(twice.report.counts).toMatchObject({ verified: 1, singleSource: 1 });
+  });
+
+  it("refuses a structural entry that is not structural, is malformed, or is given twice", () => {
+    const cashAction = { kind: "CASH_DIVIDEND", entityId: "XLF", amount: "0.1", exDate: "2016-09-19", payDate: "2016-09-22", qualified: false };
+    expect(() => run(xlf, { ...opts, structural: [{ action: cashAction, sources: ["issuer:x"] }] })).toThrow(/only SPINOFF, MERGER and DELISTING/);
+    expect(() => run(xlf, { ...opts, structural: [{ action: { ...SPINOFF, ratio: "0" }, sources: ["issuer:x"] }] })).toThrow(ReconcileInputError);
+    expect(() => run(xlf, { ...opts, structural: [...structural, ...structural] })).toThrow(/given twice/);
   });
 });
 
