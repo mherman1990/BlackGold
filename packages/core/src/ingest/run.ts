@@ -13,7 +13,7 @@ import { fetchTiingoCorporateActions } from "../data/adapters/tiingo-corporate-a
 import { COT_DATASETS, fetchCot, type CotDataset } from "../data/adapters/cftc-cot.ts";
 import { fetchSeriesVintages } from "../data/adapters/fred.ts";
 import { fetchSubmissions } from "../data/adapters/sec-edgar.ts";
-import { ingestCorporateActions } from "../data/adapters/corporate-actions.ts";
+import { ingestCorporateActions, UnapprovedCorporateActionsError } from "../data/adapters/corporate-actions.ts";
 import { fetchSsgaHoldings } from "../data/adapters/ssga-holdings.ts";
 import { MissingSourceCredentialError } from "../errors.ts";
 import { Ledger } from "../ledger/ledger.ts";
@@ -104,6 +104,11 @@ export async function runIngest(deps: IngestDeps, request: IngestRequest): Promi
         { source: request.source, startedAt: ingestedAt, usageBytes: err.usageBytes, budgetBytes: err.budgetBytes, attemptedBytes: err.attemptedBytes, requestsCompleted: client?.requests() ?? 0 },
         nowUtc(clock),
       );
+    }
+    // An unsigned or altered corporate-actions file is refused whole (D-57). The attempt is recorded, since
+    // someone tried to put unapproved evidence into this store; nothing else was written.
+    if (err instanceof UnapprovedCorporateActionsError) {
+      ledger.append("ingest.refused_unapproved", { source: request.source, startedAt: ingestedAt, reasons: err.reasons }, nowUtc(clock));
     }
     throw err;
   }

@@ -56,7 +56,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-54 | Reconciler breaks feed the shadow halt state: a break unresolved past one session holds both arms `HOLD_ONLY` (literal §8); shadow halts are sticky and relax only through a staged owner re-arm (`shadow rearm`), with each acknowledgement scoped to the break occurrence it resolves | **Proposed** 2026-10-05 by Claude Code; reading (a) owner-confirmed provisionally (Matt: "go with literal §8 for now"); readings (b) and (c) open | Experiment registration (reading (c)) |
 | D-55 | Liquidity and order-level limits. A decision-time liquidity check (ADV and price floors, fail-closed) is the decision gate's fourth verdict. A pure order-level predicate (size, ADV participation, spread, long-only, per-session counts, turnover) is built but not wired. The per-position initial-risk budget is not built, because the charter has no stop. Six conflicts between `risk.yaml`, the charter and the synthetic shadow book are the owner's | **Proposed** 2026-10-05 by Claude Code (Matt: "start on the liquidity and order-level limits"). Conflicts 1, 4 and 6 resolved under D-56; 2, 3 and 5 open | Wiring the order-level predicate (conflicts 2 and 3) |
 | D-56 | The etf-trend-vol 0.3.0 charter bundle: keep the Sharpe-difference primary metric and add F2 as a promotion co-gate on chain-linked curves (OD-5, OD-6); a failed primary with Secondary 2 beaten goes to owner review, never ACTIVE (OD-7); §14.3's minimum restated as the schedule's capacity, 100 (OD-8); Secondary 2's two readings confirmed (OD-9); the prospective clock runs from registration (OD-10) | **Accepted** 2026-10-05 by Matt (answers in session), including D-55's conflicts 1, 4 and 6 folded in as OD-11 to OD-13; **owner-signed** 2026-10-05 with `charter_version` 0.3.0 (`code_commit 58d4474`) and `risk.yaml` 0.2.0, merged as PR #111 | - |
-| D-57 | B-2: Claude Code may build a second automated public corporate-actions adapter plus a machine reconciler, and the owner audits and approves the reconciled ≥2-source file per universe before ingest; the citable evaluation runs from a separate store with no Tiingo action rows | **Accepted** 2026-10-05 by Matt. Amends D-29 and D-49 | Citable evidence (the adapter and reconciler are a future PR) |
+| D-57 | B-2: Claude Code may build a second automated public corporate-actions adapter plus a machine reconciler, and the owner audits and approves the reconciled ≥2-source file per universe before ingest; the citable evaluation runs from a separate store with no Tiingo action rows | **Accepted** 2026-10-05 by Matt. Amends D-29 and D-49 | Citable evidence (approval gate and reconciler built 2026-10-06; the second-source adapter waits on the owner's source decisions) |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -1547,6 +1547,36 @@ keeps serving research and the shadow track. The taint rule itself is unchanged.
 **Ordering.** Under OD-10 (D-56) the prospective clock runs from registration, so B-2 gates the Rung-1 result
 and the owner's ACTIVE acceptance, not the clock. Per `HANDOFF.md` §5 the reconciled actions must be ingested
 **before** the evaluation store's snapshot, or the registered experiment keeps reading what the snapshot froze.
+
+**Progress (2026-10-06): the gate and the reconciler are built (PR-A); the second source is not (PR-B).**
+
+- **Ingest refuses an unapproved file.**
+  - The vendored file now carries a required `approval` block: `approvedBy`, `approvedAt` and `actionsHash`.
+    `actionsHash` is the sha256 of the `actions` array as written.
+  - `parseCorporateActions` refuses the whole file, before any observation and before any artifact is stored,
+    if any of these holds:
+    - the signature is missing or blank;
+    - `approvedAt` is not a full UTC instant, or is later than the ingest;
+    - the actions no longer hash to what was approved.
+  - `runIngest` records `ingest.refused_unapproved` with the reasons.
+  - The adapter and parser are 1.1.0. Every existing file needs the block, which matters only for the example
+    file, since nothing real has been ingested through this path.
+- **`data/corporate-actions-reconcile.ts` is pure and writes nothing to disk.**
+  - It reconciles CASH_DIVIDEND and SPLIT records from two or more sources into the vendored file. The file is
+    unsigned, with `actionsHash` pre-filled.
+  - It also writes a report: counts, disagreements, one-sided actions with near-date matches, and per-entity
+    counts by source.
+  - Cash amounts agree within a tolerance (default 0.0001 per share); split ratios must match exactly.
+  - **Nothing is dropped.** An action without two agreeing sources is written single-sourced at the preferred
+    source's value, so ingest flags it, and it is listed in the report.
+  - Ex-dates are never matched across days, only reported as likely matches.
+- **The second source is PR-B's.** `docs/analysis/2026-10-06-d57-second-source-survey.md` records what exists.
+  - SSGA covers the nine SPDR funds and SPY for the whole span in one robots-allowed file.
+  - Nothing automated covers VTI, VTV or VUG before 2016-12 or QQQ before 2012-06, and VTI is the primary
+    benchmark. Automated sources alone therefore cannot yet make a walk-forward run citable.
+  - The owner decides:
+    - which issuers may be fetched automatically, given their terms;
+    - how those gaps close.
 
 ---
 

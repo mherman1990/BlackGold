@@ -123,6 +123,28 @@ loader needs no credentials and no network — it reads only the local file. Re-
 deduplicates. Curating the real dataset for the 14 symbols over the evaluable span (the XLF/XLRE 2015 spin-off is
 the acceptance case) is operator work; the ingest mechanism does not create the data.
 
+**The file must carry the owner's signature (D-57).** Every file has an `approval` block:
+
+```json
+"approval": { "approvedBy": null, "approvedAt": null, "actionsHash": "sha256:<64 hex>" }
+```
+
+`actionsHash` is the sha256 of the `actions` array exactly as written. The D-57 reconciler fills it in when it
+writes a file; for a hand-curated file, compute it with `corporateActionsHash` in
+`packages/core/src/data/adapters/corporate-actions.ts`. Ingest refuses the whole file, writes no artifact and
+no observation, and records `ingest.refused_unapproved` in the ledger with the reasons, when any of these is
+true:
+
+- `approvedBy` is null or blank;
+- `approvedAt` is null, or is not a full UTC instant such as `2026-10-06T00:00:00Z` (a date alone is refused);
+- `approvedAt` is later than the ingest;
+- the actions no longer hash to `actionsHash`, because an amount was edited or an action was added, removed or
+  reordered after approval.
+
+The owner fills `approvedBy` and `approvedAt` after auditing the file against the reconciler's report. Claude
+Code never does. Editing an action afterwards invalidates the signature, so make corrections first, recompute
+the hash, then sign.
+
 ## Step 2c — or load corporate actions automatically from Tiingo (D-49, research-only)
 
 If you are pulling bars from Tiingo (`ingest tiingo-bars`, deeper history than the free IEX feed — see

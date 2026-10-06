@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256Hex, utc } from "@blackgold/shared";
@@ -13,13 +13,29 @@ import { parseIngestArgs, runIngest, UsageError } from "../src/ingest/run.ts";
 import { corporateActionFromValue, corporateActionSourceId } from "../src/market/types.ts";
 import { blocksPromotionEvidence, isQualityCode } from "../src/data/quality.ts";
 import { SchemaDriftError } from "../src/data/adapters/common.ts";
-import { ADAPTER_VERSION, PARSER_VERSION, UNVERIFIED_SINGLE_SOURCE, ingestCorporateActions, parseCorporateActions } from "../src/data/adapters/corporate-actions.ts";
+import {
+  ADAPTER_VERSION,
+  PARSER_VERSION,
+  UNVERIFIED_SINGLE_SOURCE,
+  UnapprovedCorporateActionsError,
+  corporateActionsHash,
+  ingestCorporateActions,
+  parseCorporateActions,
+} from "../src/data/adapters/corporate-actions.ts";
 
 const calendar = new NyseCalendar();
 const ingestedAt = utc("2026-12-01T00:00:00Z");
 const bytesOf = (o: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(o));
 const ctxFor = (b: Uint8Array) => ({ calendar, ingestedAt, rawContentHash: `sha256:${sha256Hex(b)}` });
-const fileOf = (actions: unknown[], dataset = "test-set"): Uint8Array => bytesOf({ dataset, actions });
+type Approval = { approvedBy: string | null; approvedAt: string | null; actionsHash: string };
+/**
+ * A file the owner has signed over exactly these actions (D-57). Every fixture goes through this, so a test
+ * named for some other defect fails on that defect and not on a missing signature - a test that passed because
+ * the file was unsigned would prove nothing about the thing it names.
+ */
+const signed = (file: { actions: unknown[] } & Record<string, unknown>, over: Partial<Approval> = {}): Uint8Array =>
+  bytesOf({ ...file, approval: { approvedBy: "Test Owner", approvedAt: "2026-10-05T00:00:00Z", actionsHash: corporateActionsHash(file.actions), ...over } });
+const fileOf = (actions: unknown[], dataset = "test-set"): Uint8Array => signed({ dataset, actions });
 
 // Announced (2018-12-20) before its ex-date (2018-12-24); two sources.
 const DIVIDEND = {
@@ -98,7 +114,7 @@ describe("vendored corporate-action parser", () => {
   });
 
   it("rejects unknown provenance fields (strict schema) and nonpositive spin-off values", () => {
-    const badEntry = (e: unknown) => () => parseCorporateActions(bytesOf({ dataset: "d", actions: [e] }), ctxFor(bytesOf({ dataset: "d", actions: [e] })));
+    const badEntry = (e: unknown) => () => parseCorporateActions(signed({ dataset: "d", actions: [e] }), ctxFor(signed({ dataset: "d", actions: [e] })));
     // A misspelled announcedAt must fail, not be silently dropped (which would fall back to the ex-date start
     // and could expose the action before its real, later announcement).
     expect(badEntry({ action: DIVIDEND.action, announced_at: "2018-12-20T00:00:00Z", sources: ["a", "b"] })).toThrow(SchemaDriftError);
@@ -106,17 +122,78 @@ describe("vendored corporate-action parser", () => {
     expect(badEntry({ action: { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0", exDate: "2015-10-08" }, sources: ["a", "b"] })).toThrow(SchemaDriftError);
     expect(badEntry({ action: { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0.5", exDate: "2015-10-08", childFirstClose: "-1" }, sources: ["a", "b"] })).toThrow(SchemaDriftError);
     // Unknown top-level key.
-    const extra = bytesOf({ dataset: "d", actions: [], oops: 1 });
+    const extra = signed({ dataset: "d", actions: [], oops: 1 });
     expect(() => parseCorporateActions(extra, ctxFor(extra))).toThrow(SchemaDriftError);
   });
 
   it("counts distinct sources and registers the flag with the quality policy so it bars promotion evidence", () => {
     const dup = { action: { kind: "CASH_DIVIDEND", entityId: "VTI", amount: "0.5", exDate: "2018-12-24", payDate: "2018-12-27", qualified: true }, sources: ["issuer:x", "issuer:x"] };
-    const bytes = bytesOf({ dataset: "d", actions: [dup] });
+    const bytes = signed({ dataset: "d", actions: [dup] });
     expect(parseCorporateActions(bytes, ctxFor(bytes))[0]?.qualityFlags).toEqual([UNVERIFIED_SINGLE_SOURCE]);
     // The flag must actually bite: a registered quality code that bars promotion evidence (D-29 P1 fix).
     expect(isQualityCode(UNVERIFIED_SINGLE_SOURCE)).toBe(true);
     expect(blocksPromotionEvidence([UNVERIFIED_SINGLE_SOURCE])).toEqual([UNVERIFIED_SINGLE_SOURCE]);
+  });
+});
+
+describe("owner approval gate (D-57)", () => {
+  const refusal = (bytes: Uint8Array): string[] => {
+    try {
+      parseCorporateActions(bytes, ctxFor(bytes));
+    } catch (err) {
+      if (err instanceof UnapprovedCorporateActionsError) return err.reasons;
+      throw err;
+    }
+    return [];
+  };
+  const file = { dataset: "gate", actions: [DIVIDEND, SPINOFF] };
+
+  it("ingests a file the owner signed over exactly these actions", () => {
+    expect(refusal(signed(file))).toEqual([]);
+    expect(parseCorporateActions(signed(file), ctxFor(signed(file)))).toHaveLength(2);
+  });
+
+  it("refuses an unsigned file, in whole: no observation is produced", () => {
+    expect(refusal(signed(file, { approvedBy: null }))).toEqual(["approval.approvedBy is unsigned"]);
+    expect(refusal(signed(file, { approvedBy: "   " }))).toEqual(["approval.approvedBy is unsigned"]);
+    expect(refusal(signed(file, { approvedAt: null }))).toEqual(["approval.approvedAt is empty"]);
+    // A date is not a signature instant - the form the owner's first risk.yaml signature took.
+    expect(refusal(signed(file, { approvedAt: "2026-10-05" }))).toEqual(["approval.approvedAt must be an ISO-8601 UTC instant ending in Z"]);
+  });
+
+  it("refuses an approval dated after the ingest, and accepts one dated exactly at it", () => {
+    expect(refusal(signed(file, { approvedAt: "2026-12-01T00:00:01Z" })).join(" ")).toContain("is after this ingest");
+    expect(refusal(signed(file, { approvedAt: ingestedAt }))).toEqual([]);
+  });
+
+  it("refuses actions that changed after approval - an amount, an added action, or a reordering", () => {
+    const approvedHash = corporateActionsHash(file.actions);
+    const edited = { ...DIVIDEND, action: { ...DIVIDEND.action, amount: "0.7501" } };
+    expect(refusal(signed({ dataset: "gate", actions: [edited, SPINOFF] }, { actionsHash: approvedHash })).join(" ")).toContain("changed after approval");
+    expect(refusal(signed({ dataset: "gate", actions: [DIVIDEND, SPINOFF, { ...DIVIDEND, action: { ...DIVIDEND.action, exDate: "2019-03-25", payDate: "2019-03-28" } }] }, { actionsHash: approvedHash })).join(" ")).toContain("changed after approval");
+    expect(refusal(signed({ dataset: "gate", actions: [SPINOFF, DIVIDEND] }, { actionsHash: approvedHash })).join(" ")).toContain("changed after approval");
+  });
+
+  it("hashes the actions as written, so a field the schema defaults does not break a valid signature", () => {
+    // `sources` defaults to [] when omitted. Hashing the parsed (defaulted) actions instead of the written ones
+    // would refuse every file a hand-written entry left it out of - and quietly change what the owner signed.
+    const noSources = { action: DIVIDEND.action, announcedAt: DIVIDEND.announcedAt };
+    const bytes = signed({ dataset: "gate", actions: [noSources] });
+    expect(refusal(bytes)).toEqual([]);
+    expect(parseCorporateActions(bytes, ctxFor(bytes))[0]?.qualityFlags).toEqual([UNVERIFIED_SINGLE_SOURCE]);
+  });
+
+  it("names every problem at once, and treats a file with no approval block as malformed", () => {
+    expect(refusal(signed(file, { approvedBy: null, approvedAt: null, actionsHash: `sha256:${"0".repeat(64)}` }))).toHaveLength(3);
+    const bare = bytesOf(file);
+    expect(() => parseCorporateActions(bare, ctxFor(bare))).toThrow(SchemaDriftError);
+  });
+
+  it("ships an example that is complete but for the owner's signature", () => {
+    // config/examples/corporate-actions.example.json documents the format. Its hash is right, so the ONLY reason
+    // it is refused is that nobody signed it - which is exactly what a reconciler's output looks like.
+    const bytes = new Uint8Array(readFileSync(new URL("../../../config/examples/corporate-actions.example.json", import.meta.url)));
+    expect(refusal(bytes)).toEqual(["approval.approvedBy is unsigned", "approval.approvedAt is empty"]);
   });
 });
 
@@ -137,6 +214,8 @@ describe("vendored corporate-action ingest", () => {
     expect(outcome.artifacts).toHaveLength(1);
     expect(outcome.artifacts[0]?.hash).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(outcome.observations).toHaveLength(2);
+    // Parsed before the artifact is stored, so the hash is computed, not read back: it must be the store's.
+    expect(outcome.observations.every((o) => o.rawContentHash === outcome.artifacts[0]?.hash)).toBe(true);
 
     const repo = new PointInTimeRepository(db);
     const first = repo.appendMany(outcome.observations);
@@ -161,6 +240,25 @@ describe("vendored corporate-action ingest", () => {
     expect(report.observations).toBe(2);
     expect(report.requestCount).toBe(0);
     expect(new Ledger(db).events().filter((e) => e.kind === "ingest.completed")).toHaveLength(1);
+    db.close();
+  });
+
+  it("stores nothing for a refused file - not even the artifact - and records the attempt", async () => {
+    const { dir, config, db } = harness();
+    const store = new ArtifactStore(config.artifactsDir, db);
+    const unsigned = signed({ dataset: "gate", actions: [DIVIDEND] }, { approvedBy: null });
+    expect(() => ingestCorporateActions(store, unsigned, { calendar, ingestedAt })).toThrow(UnapprovedCorporateActionsError);
+    expect(store.count()).toBe(0);
+
+    const path = join(dir, "unsigned.json");
+    writeFileSync(path, unsigned);
+    await expect(runIngest({ db, config, calendar }, { source: "corporate-actions", file: path })).rejects.toThrow(UnapprovedCorporateActionsError);
+    const events = new Ledger(db).events();
+    expect(events.filter((e) => e.kind === "ingest.completed")).toHaveLength(0);
+    const refused = events.filter((e) => e.kind === "ingest.refused_unapproved");
+    expect(refused).toHaveLength(1);
+    expect(JSON.stringify(refused[0]?.payload)).toContain("approval.approvedBy is unsigned");
+    expect(store.count()).toBe(0);
     db.close();
   });
 
