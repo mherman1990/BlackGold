@@ -39,9 +39,10 @@ export const ADAPTER_VERSION = "1.1.0";
 /**
  * 1.1.0 added the approval gate. 1.2.0 refuses an action field its kind does not read, and a SPINOFF without
  * `childFirstClose`. 1.3.0 also refuses a MERGER paying stock and a DELISTING with no stated final price: the
- * total-return series cannot value either (D-58). Every change to what parses bumps this, released or not.
+ * total-return series cannot value either (D-58). 1.4.0 refuses a negative delisting price. Every change to what
+ * parses bumps this, released or not.
  */
-export const PARSER_VERSION = "1.3.0";
+export const PARSER_VERSION = "1.4.0";
 
 /** Label for SchemaDrift errors; the per-action source id is `corporate_action.<KIND>` from the model. */
 const SOURCE_KIND = "corporate_action.vendored";

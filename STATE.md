@@ -29,7 +29,7 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
       Good Friday 2014, which are now listed.
   - **The two earlier findings:**
     - an action field its kind does not read is refused, at ingest and in the reconciler. The vendored
-      corporate-actions parser is now 1.3.0;
+      corporate-actions parser is now 1.4.0;
     - a split is read only across adjacent trading sessions, and NAV-history gaps are listed. The real files have
       none.
 - **Run against the real files from the survey (counts only; nothing real is committed):**

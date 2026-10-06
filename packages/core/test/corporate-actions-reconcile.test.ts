@@ -352,6 +352,8 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     // Nor one whose value the series cannot reach any other way: a merger paying stock (Codex, PR #114).
     const stockMerger = { action: { kind: "MERGER", entityId: "XLF", acquirer: "ACQ", terms: { stockRatio: "0.5" }, effective: "2016-09-19" }, sources: ["issuer:x", "exchange:y"] };
     expect(() => run(xlf, { ...opts, structural: [stockMerger] })).toThrow(/XLF MERGER pays stock/);
+    const negativeDelisting = { action: { kind: "DELISTING", entityId: "XLF", lastTradeDate: "2016-09-19", reason: "x", finalPrice: "-1" }, sources: ["issuer:x", "exchange:y"] };
+    expect(() => run(xlf, { ...opts, structural: [negativeDelisting] })).toThrow(/finalPrice must be non-negative/);
   });
 });
 

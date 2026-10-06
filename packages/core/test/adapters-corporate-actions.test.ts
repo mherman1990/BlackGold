@@ -136,6 +136,8 @@ describe("vendored corporate-action parser", () => {
     expect(badEntry({ action: { kind: "DELISTING", entityId: "X", lastTradeDate: "2015-10-08", reason: "acquired", finalPrice: null }, sources: ["a", "b"] })).toThrow(/X DELISTING needs an explicit finalPrice/);
     const worthless = signed({ dataset: "d", actions: [{ action: { kind: "DELISTING", entityId: "X", lastTradeDate: "2015-10-08", reason: "liquidated", finalPrice: "0" }, sources: ["a", "b"] }] });
     expect(parseCorporateActions(worthless, ctxFor(worthless))).toHaveLength(1);
+    // Zero is a price; below it is not - it would become negative proceeds and a negative index (Codex, PR #114).
+    expect(badEntry({ action: { kind: "DELISTING", entityId: "X", lastTradeDate: "2015-10-08", reason: "x", finalPrice: "-1" }, sources: ["a", "b"] })).toThrow(/finalPrice must be non-negative/);
     // A spin-off with no first close, absent or null, would leave its value out of the parent's total return,
     // which the series only warns about (Codex, PR #114).
     expect(badEntry({ action: spin, sources: ["a", "b"] })).toThrow(/needs childFirstClose/);

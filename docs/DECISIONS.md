@@ -1623,7 +1623,8 @@ An unclassified one stops the run (Codex, PR #114).
 cases where the series would only warn and value it wrongly (Codex, PR #114):
 - a spin-off without `childFirstClose`, whose value is never credited;
 - a merger paying stock (`terms.stockRatio`), whose stock leg is ignored;
-- a delisting with no stated `finalPrice`, which is read as zero. Write `"0"` if holders received nothing.
+- a delisting with no stated `finalPrice`, which is read as zero. Write `"0"` if holders received nothing. A
+  negative price is refused too.
 
 **Claude Code's limits are unchanged.** It never fills a curated value it has not been given, and it never signs
 the reconciled file.

@@ -315,12 +315,15 @@ export function corporateActionFromValue(value: unknown): CorporateAction {
     }
     case "DELISTING": {
       const fp = value["finalPrice"];
+      const finalPrice = fp === null || fp === undefined ? null : num(fp, "finalPrice");
+      // A negative price would become negative terminal proceeds and a negative total-return index.
+      if (finalPrice?.isNegative()) throw new MalformedCorporateActionError("delisting finalPrice must be non-negative");
       return {
         kind: "DELISTING",
         entityId: str(value["entityId"], "entityId"),
         lastTradeDate: date(value["lastTradeDate"], "lastTradeDate"),
         reason: str(value["reason"], "reason"),
-        finalPrice: fp === null || fp === undefined ? null : num(fp, "finalPrice"),
+        finalPrice,
       };
     }
     case "STALE_BAR":
