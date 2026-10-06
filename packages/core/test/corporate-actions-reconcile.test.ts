@@ -354,6 +354,11 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     expect(() => run(xlf, { ...opts, structural: [stockMerger] })).toThrow(/XLF MERGER pays stock/);
     const negativeDelisting = { action: { kind: "DELISTING", entityId: "XLF", lastTradeDate: "2016-09-19", reason: "x", finalPrice: "-1" }, sources: ["issuer:x", "exchange:y"] };
     expect(() => run(xlf, { ...opts, structural: [negativeDelisting] })).toThrow(/finalPrice must be non-negative/);
+    // At most one terminal action per entity, across MERGER and DELISTING (Codex, PR #114).
+    const delisted = (date: string) => ({ action: { kind: "DELISTING", entityId: "XLF", lastTradeDate: date, reason: "x", finalPrice: "1" }, sources: ["issuer:x", "exchange:y"] });
+    const merged = { action: { kind: "MERGER", entityId: "XLF", acquirer: "ACQ", terms: { cashPerShare: "10" }, effective: "2017-03-01" }, sources: ["issuer:x", "exchange:y"] };
+    expect(() => run(xlf, { ...opts, structural: [delisted("2017-01-03"), delisted("2017-06-01")] })).toThrow(/XLF has two terminal actions, DELISTING 2017-01-03 and DELISTING 2017-06-01/);
+    expect(() => run(xlf, { ...opts, structural: [delisted("2017-01-03"), merged] })).toThrow(/XLF has two terminal actions/);
   });
 });
 

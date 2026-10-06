@@ -1626,6 +1626,9 @@ cases where the series would only warn and value it wrongly (Codex, PR #114):
 - a delisting with no stated `finalPrice`, which is read as zero. Write `"0"` if holders received nothing. A
   negative price is refused too.
 
+They also refuse a second MERGER or DELISTING for one entity. The series ends the entity at its first terminal
+action and would ignore any other.
+
 **Claude Code's limits are unchanged.** It never fills a curated value it has not been given, and it never signs
 the reconciled file.
 

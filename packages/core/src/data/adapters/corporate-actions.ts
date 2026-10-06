@@ -39,10 +39,10 @@ export const ADAPTER_VERSION = "1.1.0";
 /**
  * 1.1.0 added the approval gate. 1.2.0 refuses an action field its kind does not read, and a SPINOFF without
  * `childFirstClose`. 1.3.0 also refuses a MERGER paying stock and a DELISTING with no stated final price: the
- * total-return series cannot value either (D-58). 1.4.0 refuses a negative delisting price. Every change to what
- * parses bumps this, released or not.
+ * total-return series cannot value either (D-58). 1.4.0 refuses a negative delisting price. 1.5.0 refuses a second
+ * MERGER or DELISTING for one entity. Every change to what parses bumps this, released or not.
  */
-export const PARSER_VERSION = "1.4.0";
+export const PARSER_VERSION = "1.5.0";
 
 /** Label for SchemaDrift errors; the per-action source id is `corporate_action.<KIND>` from the model. */
 const SOURCE_KIND = "corporate_action.vendored";
@@ -160,6 +160,8 @@ export function parseCorporateActions(bytes: Uint8Array, ctx: CorporateActionsPa
   const dataset = ctx.dataset ?? parsed.data.dataset;
 
   const seen = new Set<string>();
+  // TotalReturnSeries ends an entity at its first MERGER or DELISTING and silently ignores any other.
+  const terminal = new Map<string, string>();
   return parsed.data.actions.map((entry, i) => {
     let action;
     try {
@@ -173,6 +175,12 @@ export function parseCorporateActions(bytes: Uint8Array, ctx: CorporateActionsPa
     // An action the total-return series would only warn about - and so value wrongly - is refused.
     const unvalued = unvaluedActionReason(action);
     if (unvalued !== undefined) throw new SchemaDriftError(SOURCE_KIND, `actions[${i}]: ${unvalued}`);
+    if (action.kind === "MERGER" || action.kind === "DELISTING") {
+      const id = actionEntityId(action);
+      const earlier = terminal.get(id);
+      if (earlier !== undefined) throw new SchemaDriftError(SOURCE_KIND, `actions[${i}]: ${id} already ends with ${earlier}; a second terminal action would be ignored by the series`);
+      terminal.set(id, `${action.kind} ${actionEffectiveDate(action)}`);
+    }
     const entityId = actionEntityId(action);
     const effectiveDate = actionEffectiveDate(action);
     const locator = `vendor/corporate-actions/${dataset}/${entityId}/${action.kind}/${effectiveDate}`;

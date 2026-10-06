@@ -138,6 +138,13 @@ describe("vendored corporate-action parser", () => {
     expect(parseCorporateActions(worthless, ctxFor(worthless))).toHaveLength(1);
     // Zero is a price; below it is not - it would become negative proceeds and a negative index (Codex, PR #114).
     expect(badEntry({ action: { kind: "DELISTING", entityId: "X", lastTradeDate: "2015-10-08", reason: "x", finalPrice: "-1" }, sources: ["a", "b"] })).toThrow(/finalPrice must be non-negative/);
+    // One terminal action per entity: the series applies only the first and ignores the rest (Codex, PR #114).
+    const delist = (date: string) => ({ action: { kind: "DELISTING", entityId: "X", lastTradeDate: date, reason: "x", finalPrice: "1" }, sources: ["a", "b"] });
+    const cashMerger = { action: { kind: "MERGER", entityId: "X", acquirer: "Y", terms: { cashPerShare: "10" }, effective: "2015-12-01" }, sources: ["a", "b"] };
+    for (const pair of [[delist("2015-10-08"), delist("2016-01-04")], [delist("2015-10-08"), cashMerger]]) {
+      const two = signed({ dataset: "d", actions: pair });
+      expect(() => parseCorporateActions(two, ctxFor(two))).toThrow(/X already ends with/);
+    }
     // A spin-off with no first close, absent or null, would leave its value out of the parent's total return,
     // which the series only warns about (Codex, PR #114).
     expect(badEntry({ action: spin, sources: ["a", "b"] })).toThrow(/needs childFirstClose/);

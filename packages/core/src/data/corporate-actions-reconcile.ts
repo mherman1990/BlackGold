@@ -181,6 +181,8 @@ const sameDayId = (r: SameDayRecord): string => `${r.source} ${r.kind}`;
 function structuralInScope(entries: readonly StructuralEntry[], entities: ReadonlySet<string>, window: { from: IsoDate; to: IsoDate }) {
   const out: { key: string; day: string; entityId: string; exDate: IsoDate; kind: string; entry: Entry; supersedes: Set<string>; keeps: Set<string> }[] = [];
   const seen = new Set<string>();
+  // The series ends an entity at its first MERGER or DELISTING and ignores any other, so at most one may be written.
+  const terminal = new Map<string, string>();
   for (const [i, s] of entries.entries()) {
     let action;
     try {
@@ -202,6 +204,11 @@ function structuralInScope(entries: readonly StructuralEntry[], entities: Readon
     const key = keyOf({ entityId, kind: action.kind, exDate });
     if (seen.has(key)) throw new ReconcileInputError(`structural action ${key} is given twice`);
     seen.add(key);
+    if (action.kind === "MERGER" || action.kind === "DELISTING") {
+      const earlier = terminal.get(entityId);
+      if (earlier !== undefined) throw new ReconcileInputError(`${entityId} has two terminal actions, ${earlier} and ${action.kind} ${exDate}; the series would apply only one`);
+      terminal.set(entityId, `${action.kind} ${exDate}`);
+    }
     const entry: Entry = { action: s.action, sources: [...s.sources] };
     if (s.announcedAt !== undefined) entry.announcedAt = s.announcedAt;
     const supersedes = new Set((s.supersedes ?? []).map(sameDayId));
