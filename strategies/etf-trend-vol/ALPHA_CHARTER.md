@@ -14,12 +14,12 @@
 > `packages/core/test/fixtures/etf-trend-vol-charter-0.2.0-signed.yaml`. 0.3.0 inherits none of 0.2.0's
 > evidence, and 0.2.0 had none: nothing was registered and no run is citable.
 
-**Status: this specification is a DRAFT of version 0.3.0.** Its values are the ones in `strategies/etf-trend-vol/charter.yaml`, the only form the code executes. The `PROPOSED default` labels throughout this prose mark each value's origin as a Discovery proposal; every value was frozen into the signed 0.1.0 and 0.2.0 charters, and those 0.3.0 changes are marked where they occur. Changing any value is a new charter version.
+**Status: this specification is version 0.3.0, APPROVED** (owner-signed 2026-10-05, D-56). Its values are the ones in `strategies/etf-trend-vol/charter.yaml`, the only form the code executes. The `PROPOSED default` labels throughout this prose mark each value's origin as a Discovery proposal; every value was frozen into the signed 0.1.0 and 0.2.0 charters, and those 0.3.0 changes are marked where they occur. Changing any value is a new charter version.
 
 | Field | Value |
 |---|---|
 | Strategy ID | `etf-trend-vol` |
-| Charter version | `0.3.0` (DRAFT). Prior: `0.2.0` signed 2026-09-12 (D-50); `0.1.0` signed 2026-09-08 (D-48) |
+| Charter version | `0.3.0` (APPROVED 2026-10-05, D-56). Prior: `0.2.0` signed 2026-09-12 (D-50); `0.1.0` signed 2026-09-08 (D-48) |
 | Companion schema | `strategies/etf-trend-vol/charter.yaml` (the only form the code executes) |
 | Owner | Matt Herman |
 | Author of draft | Black Gold Discovery Pack (0.1.0); Claude Code prepared 0.2.0 and 0.3.0 for the owner's signature |

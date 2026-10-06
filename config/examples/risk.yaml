@@ -7,10 +7,10 @@ version: "0.2.0"
 # 2026-10-05 folding D-55's conflicts 1 and 4 into charter 0.3.0 (D-56, OD-11 and OD-12):
 #   positionLimits.maxNewPositionsPerSession 3 -> 5, orderLimits.maxOrdersPerSession 4 -> 11,
 #   orderLimits.maxDailyTurnoverPctNav 0.25 -> 2.00 (gross), liquidity.maxAdvParticipationPct 0.01 -> 0.005.
-# The approval below was cleared, not carried, so the owner's name never stands on values he did not sign.
-# Until it is re-signed, the shadow track treats this file as a stale input and blocks new risk (fail closed).
-# To sign: set approvedBy and approvedAt. orderLimits.maxOrderNotionalUsd and maxOrderQuantity depend on the
-# sleeve size (D-55 conflict 2), which only the owner sets; set them here if they change, never in a prompt.
+# The 0.1.0 approval was cleared rather than carried while 0.2.0 was a draft, so the owner's name never stood
+# on values he had not signed; he re-signed 0.2.0 on 2026-10-05 (approval below; PR #111). Any later change to a
+# value here clears the approval again and needs his signature. orderLimits.maxOrderNotionalUsd and
+# maxOrderQuantity depend on the sleeve size (D-55 conflict 2), which only the owner sets, never in a prompt.
 approvedBy: Matt Herman
 approvedAt: 2026-10-05T00:00:00Z
 
