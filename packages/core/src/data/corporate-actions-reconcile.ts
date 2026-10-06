@@ -239,6 +239,11 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
     for (const id of s.keeps) d.keeps.add(id);
     structuralDays.set(s.day, d);
   }
+  // Each entry is checked alone above; two on one day can still contradict each other once pooled.
+  for (const [day, d] of structuralDays) {
+    const both = [...d.supersedes].filter((id) => d.keeps.has(id));
+    if (both.length > 0) throw new ReconcileInputError(`the structural actions on ${day.replace("|", " ")} disagree: one supersedes and another keeps ${both.join(", ")}`);
+  }
 
   const inWindow = records.filter((r) => entities.has(r.entityId) && r.exDate >= opts.window.from && r.exDate <= opts.window.to);
   const setAsideByDay = new Map<string, SetAsideFinding>();

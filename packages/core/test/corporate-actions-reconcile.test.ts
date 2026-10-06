@@ -303,6 +303,12 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     expect(() => run(xlf, { ...opts, structural: partly })).toThrow(/vendor:tiingo-eod CASH_DIVIDEND 4.61/);
     const both = [{ ...BARE, supersedes: SUPERSEDES, keeps: [{ source: VENDOR, kind: "CASH_DIVIDEND" as const }] }];
     expect(() => run(xlf, { ...opts, structural: both })).toThrow(/both supersedes and keeps vendor:tiingo-eod CASH_DIVIDEND/);
+    // Two structural actions on one entity and day pool their lists, and must not contradict each other (Codex, PR #114).
+    const delisting = { action: { kind: "DELISTING", entityId: "XLF", lastTradeDate: "2016-09-19", reason: "test", finalPrice: null }, sources: ["issuer:x"], keeps: [{ source: VENDOR, kind: "CASH_DIVIDEND" as const }] };
+    expect(() => run(xlf, { ...opts, structural: [ENTRY, delisting] })).toThrow(/structural actions on XLF 2016-09-19 disagree: one supersedes and another keeps vendor:tiingo-eod CASH_DIVIDEND/);
+    // Pooled lists that agree are fine: the second action adds nothing new, and both are written.
+    const agreeing = { ...delisting, keeps: [] };
+    expect(run(xlf, { ...opts, structural: [ENTRY, agreeing] }).report.setAside[0]?.structuralKind).toBe("DELISTING+SPINOFF");
   });
 
   it("ignores a structural action outside the window or universe, and then sets nothing aside", () => {
