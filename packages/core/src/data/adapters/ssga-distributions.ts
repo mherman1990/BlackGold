@@ -1,5 +1,6 @@
 import readXlsxFile from "read-excel-file/node";
-import { Dec, isoDate, type IsoDate } from "@blackgold/shared";
+import { addDays, Dec, isoDate, type IsoDate } from "@blackgold/shared";
+import type { ExchangeCalendar } from "../../calendar/types.ts";
 import type { SourceCashDividend, SourceSplit } from "../corporate-actions-reconcile.ts";
 import { decimalString, SchemaDriftError } from "./common.ts";
 import { dayMonthYearDate, usSlashDate } from "./issuer-dates.ts";
@@ -16,17 +17,18 @@ import { dayMonthYearDate, usSlashDate } from "./issuer-dates.ts";
  *    The workbook lists no splits.
  *  - **Each fund's NAV history** (`navhist-us-en-<etf>.xlsx`): daily NAV and shares outstanding, unadjusted. A
  *    split shows as NAV dropping by the ratio while shares outstanding rise by it. A record is emitted only when
- *    both one-day ratios sit near the SAME standard ratio (NAV within 15%, which leaves room for the market's move
- *    that day; shares within 5%, which leaves room for that day's creations and redemptions). Any other one-day NAV
- *    move beyond 20% is reported as a jump and never becomes a record: a ratio guessed from an unexplained move
- *    would be a fabricated number, and the reconciler's exact-match rule on split ratios is what makes this safe -
- *    a wrong ratio cannot agree with the vendor's.
+ *    two rows on ADJACENT trading sessions both move by about the SAME standard ratio: NAV within 15%, which leaves
+ *    room for the market's move that day, and shares within 5%, which leaves room for that day's creations and
+ *    redemptions. Any other NAV move beyond 20% is reported as a jump and never becomes a record: a ratio guessed
+ *    from an unexplained move would be a fabricated number, and the reconciler's exact-match rule on split ratios
+ *    is what makes this safe - a wrong ratio cannot agree with the vendor's. Rows that skip sessions are reported
+ *    as gaps, and a move across one is a jump however well it fits.
  *
  * Both are untrusted external data and fail closed on any surprise in the funds asked for: a missing header, an
  * unreadable date or amount, a negative amount, or a fund listed twice on one ex-date all raise
  * `SchemaDriftError`. The one tolerated defect is a pay date before its ex-date: it is dropped and reported (see
- * `payDateDropped`), since the pay date is never read for returns. Rows for other funds are not read at all, so a quirk in one of the
- * workbook's 180 other funds cannot block these.
+ * `payDateDropped`), since the pay date is never read for returns. Rows for other funds are not read at all, so a
+ * quirk in one of the workbook's 180 other funds cannot block these.
  */
 export const SSGA_DISTRIBUTIONS_SOURCE = "issuer:ssga-distributions";
 export const SSGA_NAV_HISTORY_SOURCE = "issuer:ssga-nav-history";
@@ -148,10 +150,12 @@ export async function parseSsgaDistributions(bytes: Uint8Array, opts: { entities
 }
 
 /**
- * A one-day NAV move beyond 20% that is not a recognisable split. Reported; never a record. `sharesRatio` is null
- * where either day's share count is unpublished.
+ * A NAV move beyond 20% between consecutive rows that is not a recognisable split. Reported; never a record.
+ * `sharesRatio` is null where either day's share count is unpublished. `sessionsBetween` counts the trading sessions
+ * the file skips between the two rows; anything but zero means the move spans more than a day and is never read as
+ * a split, however well its ratios fit.
  */
-export type NavJump = { previousDate: IsoDate; date: IsoDate; navRatio: string; sharesRatio: string | null };
+export type NavJump = { previousDate: IsoDate; date: IsoDate; navRatio: string; sharesRatio: string | null; sessionsBetween: number };
 
 export type SsgaNavSplits = {
   records: SourceSplit[];
@@ -160,6 +164,8 @@ export type SsgaNavSplits = {
   lastDate: IsoDate;
   /** The first date with a published share count. Before it no split can be confirmed, only reported as a jump. */
   sharesFirstDate: IsoDate | undefined;
+  /** Trading sessions the file has no row for, between consecutive rows: where a split could not be seen at all. */
+  gaps: { after: IsoDate; before: IsoDate; sessionsMissing: number }[];
 };
 
 /** New shares per old share that a split can have; each is an exact decimal, so it can match a vendor exactly. */
@@ -170,10 +176,19 @@ const NAV_BAND = new Dec("0.15");
 const SHARES_BAND = new Dec("0.05");
 const near = (x: Dec, r: Dec, band: Dec): boolean => x.div(r).minus(1).abs().lte(band);
 
+/** Trading sessions strictly between two dates. */
+function sessionsBetween(calendar: ExchangeCalendar, after: IsoDate, before: IsoDate): number {
+  const from = addDays(after, 1);
+  const to = addDays(before, -1);
+  return from > to ? 0 : calendar.sessionDates(from, to).length;
+}
+
 /**
  * Read splits out of one fund's NAV history. The file must name the fund (`Ticker Symbol:`) and it must be `etf`.
+ * Only rows on adjacent trading sessions can show a split: a truncated or gappy file could otherwise fit a split's
+ * ratios over months.
  */
-export async function ssgaNavSplits(bytes: Uint8Array, opts: { etf: string; locator: string }): Promise<SsgaNavSplits> {
+export async function ssgaNavSplits(bytes: Uint8Array, opts: { etf: string; locator: string; calendar: ExchangeCalendar }): Promise<SsgaNavSplits> {
   const etf = opts.etf.trim().toUpperCase();
   const rows = await firstSheet(bytes, NAV_ID);
   const { index, col } = findColumns(rows, { date: "DATE", nav: "NAV", shares: "SHARES OUTSTANDING" }, NAV_ID);
@@ -210,24 +225,27 @@ export async function ssgaNavSplits(bytes: Uint8Array, opts: { etf: string; loca
 
   const records: SourceSplit[] = [];
   const jumps: NavJump[] = [];
+  const gaps: SsgaNavSplits["gaps"] = [];
   for (let i = 1; i < dates.length; i++) {
     const previousDate = dates[i - 1];
     const date = dates[i];
     const prev = previousDate === undefined ? undefined : points.get(previousDate);
     const cur = date === undefined ? undefined : points.get(date);
     if (previousDate === undefined || date === undefined || prev === undefined || cur === undefined) continue;
+    const missing = sessionsBetween(opts.calendar, previousDate, date);
+    if (missing > 0) gaps.push({ after: previousDate, before: date, sessionsMissing: missing });
     // A 2-for-1 split halves NAV and doubles shares: both ratios read 2.
     const navRatio = prev.nav.div(cur.nav);
     if (navRatio.lt(JUMP_UP) && navRatio.gt(JUMP_DOWN)) continue;
     const sharesRatio = prev.shares === undefined || cur.shares === undefined ? undefined : cur.shares.div(prev.shares);
-    const matches = sharesRatio === undefined ? [] : STANDARD_RATIOS.filter((r) => near(navRatio, r, NAV_BAND) && near(sharesRatio, r, SHARES_BAND));
+    const matches = sharesRatio === undefined || missing > 0 ? [] : STANDARD_RATIOS.filter((r) => near(navRatio, r, NAV_BAND) && near(sharesRatio, r, SHARES_BAND));
     const ratio = matches.length === 1 ? matches[0] : undefined;
     if (ratio === undefined) {
-      jumps.push({ previousDate, date, navRatio: navRatio.toDecimalPlaces(6).toFixed(), sharesRatio: sharesRatio?.toDecimalPlaces(6).toFixed() ?? null });
+      jumps.push({ previousDate, date, navRatio: navRatio.toDecimalPlaces(6).toFixed(), sharesRatio: sharesRatio?.toDecimalPlaces(6).toFixed() ?? null, sessionsBetween: missing });
       continue;
     }
     records.push({ source: SSGA_NAV_HISTORY_SOURCE, kind: "SPLIT", entityId: etf, exDate: date, ratio, locator: `${opts.locator}#${etf}/${date}` });
   }
   const sharesFirstDate = dates.find((d) => points.get(d)?.shares !== undefined);
-  return { records, jumps, firstDate, lastDate, sharesFirstDate };
+  return { records, jumps, firstDate, lastDate, sharesFirstDate, gaps };
 }

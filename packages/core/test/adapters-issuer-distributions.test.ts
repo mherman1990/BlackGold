@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { NyseCalendar } from "../src/calendar/nyse.ts";
 import { SchemaDriftError } from "../src/data/adapters/common.ts";
 import { dayMonthYearDate, monthDayYearDate, plainIsoDate, usSlashDate } from "../src/data/adapters/issuer-dates.ts";
 import { ISHARES_DISTRIBUTIONS_SOURCE, parseIsharesDistributions } from "../src/data/adapters/ishares-distributions.ts";
@@ -15,6 +16,7 @@ const FIX = new URL("../../../test/fixtures/ssga/", import.meta.url);
 const fixture = (name: string): Uint8Array => new Uint8Array(readFileSync(new URL(name, FIX)));
 const brief = (rs: SourceAction[]) => rs.map((r) => [r.entityId, r.exDate, r.kind === "CASH_DIVIDEND" ? r.amount.toFixed() : r.ratio.toFixed()]);
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
+const calendar = new NyseCalendar();
 
 describe("issuer date spellings", () => {
   it("reads each format exactly, and refuses impossible dates and other spellings", () => {
@@ -81,7 +83,7 @@ describe("parseSsgaDistributions", () => {
 
 describe("ssgaNavSplits", () => {
   it("reads a split only where NAV and shares outstanding both move by the same standard ratio", async () => {
-    const n = await ssgaNavSplits(fixture("navhist-xlk.xlsx"), { etf: "xlk", locator: "nav" });
+    const n = await ssgaNavSplits(fixture("navhist-xlk.xlsx"), { etf: "xlk", locator: "nav", calendar });
     expect(brief(n.records)).toEqual([
       ["XLK", "2017-12-01", "0.5"],
       ["XLK", "2025-12-02", "2"],
@@ -92,22 +94,32 @@ describe("ssgaNavSplits", () => {
   });
 
   it("reports every other big one-day move as a jump and never turns it into a record", async () => {
-    const n = await ssgaNavSplits(fixture("navhist-xlk.xlsx"), { etf: "XLK", locator: "nav" });
+    const n = await ssgaNavSplits(fixture("navhist-xlk.xlsx"), { etf: "XLK", locator: "nav", calendar });
     expect(n.jumps).toEqual([
       // NAV halved with no published share count: no split can be confirmed.
-      { previousDate: "2006-05-26", date: "2006-05-30", navRatio: "2.00344", sharesRatio: null },
+      { previousDate: "2006-05-26", date: "2006-05-30", navRatio: "2.00344", sharesRatio: null, sessionsBetween: 0 },
       // NAV halved but shares rose 30%: no standard ratio fits both.
-      { previousDate: "2007-01-04", date: "2007-01-05", navRatio: "2", sharesRatio: "1.302326" },
+      { previousDate: "2007-01-04", date: "2007-01-05", navRatio: "2", sharesRatio: "1.302326", sessionsBetween: 0 },
       // A 30% fall with shares flat: a market move, not a split, though 1.43 is within 15% of 1.5.
-      { previousDate: "2008-10-09", date: "2008-10-10", navRatio: "1.428571", sharesRatio: "1" },
+      { previousDate: "2008-10-09", date: "2008-10-10", navRatio: "1.428571", sharesRatio: "1", sessionsBetween: 0 },
     ]);
   });
 
+  it("never reads a split across rows that skip sessions, and lists every gap", async () => {
+    const n = await ssgaNavSplits(fixture("navhist-gap.xlsx"), { etf: "XLK", locator: "nav", calendar });
+    expect(n.records).toEqual([]);
+    expect(n.jumps).toEqual([{ previousDate: "2019-01-02", date: "2019-03-01", navRatio: "2", sharesRatio: "2", sessionsBetween: 39 }]);
+    expect(n.gaps).toEqual([{ after: "2019-01-02", before: "2019-03-01", sessionsMissing: 39 }]);
+    // The main fixture's events sit on adjacent sessions, so its gaps are only the stretches between them.
+    const x = await ssgaNavSplits(fixture("navhist-xlk.xlsx"), { etf: "XLK", locator: "nav", calendar });
+    expect(x.gaps.map((g) => g.after)).toEqual(["2006-05-30", "2007-01-05", "2008-10-10", "2017-12-01"]);
+  });
+
   it("refuses a file for another fund, one that names no fund, a repeated date, or an unreadable NAV", async () => {
-    await expect(ssgaNavSplits(fixture("navhist-wrongfund.xlsx"), { etf: "XLK", locator: "x" })).rejects.toThrow(/for XLF, not XLK/);
-    await expect(ssgaNavSplits(fixture("navhist-noticker.xlsx"), { etf: "XLK", locator: "x" })).rejects.toThrow(/does not name its fund/);
-    await expect(ssgaNavSplits(fixture("navhist-dupdate.xlsx"), { etf: "XLK", locator: "x" })).rejects.toThrow(/listed twice/);
-    await expect(ssgaNavSplits(fixture("navhist-badnav.xlsx"), { etf: "XLK", locator: "x" })).rejects.toThrow(/unreadable NAV/);
+    await expect(ssgaNavSplits(fixture("navhist-wrongfund.xlsx"), { etf: "XLK", locator: "x", calendar })).rejects.toThrow(/for XLF, not XLK/);
+    await expect(ssgaNavSplits(fixture("navhist-noticker.xlsx"), { etf: "XLK", locator: "x", calendar })).rejects.toThrow(/does not name its fund/);
+    await expect(ssgaNavSplits(fixture("navhist-dupdate.xlsx"), { etf: "XLK", locator: "x", calendar })).rejects.toThrow(/listed twice/);
+    await expect(ssgaNavSplits(fixture("navhist-badnav.xlsx"), { etf: "XLK", locator: "x", calendar })).rejects.toThrow(/unreadable NAV/);
   });
 });
 

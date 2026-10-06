@@ -340,6 +340,29 @@ export function corporateActionFromValue(value: unknown): CorporateAction {
   }
 }
 
+/**
+ * Keys in a hand-written action value that its kind never reads, as dotted paths (`terms.cashPershare`). The parser
+ * reads named fields and ignores the rest, so a misspelled OPTIONAL field - `childFirstclose` on a spin-off - would
+ * otherwise vanish without a word and take the spun-off value out of the parent's total-return series. A key counts
+ * as read only if it survives the round trip through the canonical serialization; a null value counts as absent.
+ */
+export function unreadActionKeys(value: Readonly<Record<string, unknown>>, action: CorporateAction): string[] {
+  const out: string[] = [];
+  const walk = (raw: Readonly<Record<string, unknown>>, canon: Readonly<Record<string, unknown>>, prefix: string): void => {
+    for (const [key, v] of Object.entries(raw)) {
+      if (v === null || v === undefined) continue;
+      if (!Object.hasOwn(canon, key)) {
+        out.push(`${prefix}${key}`);
+        continue;
+      }
+      const c = canon[key];
+      if (isRecord(v) && isRecord(c)) walk(v, c, `${prefix}${key}.`);
+    }
+  };
+  walk(value, corporateActionToValue(action), "");
+  return out.sort();
+}
+
 /** Serialize with decimals as strings (canonical JSON does this for Dec anyway; explicit is reproducible). */
 export function corporateActionToValue(a: CorporateAction): Json {
   switch (a.kind) {

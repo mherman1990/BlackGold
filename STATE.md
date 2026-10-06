@@ -19,7 +19,11 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
     name.
   - **The reconciler** now takes an ordered list of preferred sources. It writes curated structural actions as
     given and sets aside any same-day cash or split record.
-  - Tests: 1138 pass; 38 of 38 deliberate faults caught.
+  - Tests: 1139 pass; 44 of 44 deliberate faults caught.
+  - **Codex's two findings are fixed:**
+    - an action field its kind does not read is refused, at ingest and in the reconciler;
+    - a split is read only across adjacent trading sessions, and NAV-history gaps are listed. The real files have
+      none.
 - **Run against the real files from the survey (counts only; nothing real is committed):**
   - SSGA lists 1,010 in-scope distributions with no unreadable row.
   - **One SSGA data error:** BIL's 2008-03-03 row carries February's pay date. The parser drops that pay date and
@@ -27,9 +31,13 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
   - **Splits:** the NAV histories show XLK, XLU and XLY 2:1 on 2025-12-05 and **BIL 1-for-2 on 2017-11-30**, inside
     the design window, with no false jumps 2003–2026.
   - iShares gives IWM 106 distributions; Vanguard gives 40 each, from 2016-12.
-- **Matt's next act, and it can start now:** curate about 170 rows. That corrects the survey's 80, which assumed
-  Nasdaq for QQQ. Also download the IWM and Vanguard files. `docs/runbooks/first-ingestion.md` Step 2b says what
-  and where.
+- **Matt's next acts:**
+  - Download the IWM and Vanguard files now.
+  - Curate about 190 rows once PR-B2's reconcile report lists exactly which actions only Tiingo reports.
+  - The ranges include each window's feature warm-up, 435 calendar days before its first decision. That puts the
+    RECENT warm-up from late October 2023, inside the holdout window, which evaluation already reads bars from.
+  - This corrects the survey's 80, which assumed Nasdaq for QQQ and no warm-up.
+  - `docs/runbooks/first-ingestion.md` Step 2b says what and where.
 - **Claude Code's next:** PR-B2, the SSGA fetch and the `reconcile` command that writes the unsigned file and its
   report.
 

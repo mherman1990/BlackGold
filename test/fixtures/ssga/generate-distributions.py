@@ -82,6 +82,13 @@ navhist = nav_book("XLK", [
 ])
 navhist.save(OUT + "navhist-xlk.xlsx")
 nav_book("XLF", [["02-Dec-2025", 50.0, 100, 5000]]).save(OUT + "navhist-wrongfund.xlsx")
+# Two months missing between rows that happen to fit a 2-for-1 exactly: a gap, never a split.
+nav_book("XLK", [
+    ["04-Mar-2019", 10.05, 200000000, 2010000000],
+    ["01-Mar-2019", 10.00, 200000000, 2000000000],   # NAV x0.5 and shares x2 since 02-Jan, with 39 sessions unlisted
+    ["02-Jan-2019", 20.00, 100000000, 2000000000],
+    ["31-Dec-2018", 20.10, 100000000, 2010000000],
+]).save(OUT + "navhist-gap.xlsx")
 book([NAV_HEADER, ["02-Dec-2025", 50.0, 100, 5000]], "navhist").save(OUT + "navhist-noticker.xlsx")
 nav_book("XLK", [["02-Dec-2025", 50.0, 100, 5000], ["02-Dec-2025", 51.0, 100, 5100]]).save(OUT + "navhist-dupdate.xlsx")
 nav_book("XLK", [["02-Dec-2025", "n/a", 100, 5000]]).save(OUT + "navhist-badnav.xlsx")

@@ -171,15 +171,24 @@ terms bar automated access.
 
 **Curated by you,** for what no feed reaches. Record each distribution from the issuer's own documents (annual or
 semi-annual reports, distribution notices) in a CSV laid out like
-`config/examples/curated-corporate-actions.example.csv`:
+`config/examples/curated-corporate-actions.example.csv`.
 
-- **VTI, VTV and VUG:** every distribution with an ex-date from 2007-06-01 through 2016-11-30, about 38 per fund.
+**Wait for the reconcile report before you start.** It lists every action only Tiingo reports, by fund and
+ex-date, and that list is exactly what needs a curated row. Look each one up in the issuer's document and record
+what the document says, not Tiingo's figure: a copied number is one source counted twice.
+
+The ranges below cover each window plus its **feature warm-up**. The longest feature needs 253 sessions, so the
+code reads bars and corporate actions 435 calendar days before a window's first decision. The RECENT warm-up
+therefore reaches into 2023. That is not opening the holdout: evaluation already reads those bars, and a
+dividend missing from a warm-up would quietly understate every early momentum reading.
+
+- **VTI, VTV and VUG:** every distribution with an ex-date from late March 2006 through 2016-11-30, about 43 per fund.
   Add VTI's June 2008 split as a `SPLIT` row.
-- **QQQ:** every distribution with an ex-date in 2007-06-01 → 2018-12-31 and 2025-01-01 → 2026-09-06, about 53.
-  Nothing for 2019–2024: the holdout stays sealed. If Invesco's QQQ page offers a distribution-history download,
-  save that instead; a reader for it is a small addition and saves the typing.
+- **QQQ:** every distribution with an ex-date from late March 2006 through 2018-12-31, or from late October 2023 through 2026-09-06, about 63.
+  Nothing in between: no decision reads it. If Invesco's QQQ page offers a distribution-history download, save
+  that instead; a reader for it is a small addition and saves the typing.
 
-That is about 170 rows. In each row:
+That is about 190 rows. In each row:
 - `value` is the TOTAL per share that went ex that day, income and capital gains summed;
 - `source` names the publisher, e.g. `issuer:vanguard-annual-report`;
 - `document` names the page the number came from.

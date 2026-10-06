@@ -121,6 +121,15 @@ describe("vendored corporate-action parser", () => {
     // Nonpositive spin-off ratio / childFirstClose would feed a zero or negative distribution into the TR series.
     expect(badEntry({ action: { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0", exDate: "2015-10-08" }, sources: ["a", "b"] })).toThrow(SchemaDriftError);
     expect(badEntry({ action: { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0.5", exDate: "2015-10-08", childFirstClose: "-1" }, sources: ["a", "b"] })).toThrow(SchemaDriftError);
+    // A field the action's kind does not read: a misspelled optional field would otherwise vanish silently and,
+    // for childFirstClose, take the spun-off value out of the parent's total return (Codex, PR #114).
+    const { childFirstClose, ...spin } = SPINOFF.action;
+    expect(badEntry({ action: { ...spin, childFirstclose: childFirstClose }, sources: ["a", "b"] })).toThrow(/a SPINOFF has no field childFirstclose/);
+    expect(badEntry({ action: { kind: "MERGER", entityId: "X", acquirer: "Y", terms: { stockRatio: "0.5", cashPershare: "1" }, effective: "2015-10-08" }, sources: ["a", "b"] })).toThrow(/terms\.cashPershare/);
+    expect(badEntry({ action: { ...DIVIDEND.action, note: "special" }, sources: ["a", "b"] })).toThrow(/a CASH_DIVIDEND has no field note/);
+    // A null optional field is absent, not unknown.
+    const nullClose = signed({ dataset: "d", actions: [{ action: { ...spin, childFirstClose: null }, sources: ["a", "b"] }] });
+    expect(parseCorporateActions(nullClose, ctxFor(nullClose))).toHaveLength(1);
     // Unknown top-level key.
     const extra = signed({ dataset: "d", actions: [], oops: 1 });
     expect(() => parseCorporateActions(extra, ctxFor(extra))).toThrow(SchemaDriftError);

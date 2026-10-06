@@ -8,6 +8,7 @@ import {
   corporateActionFromValue,
   corporateActionObservation,
   dateStartUtc,
+  unreadActionKeys,
 } from "../../market/types.ts";
 import { SchemaDriftError, type AdapterContext, type FetchOutcome, type ParseContext } from "./common.ts";
 
@@ -159,6 +160,9 @@ export function parseCorporateActions(bytes: Uint8Array, ctx: CorporateActionsPa
     } catch (err) {
       throw new SchemaDriftError(SOURCE_KIND, `actions[${i}]: ${err instanceof Error ? err.message : "malformed action"}`);
     }
+    // A field the parser does not read is a typo until shown otherwise; dropping it silently could drop a value.
+    const unread = unreadActionKeys(entry.action, action);
+    if (unread.length > 0) throw new SchemaDriftError(SOURCE_KIND, `actions[${i}]: a ${action.kind} has no field ${unread.join(", ")}`);
     const entityId = actionEntityId(action);
     const effectiveDate = actionEffectiveDate(action);
     const locator = `vendor/corporate-actions/${dataset}/${entityId}/${action.kind}/${effectiveDate}`;

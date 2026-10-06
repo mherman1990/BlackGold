@@ -1,5 +1,5 @@
 import { addDays, Dec, type IsoDate, type UtcInstant } from "@blackgold/shared";
-import { actionEffectiveDate, actionEntityId, corporateActionFromValue } from "../market/types.ts";
+import { actionEffectiveDate, actionEntityId, corporateActionFromValue, unreadActionKeys } from "../market/types.ts";
 import type { PointInTimeObservation } from "./pit/types.ts";
 import { corporateActionsHash } from "./adapters/corporate-actions.ts";
 
@@ -169,6 +169,10 @@ function structuralInScope(entries: readonly StructuralEntry[], entities: Readon
       throw new ReconcileInputError(`structural[${i}]: ${err instanceof Error ? err.message : "malformed action"}`);
     }
     if (!STRUCTURAL_KINDS.has(action.kind)) throw new ReconcileInputError(`structural[${i}] is ${action.kind}; only SPINOFF, MERGER and DELISTING are curated as structural`);
+    // Written as given, so every key must be one the read path reads: a misspelled childFirstClose would otherwise
+    // be signed, ingested, and silently left out of the parent's total return.
+    const unread = unreadActionKeys(s.action, action);
+    if (unread.length > 0) throw new ReconcileInputError(`structural[${i}]: a ${action.kind} has no field ${unread.join(", ")}`);
     const entityId = actionEntityId(action);
     const exDate = actionEffectiveDate(action);
     if (!entities.has(entityId) || exDate < window.from || exDate > window.to) continue;

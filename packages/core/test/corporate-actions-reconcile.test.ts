@@ -309,6 +309,9 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     expect(() => run(xlf, { ...opts, structural: [{ action: cashAction, sources: ["issuer:x"] }] })).toThrow(/only SPINOFF, MERGER and DELISTING/);
     expect(() => run(xlf, { ...opts, structural: [{ action: { ...SPINOFF, ratio: "0" }, sources: ["issuer:x"] }] })).toThrow(ReconcileInputError);
     expect(() => run(xlf, { ...opts, structural: [...structural, ...structural] })).toThrow(/given twice/);
+    // A misspelled optional field would be written, signed and then silently not read (Codex, PR #114).
+    const { childFirstClose, ...rest } = SPINOFF;
+    expect(() => run(xlf, { ...opts, structural: [{ action: { ...rest, childFirstclose: childFirstClose }, sources: ["issuer:x"] }] })).toThrow(/a SPINOFF has no field childFirstclose/);
   });
 });
 
