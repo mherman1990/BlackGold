@@ -128,8 +128,14 @@ describe("vendored corporate-action parser", () => {
     expect(badEntry({ action: { kind: "MERGER", entityId: "X", acquirer: "Y", terms: { stockRatio: "0.5", cashPershare: "1" }, effective: "2015-10-08" }, sources: ["a", "b"] })).toThrow(/terms\.cashPershare/);
     expect(badEntry({ action: { ...DIVIDEND.action, note: "special" }, sources: ["a", "b"] })).toThrow(/a CASH_DIVIDEND has no field note/);
     // A null optional field is absent, not unknown.
-    const nullTerm = signed({ dataset: "d", actions: [{ action: { kind: "MERGER", entityId: "X", acquirer: "Y", terms: { stockRatio: "0.5", cashPerShare: null }, effective: "2015-10-08" }, sources: ["a", "b"] }] });
+    const nullTerm = signed({ dataset: "d", actions: [{ action: { kind: "MERGER", entityId: "X", acquirer: "Y", terms: { cashPerShare: "10", stockRatio: null }, effective: "2015-10-08" }, sources: ["a", "b"] }] });
     expect(parseCorporateActions(nullTerm, ctxFor(nullTerm))).toHaveLength(1);
+    // Actions the total-return series would only warn about, and so value wrongly, are refused (Codex, PR #114):
+    // a merger's stock leg is ignored there, and a delisting with no final price is read as zero.
+    expect(badEntry({ action: { kind: "MERGER", entityId: "X", acquirer: "Y", terms: { cashPerShare: "5", stockRatio: "0.5" }, effective: "2015-10-08" }, sources: ["a", "b"] })).toThrow(/X MERGER pays stock/);
+    expect(badEntry({ action: { kind: "DELISTING", entityId: "X", lastTradeDate: "2015-10-08", reason: "acquired", finalPrice: null }, sources: ["a", "b"] })).toThrow(/X DELISTING needs an explicit finalPrice/);
+    const worthless = signed({ dataset: "d", actions: [{ action: { kind: "DELISTING", entityId: "X", lastTradeDate: "2015-10-08", reason: "liquidated", finalPrice: "0" }, sources: ["a", "b"] }] });
+    expect(parseCorporateActions(worthless, ctxFor(worthless))).toHaveLength(1);
     // A spin-off with no first close, absent or null, would leave its value out of the parent's total return,
     // which the series only warns about (Codex, PR #114).
     expect(badEntry({ action: spin, sources: ["a", "b"] })).toThrow(/needs childFirstClose/);

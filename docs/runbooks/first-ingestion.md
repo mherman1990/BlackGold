@@ -202,6 +202,10 @@ single-sourced and listed in the report for you to settle.
 - **XLRE's first close** (`childFirstClose`). It is required: without it the spun-off value never reaches XLF's
   total return.
 
+Other structural actions have the same kind of rule: a merger must be cash-only, and a delisting must state
+`finalPrice`, as `"0"` if holders got nothing. The total-return series cannot value the alternatives, so ingest
+refuses them.
+
 The reconciler writes each structural action as given.
 
 **Classify every same-day record.** Any source may report a cash or split record on a structural action's entity

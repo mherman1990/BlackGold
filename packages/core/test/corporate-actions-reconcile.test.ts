@@ -280,7 +280,12 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     ]);
     // Set aside, not one-sided or disputed: the structural action accounts for that date.
     expect(r.report.counts).toMatchObject({ actions: 2, verified: 2, structural: 1, setAside: 2, disagreements: 0, oneSided: 0 });
-    expect(r.report.perEntity).toEqual([{ entityId: "XLF", bySource: { [SSGA]: 1, [VENDOR]: 1 }, verified: 2, singleSource: 0 }]);
+    // The structural action's publishers are sources of the file too, in the report and its per-entity counts.
+    expect(r.report.sources).toEqual(["exchange:nyse-arca-notice", SSGA, "issuer:ssga-press-release", VENDOR]);
+    expect(r.report.perEntity).toEqual([
+      { entityId: "XLF", bySource: { "exchange:nyse-arca-notice": 1, [SSGA]: 1, "issuer:ssga-press-release": 1, [VENDOR]: 1 }, verified: 2, singleSource: 0 },
+    ]);
+    expect(r.file.notes).toContain(`exchange:nyse-arca-notice, ${SSGA}, issuer:ssga-press-release, ${VENDOR}`);
   });
 
   it("keeps a genuine same-day action the curator names, sets aside a superseded split, and leaves other dates alone", () => {
@@ -304,7 +309,7 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     const both = [{ ...BARE, supersedes: SUPERSEDES, keeps: [{ source: VENDOR, kind: "CASH_DIVIDEND" as const }] }];
     expect(() => run(xlf, { ...opts, structural: both })).toThrow(/both supersedes and keeps vendor:tiingo-eod CASH_DIVIDEND/);
     // Two structural actions on one entity and day pool their lists, and must not contradict each other (Codex, PR #114).
-    const delisting = { action: { kind: "DELISTING", entityId: "XLF", lastTradeDate: "2016-09-19", reason: "test", finalPrice: null }, sources: ["issuer:x"], keeps: [{ source: VENDOR, kind: "CASH_DIVIDEND" as const }] };
+    const delisting = { action: { kind: "DELISTING", entityId: "XLF", lastTradeDate: "2016-09-19", reason: "test", finalPrice: "0" }, sources: ["issuer:x"], keeps: [{ source: VENDOR, kind: "CASH_DIVIDEND" as const }] };
     expect(() => run(xlf, { ...opts, structural: [ENTRY, delisting] })).toThrow(/structural actions on XLF 2016-09-19 disagree: one supersedes and another keeps vendor:tiingo-eod CASH_DIVIDEND/);
     // Pooled lists that agree are fine: the second action adds nothing new, and both are written.
     const agreeing = { ...delisting, keeps: [] };
@@ -344,6 +349,9 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     expect(() => run(xlf, { ...opts, structural: [{ action: { ...rest, childFirstclose: childFirstClose }, sources: ["issuer:x"] }] })).toThrow(/a SPINOFF has no field childFirstclose/);
     // And one with no first close at all: verified by two sources, yet its value would never be credited.
     expect(() => run(xlf, { ...opts, structural: [{ action: rest, sources: ["issuer:x", "exchange:y"] }] })).toThrow(/needs childFirstClose/);
+    // Nor one whose value the series cannot reach any other way: a merger paying stock (Codex, PR #114).
+    const stockMerger = { action: { kind: "MERGER", entityId: "XLF", acquirer: "ACQ", terms: { stockRatio: "0.5" }, effective: "2016-09-19" }, sources: ["issuer:x", "exchange:y"] };
+    expect(() => run(xlf, { ...opts, structural: [stockMerger] })).toThrow(/XLF MERGER pays stock/);
   });
 });
 

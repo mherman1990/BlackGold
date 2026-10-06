@@ -363,6 +363,25 @@ export function unreadActionKeys(value: Readonly<Record<string, unknown>>, actio
   return out.sort();
 }
 
+/**
+ * Why the total-return series could not value this action, or undefined when it can (D-58). In each of these cases
+ * `TotalReturnSeries` warns and moves on - a spin-off with no child close credits nothing, a merger's stock leg is
+ * ignored, a delisting with no final price is read as zero - so a vendored action that hits one would distort the
+ * entity's returns in a run that otherwise looks citable. Ingest and the reconciler refuse it instead.
+ */
+export function unvaluedActionReason(a: CorporateAction): string | undefined {
+  if (a.kind === "SPINOFF" && a.childFirstClose === undefined) {
+    return `the ${a.parent} -> ${a.child} SPINOFF needs childFirstClose, the child's first raw close, or its value never reaches ${a.parent}'s total return`;
+  }
+  if (a.kind === "MERGER" && a.terms.stockRatio !== undefined) {
+    return `the ${a.entityId} MERGER pays stock (terms.stockRatio), which the total-return series cannot value - it would credit the cash leg only`;
+  }
+  if (a.kind === "DELISTING" && a.finalPrice === null) {
+    return `the ${a.entityId} DELISTING needs an explicit finalPrice ("0" if holders received nothing): a missing one is read as zero`;
+  }
+  return undefined;
+}
+
 /** Serialize with decimals as strings (canonical JSON does this for Dec anyway; explicit is reproducible). */
 export function corporateActionToValue(a: CorporateAction): Json {
   switch (a.kind) {

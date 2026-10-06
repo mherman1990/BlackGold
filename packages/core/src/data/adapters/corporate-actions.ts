@@ -9,6 +9,7 @@ import {
   corporateActionObservation,
   dateStartUtc,
   unreadActionKeys,
+  unvaluedActionReason,
 } from "../../market/types.ts";
 import { SchemaDriftError, type AdapterContext, type FetchOutcome, type ParseContext } from "./common.ts";
 
@@ -36,8 +37,9 @@ import { SchemaDriftError, type AdapterContext, type FetchOutcome, type ParseCon
  */
 export const ADAPTER_VERSION = "1.1.0";
 /**
- * 1.1.0 added the approval gate. 1.2.0 refuses an action field its kind does not read, and a SPINOFF without
- * `childFirstClose` (D-58).
+ * 1.1.0 added the approval gate. 1.2.0 refuses an action field its kind does not read, and an action the
+ * total-return series cannot value: a SPINOFF without `childFirstClose`, a MERGER paying stock, a DELISTING with no
+ * stated final price (D-58).
  */
 export const PARSER_VERSION = "1.2.0";
 
@@ -167,11 +169,9 @@ export function parseCorporateActions(bytes: Uint8Array, ctx: CorporateActionsPa
     // A field the parser does not read is a typo until shown otherwise; dropping it silently could drop a value.
     const unread = unreadActionKeys(entry.action, action);
     if (unread.length > 0) throw new SchemaDriftError(SOURCE_KIND, `actions[${i}]: a ${action.kind} has no field ${unread.join(", ")}`);
-    // Without the child's first close the total-return series cannot credit the spun-off value and only warns
-    // (market/series.ts), so the parent's returns would be understated in a run that otherwise looks citable.
-    if (action.kind === "SPINOFF" && action.childFirstClose === undefined) {
-      throw new SchemaDriftError(SOURCE_KIND, `actions[${i}]: the ${action.parent} -> ${action.child} SPINOFF needs childFirstClose, or its value never reaches ${action.parent}'s total return`);
-    }
+    // An action the total-return series would only warn about - and so value wrongly - is refused.
+    const unvalued = unvaluedActionReason(action);
+    if (unvalued !== undefined) throw new SchemaDriftError(SOURCE_KIND, `actions[${i}]: ${unvalued}`);
     const entityId = actionEntityId(action);
     const effectiveDate = actionEffectiveDate(action);
     const locator = `vendor/corporate-actions/${dataset}/${entityId}/${action.kind}/${effectiveDate}`;

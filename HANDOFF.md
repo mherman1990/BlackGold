@@ -35,7 +35,9 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
   - **An action field its kind does not read is refused,** at ingest and in the reconciler (Codex, PR #114). The
     read path ignores unknown keys, so a misspelled `childFirstClose` would otherwise be signed and then silently
     dropped from the parent's total return.
-  - **So is a SPINOFF with no `childFirstClose`:** the series would only warn and leave the value uncredited.
+  - **So is a structural action the series cannot value** (`unvaluedActionReason`): a SPINOFF with no
+    `childFirstClose`, a MERGER paying stock, or a DELISTING with no stated `finalPrice`. In each case the series
+    only warns and values it wrongly.
   - **Same-day records on a structural action's date are classified by the owner** (`supersedes` / `keeps`), and
     an unclassified one refuses the run. Never go back to setting them all aside, which loses genuine actions, or
     writing them all, which double-counts the spin-off.

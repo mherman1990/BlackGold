@@ -1,5 +1,5 @@
 import { addDays, Dec, type IsoDate, type UtcInstant } from "@blackgold/shared";
-import { actionEffectiveDate, actionEntityId, corporateActionFromValue, unreadActionKeys } from "../market/types.ts";
+import { actionEffectiveDate, actionEntityId, corporateActionFromValue, unreadActionKeys, unvaluedActionReason } from "../market/types.ts";
 import type { PointInTimeObservation } from "./pit/types.ts";
 import { corporateActionsHash } from "./adapters/corporate-actions.ts";
 
@@ -194,9 +194,8 @@ function structuralInScope(entries: readonly StructuralEntry[], entities: Readon
     const unread = unreadActionKeys(s.action, action);
     if (unread.length > 0) throw new ReconcileInputError(`structural[${i}]: a ${action.kind} has no field ${unread.join(", ")}`);
     // Ingest refuses it too; refusing here names the problem before the owner audits and signs a file it can't load.
-    if (action.kind === "SPINOFF" && action.childFirstClose === undefined) {
-      throw new ReconcileInputError(`structural[${i}]: the ${action.parent} -> ${action.child} SPINOFF needs childFirstClose, the child's first raw close, or its value never reaches ${action.parent}'s total return`);
-    }
+    const unvalued = unvaluedActionReason(action);
+    if (unvalued !== undefined) throw new ReconcileInputError(`structural[${i}]: ${unvalued}`);
     const entityId = actionEntityId(action);
     const exDate = actionEffectiveDate(action);
     if (!entities.has(entityId) || exDate < window.from || exDate > window.to) continue;
@@ -337,12 +336,16 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
     f.kept.sort(bySourceKind);
   }
 
+  // The report names every publisher behind the file, structural ones included, and counts them per entity.
+  const reportSources = [...new Set([...sources, ...structural.flatMap((s) => s.entry.sources)])].sort();
   const isVerified = (e: Entry): boolean => new Set(e.sources).size >= 2;
   const actionsHash = corporateActionsHash(entries);
   const verifiedCount = entries.filter(isVerified).length;
   const perEntity = [...entities].sort().map((entityId) => {
     const bySource: Record<string, number> = {};
-    for (const s of sources) bySource[s] = inScope.filter((r) => r.entityId === entityId && r.source === s).length;
+    for (const s of reportSources) {
+      bySource[s] = inScope.filter((r) => r.entityId === entityId && r.source === s).length + structural.filter((x) => x.entityId === entityId && x.entry.sources.includes(s)).length;
+    }
     const mine = entries.filter((e) => actionEntityId(corporateActionFromValue(e.action)) === entityId);
     return { entityId, bySource, verified: mine.filter(isVerified).length, singleSource: mine.filter((e) => !isVerified(e)).length };
   });
@@ -350,7 +353,7 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
   const report: ReconcileReport = {
     reconcileVersion: RECONCILE_VERSION,
     dataset: opts.dataset,
-    sources,
+    sources: reportSources,
     preferredSources: [...opts.preferredSources],
     window: opts.window,
     entities: [...entities].sort(),
@@ -372,7 +375,7 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
 
   const file: ReconciledFile = {
     dataset: opts.dataset,
-    notes: `Machine-reconciled (reconcile v${RECONCILE_VERSION}) from ${sources.join(", ")} over ex-dates ${opts.window.from}..${opts.window.to}, cash tolerance ${opts.amountTolerance.toFixed()} per share, preferred sources ${opts.preferredSources.join(" > ")}, with ${structural.length} owner-curated structural action(s). ${verifiedCount} of ${entries.length} actions are confirmed by two or more sources; the rest carry one source and are flagged UNVERIFIED_SINGLE_SOURCE on ingest. UNSIGNED: ingest refuses this file until the owner audits it against its report and fills approval.approvedBy and approval.approvedAt (D-57).`,
+    notes: `Machine-reconciled (reconcile v${RECONCILE_VERSION}) from ${reportSources.join(", ")} over ex-dates ${opts.window.from}..${opts.window.to}, cash tolerance ${opts.amountTolerance.toFixed()} per share, preferred sources ${opts.preferredSources.join(" > ")}, with ${structural.length} owner-curated structural action(s). ${verifiedCount} of ${entries.length} actions are confirmed by two or more sources; the rest carry one source and are flagged UNVERIFIED_SINGLE_SOURCE on ingest. UNSIGNED: ingest refuses this file until the owner audits it against its report and fills approval.approvedBy and approval.approvedAt (D-57).`,
     approval: { approvedBy: null, approvedAt: null, actionsHash },
     actions: entries,
   };

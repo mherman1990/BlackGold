@@ -1619,8 +1619,11 @@ it. Neither default is safe, so the owner classifies each such record in the cur
 
 An unclassified one stops the run (Codex, PR #114).
 
-**A spin-off must carry `childFirstClose`.** Ingest refuses one without it, because the total-return series would
-otherwise leave the spun-off value uncredited.
+**A structural action must be one the total-return series can value.** Ingest and the reconciler refuse three
+cases where the series would only warn and value it wrongly (Codex, PR #114):
+- a spin-off without `childFirstClose`, whose value is never credited;
+- a merger paying stock (`terms.stockRatio`), whose stock leg is ignored;
+- a delisting with no stated `finalPrice`, which is read as zero. Write `"0"` if holders received nothing.
 
 **Claude Code's limits are unchanged.** It never fills a curated value it has not been given, and it never signs
 the reconciled file.
