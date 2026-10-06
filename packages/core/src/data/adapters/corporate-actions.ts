@@ -35,7 +35,8 @@ import { SchemaDriftError, type AdapterContext, type FetchOutcome, type ParseCon
  * reconciler pre-fills `actionsHash`; the owner fills `approvedBy` and `approvedAt`, and Claude Code never does.
  */
 export const ADAPTER_VERSION = "1.1.0";
-export const PARSER_VERSION = "1.1.0";
+/** 1.1.0 added the approval gate; 1.2.0 refuses an action field its kind does not read (D-58). */
+export const PARSER_VERSION = "1.2.0";
 
 /** Label for SchemaDrift errors; the per-action source id is `corporate_action.<KIND>` from the model. */
 const SOURCE_KIND = "corporate_action.vendored";
