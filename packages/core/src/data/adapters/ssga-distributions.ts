@@ -22,7 +22,7 @@ import { dayMonthYearDate, usSlashDate } from "./issuer-dates.ts";
  *    redemptions. Any other NAV move beyond 20% is reported as a jump and never becomes a record: a ratio guessed
  *    from an unexplained move would be a fabricated number, and the reconciler's exact-match rule on split ratios
  *    is what makes this safe - a wrong ratio cannot agree with the vendor's. Rows that skip sessions are reported
- *    as gaps, and a move across one is a jump however well it fits.
+ *    as gaps, rows dated on a non-trading day are listed, and a move across either is a jump however well it fits.
  *
  * Both are untrusted external data and fail closed on any surprise in the funds asked for: a missing header, an
  * unreadable date or amount, a negative amount, or a fund listed twice on one ex-date all raise
@@ -166,6 +166,8 @@ export type SsgaNavSplits = {
   sharesFirstDate: IsoDate | undefined;
   /** Trading sessions the file has no row for, between consecutive rows: where a split could not be seen at all. */
   gaps: { after: IsoDate; before: IsoDate; sessionsMissing: number }[];
+  /** Rows dated on a day the exchange did not trade. Never one end of a split. */
+  nonSessionDates: IsoDate[];
 };
 
 /** New shares per old share that a split can have; each is an exact decimal, so it can match a vendor exactly. */
@@ -238,7 +240,9 @@ export async function ssgaNavSplits(bytes: Uint8Array, opts: { etf: string; loca
     const navRatio = prev.nav.div(cur.nav);
     if (navRatio.lt(JUMP_UP) && navRatio.gt(JUMP_DOWN)) continue;
     const sharesRatio = prev.shares === undefined || cur.shares === undefined ? undefined : cur.shares.div(prev.shares);
-    const matches = sharesRatio === undefined || missing > 0 ? [] : STANDARD_RATIOS.filter((r) => near(navRatio, r, NAV_BAND) && near(sharesRatio, r, SHARES_BAND));
+    // Adjacent means both rows are trading sessions with none between: a weekend- or holiday-dated row is neither.
+    const adjacent = missing === 0 && opts.calendar.isSession(previousDate) && opts.calendar.isSession(date);
+    const matches = sharesRatio === undefined || !adjacent ? [] : STANDARD_RATIOS.filter((r) => near(navRatio, r, NAV_BAND) && near(sharesRatio, r, SHARES_BAND));
     const ratio = matches.length === 1 ? matches[0] : undefined;
     if (ratio === undefined) {
       jumps.push({ previousDate, date, navRatio: navRatio.toDecimalPlaces(6).toFixed(), sharesRatio: sharesRatio?.toDecimalPlaces(6).toFixed() ?? null, sessionsBetween: missing });
@@ -247,5 +251,6 @@ export async function ssgaNavSplits(bytes: Uint8Array, opts: { etf: string; loca
     records.push({ source: SSGA_NAV_HISTORY_SOURCE, kind: "SPLIT", entityId: etf, exDate: date, ratio, locator: `${opts.locator}#${etf}/${date}` });
   }
   const sharesFirstDate = dates.find((d) => points.get(d)?.shares !== undefined);
-  return { records, jumps, firstDate, lastDate, sharesFirstDate, gaps };
+  const nonSessionDates = dates.filter((d) => !opts.calendar.isSession(d));
+  return { records, jumps, firstDate, lastDate, sharesFirstDate, gaps, nonSessionDates };
 }

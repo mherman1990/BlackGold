@@ -115,6 +115,14 @@ describe("ssgaNavSplits", () => {
     expect(x.gaps.map((g) => g.after)).toEqual(["2006-05-30", "2007-01-05", "2008-10-10", "2017-12-01"]);
   });
 
+  it("never reads a split from a row dated on a non-trading day, and lists such rows", async () => {
+    const n = await ssgaNavSplits(fixture("navhist-weekend.xlsx"), { etf: "XLK", locator: "nav", calendar });
+    expect(n.records).toEqual([]);
+    expect(n.jumps).toEqual([{ previousDate: "2019-01-04", date: "2019-01-05", navRatio: "2", sharesRatio: "2", sessionsBetween: 0 }]);
+    expect(n.nonSessionDates).toEqual(["2019-01-05"]);
+    expect((await ssgaNavSplits(fixture("navhist-xlk.xlsx"), { etf: "XLK", locator: "nav", calendar })).nonSessionDates).toEqual([]);
+  });
+
   it("refuses a file for another fund, one that names no fund, a repeated date, or an unreadable NAV", async () => {
     await expect(ssgaNavSplits(fixture("navhist-wrongfund.xlsx"), { etf: "XLK", locator: "x", calendar })).rejects.toThrow(/for XLF, not XLK/);
     await expect(ssgaNavSplits(fixture("navhist-noticker.xlsx"), { etf: "XLK", locator: "x", calendar })).rejects.toThrow(/does not name its fund/);

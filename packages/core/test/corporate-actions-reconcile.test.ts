@@ -312,6 +312,8 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     // A misspelled optional field would be written, signed and then silently not read (Codex, PR #114).
     const { childFirstClose, ...rest } = SPINOFF;
     expect(() => run(xlf, { ...opts, structural: [{ action: { ...rest, childFirstclose: childFirstClose }, sources: ["issuer:x"] }] })).toThrow(/a SPINOFF has no field childFirstclose/);
+    // And one with no first close at all: verified by two sources, yet its value would never be credited.
+    expect(() => run(xlf, { ...opts, structural: [{ action: rest, sources: ["issuer:x", "exchange:y"] }] })).toThrow(/needs childFirstClose/);
   });
 });
 

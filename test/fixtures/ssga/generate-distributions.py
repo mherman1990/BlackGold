@@ -89,6 +89,13 @@ nav_book("XLK", [
     ["02-Jan-2019", 20.00, 100000000, 2000000000],
     ["31-Dec-2018", 20.10, 100000000, 2010000000],
 ]).save(OUT + "navhist-gap.xlsx")
+# A Saturday-dated row between Friday and Monday: no session is skipped, but Saturday is not a session, so the
+# Friday-to-Saturday halving is a jump, never a split.
+nav_book("XLK", [
+    ["07-Jan-2019", 10.05, 200000000, 2010000000],
+    ["05-Jan-2019", 10.00, 200000000, 2000000000],
+    ["04-Jan-2019", 20.00, 100000000, 2000000000],
+]).save(OUT + "navhist-weekend.xlsx")
 book([NAV_HEADER, ["02-Dec-2025", 50.0, 100, 5000]], "navhist").save(OUT + "navhist-noticker.xlsx")
 nav_book("XLK", [["02-Dec-2025", 50.0, 100, 5000], ["02-Dec-2025", 51.0, 100, 5100]]).save(OUT + "navhist-dupdate.xlsx")
 nav_book("XLK", [["02-Dec-2025", "n/a", 100, 5000]]).save(OUT + "navhist-badnav.xlsx")

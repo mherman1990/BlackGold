@@ -173,6 +173,10 @@ function structuralInScope(entries: readonly StructuralEntry[], entities: Readon
     // be signed, ingested, and silently left out of the parent's total return.
     const unread = unreadActionKeys(s.action, action);
     if (unread.length > 0) throw new ReconcileInputError(`structural[${i}]: a ${action.kind} has no field ${unread.join(", ")}`);
+    // Ingest refuses it too; refusing here names the problem before the owner audits and signs a file it can't load.
+    if (action.kind === "SPINOFF" && action.childFirstClose === undefined) {
+      throw new ReconcileInputError(`structural[${i}]: the ${action.parent} -> ${action.child} SPINOFF needs childFirstClose, the child's first raw close, or its value never reaches ${action.parent}'s total return`);
+    }
     const entityId = actionEntityId(action);
     const exDate = actionEffectiveDate(action);
     if (!entities.has(entityId) || exDate < window.from || exDate > window.to) continue;

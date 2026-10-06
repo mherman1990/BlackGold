@@ -128,8 +128,12 @@ describe("vendored corporate-action parser", () => {
     expect(badEntry({ action: { kind: "MERGER", entityId: "X", acquirer: "Y", terms: { stockRatio: "0.5", cashPershare: "1" }, effective: "2015-10-08" }, sources: ["a", "b"] })).toThrow(/terms\.cashPershare/);
     expect(badEntry({ action: { ...DIVIDEND.action, note: "special" }, sources: ["a", "b"] })).toThrow(/a CASH_DIVIDEND has no field note/);
     // A null optional field is absent, not unknown.
-    const nullClose = signed({ dataset: "d", actions: [{ action: { ...spin, childFirstClose: null }, sources: ["a", "b"] }] });
-    expect(parseCorporateActions(nullClose, ctxFor(nullClose))).toHaveLength(1);
+    const nullTerm = signed({ dataset: "d", actions: [{ action: { kind: "MERGER", entityId: "X", acquirer: "Y", terms: { stockRatio: "0.5", cashPerShare: null }, effective: "2015-10-08" }, sources: ["a", "b"] }] });
+    expect(parseCorporateActions(nullTerm, ctxFor(nullTerm))).toHaveLength(1);
+    // A spin-off with no first close, absent or null, would leave its value out of the parent's total return,
+    // which the series only warns about (Codex, PR #114).
+    expect(badEntry({ action: spin, sources: ["a", "b"] })).toThrow(/needs childFirstClose/);
+    expect(badEntry({ action: { ...spin, childFirstClose: null }, sources: ["a", "b"] })).toThrow(/needs childFirstClose/);
     // Unknown top-level key.
     const extra = signed({ dataset: "d", actions: [], oops: 1 });
     expect(() => parseCorporateActions(extra, ctxFor(extra))).toThrow(SchemaDriftError);

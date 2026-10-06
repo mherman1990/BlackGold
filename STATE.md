@@ -19,8 +19,12 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
     name.
   - **The reconciler** now takes an ordered list of preferred sources. It writes curated structural actions as
     given and sets aside any same-day cash or split record.
-  - Tests: 1139 pass; 44 of 44 deliberate faults caught.
-  - **Codex's two findings are fixed:**
+  - Tests: 1140 pass; 48 of 48 deliberate faults caught.
+  - **Codex's findings over three rounds are fixed.** Two are new in round 3:
+    - a SPINOFF without `childFirstClose` is refused, since the series would leave its value uncredited;
+    - a split needs both NAV rows to be trading sessions. The real files hold rows on the 2012 Sandy closure and
+      Good Friday 2014, which are now listed.
+  - **The two earlier findings:**
     - an action field its kind does not read is refused, at ingest and in the reconciler. The vendored
       corporate-actions parser is now 1.2.0;
     - a split is read only across adjacent trading sessions, and NAV-history gaps are listed. The real files have

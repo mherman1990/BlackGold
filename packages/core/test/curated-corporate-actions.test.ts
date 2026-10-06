@@ -102,7 +102,7 @@ describe("the shipped examples", () => {
   it("parse, so the documented format is the one the code reads", () => {
     expect(parseCuratedActions(example("curated-corporate-actions.example.csv"), { file: "example.csv" }).map((r) => `${r.entityId} ${r.exDate}`)).toEqual(["VTI 2010-03-24", "QQQ 2010-12-20"]);
     expect(parseCuratedStructural(example("curated-structural.example.json"), { file: "example.json" })).toEqual([
-      { action: { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0.139146", exDate: "2016-09-19" }, sources: ["issuer:ssga-distribution-notice", "exchange:nyse-arca-notice"] },
+      { action: { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0.139146", exDate: "2016-09-19", childFirstClose: "30.00" }, sources: ["issuer:ssga-distribution-notice", "exchange:nyse-arca-notice"] },
     ]);
   });
 });

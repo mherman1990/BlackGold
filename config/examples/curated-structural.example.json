@@ -1,8 +1,8 @@
 {
-  "notes": "FORMAT EXAMPLE ONLY (D-58). Owner-curated structural actions, in the vendored file's entry shape; the reconciler writes each as given and sets aside any cash or split record on the same entity and date. The XLF -> XLRE ratio and ex-date below are inferred from SSGA's distribution workbook, which lists 0.139146 on 2016-09-19 in its dollar column; verify both against the issuer's notice and add childFirstClose (XLRE's first raw close) before use, so the spun-off value reaches XLF's total-return series.",
+  "notes": "FORMAT EXAMPLE ONLY (D-58). Owner-curated structural actions, in the vendored file's entry shape; the reconciler writes each as given and sets aside any cash or split record on the same entity and date. The XLF -> XLRE ratio and ex-date below are inferred from SSGA's distribution workbook, which lists 0.139146 on 2016-09-19 in its dollar column; verify both against the issuer's notice. childFirstClose (the child's first raw close) is REQUIRED - without it the spun-off value never reaches XLF's total return - and the 30.00 below is a placeholder, not XLRE's real close: replace it from the exchange record.",
   "actions": [
     {
-      "action": { "kind": "SPINOFF", "parent": "XLF", "child": "XLRE", "ratio": "0.139146", "exDate": "2016-09-19" },
+      "action": { "kind": "SPINOFF", "parent": "XLF", "child": "XLRE", "ratio": "0.139146", "exDate": "2016-09-19", "childFirstClose": "30.00" },
       "sources": ["issuer:ssga-distribution-notice", "exchange:nyse-arca-notice"]
     }
   ]
