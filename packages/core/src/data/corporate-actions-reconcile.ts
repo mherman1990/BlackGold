@@ -128,6 +128,8 @@ export type ReconcileReport = {
   oneSided: ReconcileFinding[];
   /** Every entity and date with a curated structural action, and what happened to the records on it. */
   setAside: SetAsideFinding[];
+  /** Curated structural actions not written because they fall outside the entities or the window: listed, never silent. */
+  structuralOutOfScope: { index: number; kind: string; entityId: string; exDate: IsoDate; reason: string }[];
   /** Per entity, how many actions each source reported in the window: a source that is silent for an entity is visible here. */
   perEntity: { entityId: string; bySource: Record<string, number>; verified: number; singleSource: number }[];
 };
@@ -183,6 +185,7 @@ function structuralInScope(entries: readonly StructuralEntry[], entities: Readon
   const seen = new Set<string>();
   // The series ends an entity at its first MERGER or DELISTING and ignores any other, so at most one may be written.
   const terminal = new Map<string, string>();
+  const outOfScope: ReconcileReport["structuralOutOfScope"] = [];
   for (const [i, s] of entries.entries()) {
     let action;
     try {
@@ -200,7 +203,17 @@ function structuralInScope(entries: readonly StructuralEntry[], entities: Readon
     if (unvalued !== undefined) throw new ReconcileInputError(`structural[${i}]: ${unvalued}`);
     const entityId = actionEntityId(action);
     const exDate = actionEffectiveDate(action);
-    if (!entities.has(entityId) || exDate < window.from || exDate > window.to) continue;
+    if (!entities.has(entityId)) {
+      // "xlf" for XLF is a typo, not another entity: refusing it beats silently dropping the action.
+      const meant = [...entities].find((e) => e.toUpperCase() === entityId.toUpperCase());
+      if (meant !== undefined) throw new ReconcileInputError(`structural[${i}] names ${entityId}; the entity is ${meant}`);
+      outOfScope.push({ index: i, kind: action.kind, entityId, exDate, reason: "entity not in scope" });
+      continue;
+    }
+    if (exDate < window.from || exDate > window.to) {
+      outOfScope.push({ index: i, kind: action.kind, entityId, exDate, reason: "outside the window" });
+      continue;
+    }
     const key = keyOf({ entityId, kind: action.kind, exDate });
     if (seen.has(key)) throw new ReconcileInputError(`structural action ${key} is given twice`);
     seen.add(key);
@@ -217,7 +230,7 @@ function structuralInScope(entries: readonly StructuralEntry[], entities: Readon
     if (both.length > 0) throw new ReconcileInputError(`structural[${i}] both supersedes and keeps ${both.join(", ")}`);
     out.push({ key, day: dayOf({ entityId, exDate }), entityId, exDate, kind: action.kind, entry, supersedes, keeps });
   }
-  return out;
+  return { inScope: out, outOfScope };
 }
 
 /**
@@ -235,7 +248,7 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
   if (opts.preferredSources.length === 0) throw new ReconcileInputError("name at least one preferred source");
   if (!opts.preferredSources.some((p) => sources.includes(p))) throw new ReconcileInputError(`none of the preferred sources (${opts.preferredSources.join(", ")}) supplied records`);
 
-  const structural = structuralInScope(opts.structural ?? [], entities, opts.window);
+  const { inScope: structural, outOfScope: structuralOutOfScope } = structuralInScope(opts.structural ?? [], entities, opts.window);
   // Every structural action on a day classifies that day's records; two on one day pool their lists.
   const structuralDays = new Map<string, { kinds: string[]; supersedes: Set<string>; keeps: Set<string>; entityId: string; exDate: IsoDate }>();
   for (const s of structural) {
@@ -351,7 +364,8 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
   const perEntity = [...entities].sort().map((entityId) => {
     const bySource: Record<string, number> = {};
     for (const s of reportSources) {
-      bySource[s] = inScope.filter((r) => r.entityId === entityId && r.source === s).length + structural.filter((x) => x.entityId === entityId && x.entry.sources.includes(s)).length;
+      // Every record a source reported in the window, set-aside ones included: the audit compares these with setAside.
+      bySource[s] = inWindow.filter((r) => r.entityId === entityId && r.source === s).length + structural.filter((x) => x.entityId === entityId && x.entry.sources.includes(s)).length;
     }
     const mine = entries.filter((e) => actionEntityId(corporateActionFromValue(e.action)) === entityId);
     return { entityId, bySource, verified: mine.filter(isVerified).length, singleSource: mine.filter((e) => !isVerified(e)).length };
@@ -377,6 +391,7 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
     disagreements,
     oneSided,
     setAside,
+    structuralOutOfScope,
     perEntity,
   };
 

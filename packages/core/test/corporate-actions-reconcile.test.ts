@@ -283,7 +283,8 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     // The structural action's publishers are sources of the file too, in the report and its per-entity counts.
     expect(r.report.sources).toEqual(["exchange:nyse-arca-notice", SSGA, "issuer:ssga-press-release", VENDOR]);
     expect(r.report.perEntity).toEqual([
-      { entityId: "XLF", bySource: { "exchange:nyse-arca-notice": 1, [SSGA]: 1, "issuer:ssga-press-release": 1, [VENDOR]: 1 }, verified: 2, singleSource: 0 },
+      // Set-aside records still count as what their source reported (Codex, PR #114): two each, one per date.
+      { entityId: "XLF", bySource: { "exchange:nyse-arca-notice": 1, [SSGA]: 2, "issuer:ssga-press-release": 1, [VENDOR]: 2 }, verified: 2, singleSource: 0 },
     ]);
     expect(r.file.notes).toContain(`exchange:nyse-arca-notice, ${SSGA}, issuer:ssga-press-release, ${VENDOR}`);
   });
@@ -321,7 +322,13 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
       const r = run([...xlf, cash(SSGA, "VTI", "2017-03-23", "0.5"), cash(VENDOR, "VTI", "2017-03-23", "0.5")], o);
       expect(r.file.actions.some((e) => e.action["kind"] === "SPINOFF")).toBe(false);
       expect(r.report.setAside).toEqual([]);
+      // Not written, but never silent: the audit sees what was left out and why.
+      expect(r.report.structuralOutOfScope).toEqual([
+        { index: 0, kind: "SPINOFF", entityId: "XLF", exDate: "2016-09-19", reason: o.entities.includes("XLF") ? "outside the window" : "entity not in scope" },
+      ]);
     }
+    // A mis-cased entity is a typo for one in scope, not another entity: refused, not dropped (Codex, PR #114).
+    expect(() => run(xlf, { ...opts, structural: [{ ...ENTRY, action: { ...SPINOFF, parent: "xlf" } }] })).toThrow(/structural\[0\] names xlf; the entity is XLF/);
     const inWindow = run([...xlf], { ...opts, structural: [] });
     expect(inWindow.report.disagreements.map((f) => f.exDate)).toEqual(["2016-09-19"]);
   });
