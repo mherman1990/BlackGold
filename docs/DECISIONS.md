@@ -1608,8 +1608,19 @@ and the owner's ACTIVE acceptance, not the clock. Per `HANDOFF.md` §5 the recon
 Splits at the other issuers come from curated entries.
 
 **Structural actions** (spin-offs, mergers, delistings) are curated by the owner and passed through the reconciler
-as written. A cash or split record from any source on the same entity and date is set aside and reported. The case
-that forced this: SSGA lists the XLF → XLRE spin-off as a 0.139146 row on 2016-09-19 in its dollar column.
+as written.
+
+**A cash or split record on the same entity and date is ambiguous.** It may be the structural action in another
+source's columns: SSGA lists the XLF → XLRE spin-off as a 0.139146 row on 2016-09-19 in its dollar column.
+Writing that would count the event twice. It may also be a genuine action of its own, and dropping that would lose
+it. Neither default is safe, so the owner classifies each such record in the curated entry:
+- `supersedes` sets it aside, and it is reported but not written;
+- `keeps` reconciles it as usual.
+
+An unclassified one stops the run (Codex, PR #114).
+
+**A spin-off must carry `childFirstClose`.** Ingest refuses one without it, because the total-return series would
+otherwise leave the spun-off value uncredited.
 
 **Claude Code's limits are unchanged.** It never fills a curated value it has not been given, and it never signs
 the reconciled file.

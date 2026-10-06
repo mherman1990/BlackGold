@@ -24,7 +24,10 @@ import { VANGUARD_DISTRIBUTIONS_SOURCE } from "./adapters/vanguard-distributions
  * - Blank lines and lines starting with `#` are ignored. Fields containing commas are double-quoted.
  *
  * **Structural actions are JSON**, in the vendored file's own entry shape (`{ "actions": [{ action, sources,
- * announcedAt? }] }`), because each kind has its own fields; the reconciler writes them as given.
+ * announcedAt?, supersedes?, keeps? }] }`), because each kind has its own fields; the reconciler writes `action`,
+ * `sources` and `announcedAt` as given. `supersedes` and `keeps` classify every cash or split record any source
+ * reports on the same entity and date, by `{ source, kind }`: superseded ones are the structural action in another
+ * guise and are set aside; kept ones are separate actions and are reconciled. An unclassified one stops the run.
  *
  * Every row is checked and every problem is reported at once, with its line, so an 80-row file is fixed in one
  * pass. Nothing here invents a value: a row the parser cannot read is an error, never a default.
@@ -156,6 +159,10 @@ export function parseCuratedActions(bytes: Uint8Array, opts: { file: string }): 
   return records;
 }
 
+const SameDaySchema = z
+  .object({ source: z.string().regex(/^(issuer|exchange|vendor):[a-z0-9][a-z0-9-]*$/, "must look like issuer:, exchange: or vendor:<name>"), kind: z.enum(["CASH_DIVIDEND", "SPLIT"]) })
+  .strict();
+
 const StructuralFileSchema = z
   .object({
     notes: z.string().optional(),
@@ -165,6 +172,8 @@ const StructuralFileSchema = z
           action: z.record(z.string(), z.unknown()),
           sources: z.array(z.string().regex(SOURCE_RE, "must look like issuer:<name> or exchange:<name>")).min(1),
           announcedAt: z.string().optional(),
+          supersedes: z.array(SameDaySchema).optional(),
+          keeps: z.array(SameDaySchema).optional(),
         })
         .strict(),
     ),
@@ -194,5 +203,11 @@ export function parseCuratedStructural(bytes: Uint8Array, opts: { file: string }
     }
   }
   if (problems.length > 0) throw new CuratedInputError(opts.file, problems);
-  return parsed.data.actions.map((e) => (e.announcedAt === undefined ? { action: e.action, sources: e.sources } : { action: e.action, sources: e.sources, announcedAt: e.announcedAt }));
+  return parsed.data.actions.map((e) => ({
+    action: e.action,
+    sources: e.sources,
+    ...(e.announcedAt === undefined ? {} : { announcedAt: e.announcedAt }),
+    ...(e.supersedes === undefined ? {} : { supersedes: e.supersedes }),
+    ...(e.keeps === undefined ? {} : { keeps: e.keeps }),
+  }));
 }

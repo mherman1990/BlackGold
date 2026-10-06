@@ -102,7 +102,15 @@ describe("the shipped examples", () => {
   it("parse, so the documented format is the one the code reads", () => {
     expect(parseCuratedActions(example("curated-corporate-actions.example.csv"), { file: "example.csv" }).map((r) => `${r.entityId} ${r.exDate}`)).toEqual(["VTI 2010-03-24", "QQQ 2010-12-20"]);
     expect(parseCuratedStructural(example("curated-structural.example.json"), { file: "example.json" })).toEqual([
-      { action: { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0.139146", exDate: "2016-09-19", childFirstClose: "30.00" }, sources: ["issuer:ssga-distribution-notice", "exchange:nyse-arca-notice"] },
+      {
+        action: { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0.139146", exDate: "2016-09-19", childFirstClose: "30.00" },
+        sources: ["issuer:ssga-distribution-notice", "exchange:nyse-arca-notice"],
+        supersedes: [
+          { source: "issuer:ssga-distributions", kind: "CASH_DIVIDEND" },
+          { source: "vendor:tiingo-eod", kind: "CASH_DIVIDEND" },
+        ],
+        keeps: [],
+      },
     ]);
   });
 });
@@ -125,5 +133,8 @@ describe("parseCuratedStructural", () => {
     expect(bad({ actions: [{ action: SPINOFF, sources: [] }] })).toThrow(CuratedInputError);
     expect(bad({ actions: [{ action: SPINOFF, sources: ["SSGA press release"] }] })).toThrow(/issuer:<name>/);
     expect(bad({ actions: [{ action: SPINOFF, sources: ["issuer:a"], announcedAt: "2016-08-31" }] })).toThrow(/not a UTC instant/);
+    // The same-day classification names a record by a real source and a reconciled kind.
+    expect(bad({ actions: [{ action: SPINOFF, sources: ["issuer:a"], supersedes: [{ source: "SSGA", kind: "CASH_DIVIDEND" }] }] })).toThrow(/issuer:, exchange: or vendor:/);
+    expect(bad({ actions: [{ action: SPINOFF, sources: ["issuer:a"], keeps: [{ source: "vendor:tiingo-eod", kind: "SPINOFF" }] }] })).toThrow(CuratedInputError);
   });
 });

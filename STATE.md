@@ -19,7 +19,10 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
     name.
   - **The reconciler** now takes an ordered list of preferred sources. It writes curated structural actions as
     given and sets aside any same-day cash or split record.
-  - Tests: 1140 pass; 48 of 48 deliberate faults caught.
+  - Tests: 1141 pass; 54 of 54 deliberate faults caught.
+  - **Round 4:** the owner now classifies every same-day record on a structural action's date as `supersedes`
+    (set aside) or `keeps` (reconciled). An unclassified one refuses the run, because setting all of them aside
+    could drop a genuine dividend.
   - **Codex's findings over three rounds are fixed.** Two are new in round 3:
     - a SPINOFF without `childFirstClose` is refused, since the series would leave its value uncredited;
     - a split needs both NAV rows to be trading sessions. The real files hold rows on the 2012 Sandy closure and

@@ -197,9 +197,20 @@ The reconciler checks each row against Tiingo. One that agrees is verified; one 
 single-sourced and listed in the report for you to settle.
 
 **Structural actions** (spin-offs, mergers, delistings) go in a separate JSON file, laid out like
-`config/examples/curated-structural.example.json`. It holds the XLF → XLRE spin-off, which needs the ratio and
-date checked against State Street's notice, plus XLRE's first close. The reconciler writes each one as given and
-sets aside any same-day cash record, because State Street lists that spin-off's share ratio in its dividend column.
+`config/examples/curated-structural.example.json`. It holds the XLF → XLRE spin-off, which needs:
+- its ratio and date checked against State Street's notice;
+- **XLRE's first close** (`childFirstClose`). It is required: without it the spun-off value never reaches XLF's
+  total return.
+
+The reconciler writes each structural action as given.
+
+**Classify every same-day record.** Any source may report a cash or split record on a structural action's entity
+and date, and each one must be listed:
+- under `supersedes` if it *is* the structural action in another guise. For example, State Street lists the
+  spin-off's share ratio in its dividend column. These are set aside.
+- under `keeps` if it is a separate, genuine action. These are reconciled as usual.
+
+The reconciler refuses to run while any such record is unclassified, and names each one.
 
 The command that runs all of this and writes the unsigned file plus its report is the next PR (D-57 PR-B2).
 

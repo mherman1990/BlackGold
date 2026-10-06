@@ -244,7 +244,13 @@ describe("reconcileCorporateActions: several issuers (D-58)", () => {
 describe("reconcileCorporateActions: owner-curated structural actions (D-58)", () => {
   const SSGA = "issuer:ssga-distributions";
   const SPINOFF = { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0.139146", exDate: "2016-09-19", childFirstClose: "33.12" };
-  const structural = [{ action: SPINOFF, sources: ["issuer:ssga-press-release", "exchange:nyse-arca-notice"], announcedAt: "2016-08-31T20:00:00Z" }];
+  // The curator's classification of the same-day records: both are the spin-off in a dividend column.
+  const SUPERSEDES = [
+    { source: SSGA, kind: "CASH_DIVIDEND" as const },
+    { source: VENDOR, kind: "CASH_DIVIDEND" as const },
+  ];
+  const ENTRY = { action: SPINOFF, sources: ["issuer:ssga-press-release", "exchange:nyse-arca-notice"], announcedAt: "2016-08-31T20:00:00Z", supersedes: SUPERSEDES };
+  const structural = [ENTRY];
   const xlf = [
     cash(SSGA, "XLF", "2016-09-16", "0.114386"),
     cash(VENDOR, "XLF", "2016-09-16", "0.1144"),
@@ -254,10 +260,11 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
   ];
   const opts = { preferredSources: [SSGA], entities: ["XLF"], structural };
 
-  it("writes the structural action as given and sets aside every cash record on its entity and date", () => {
+  it("writes the structural action as given and sets aside the same-day records it supersedes", () => {
     const r = run(xlf, opts);
     expect(r.file.actions.map((e) => e.action["kind"])).toEqual(["CASH_DIVIDEND", "SPINOFF"]);
-    expect(r.file.actions[1]).toEqual(structural[0]);
+    // The classification is the curator's instruction to the reconciler, not part of the vendored entry.
+    expect(r.file.actions[1]).toEqual({ action: SPINOFF, sources: ["issuer:ssga-press-release", "exchange:nyse-arca-notice"], announcedAt: "2016-08-31T20:00:00Z" });
     expect(entryFor(r, "XLF", "2016-09-16")?.sources).toEqual([SSGA, VENDOR]);
     expect(r.report.setAside).toEqual([
       {
@@ -268,6 +275,7 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
           { source: SSGA, kind: "CASH_DIVIDEND", value: "0.139146", locator: `${SSGA}/XLF/2016-09-19` },
           { source: VENDOR, kind: "CASH_DIVIDEND", value: "4.61", locator: `${VENDOR}/XLF/2016-09-19` },
         ],
+        kept: [],
       },
     ]);
     // Set aside, not one-sided or disputed: the structural action accounts for that date.
@@ -275,10 +283,26 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     expect(r.report.perEntity).toEqual([{ entityId: "XLF", bySource: { [SSGA]: 1, [VENDOR]: 1 }, verified: 2, singleSource: 0 }]);
   });
 
-  it("sets aside a split on the structural date too, but nothing on other dates", () => {
-    const r = run([...xlf, split(VENDOR, "XLF", "2016-09-19", "2"), cash(VENDOR, "XLF", "2016-09-20", "0.01")], opts);
-    expect(r.report.setAside[0]?.records.map((x) => x.kind)).toEqual(["CASH_DIVIDEND", "CASH_DIVIDEND", "SPLIT"]);
+  it("keeps a genuine same-day action the curator names, sets aside a superseded split, and leaves other dates alone", () => {
+    const EXCH = "exchange:special-notice";
+    const classified = [{ ...ENTRY, supersedes: [...SUPERSEDES, { source: VENDOR, kind: "SPLIT" as const }], keeps: [{ source: EXCH, kind: "CASH_DIVIDEND" as const }] }];
+    const r = run([...xlf, split(VENDOR, "XLF", "2016-09-19", "2"), cash(EXCH, "XLF", "2016-09-19", "0.02"), cash(VENDOR, "XLF", "2016-09-20", "0.01")], { ...opts, structural: classified });
+    expect(r.report.setAside[0]?.records.map((x) => `${x.source} ${x.kind}`)).toEqual([`${SSGA} CASH_DIVIDEND`, `${VENDOR} CASH_DIVIDEND`, `${VENDOR} SPLIT`]);
+    // Kept: reconciled like any record - here one source, so written single-sourced - and listed for the audit.
+    expect(r.report.setAside[0]?.kept).toEqual([{ source: EXCH, kind: "CASH_DIVIDEND", value: "0.02", locator: `${EXCH}/XLF/2016-09-19` }]);
+    expect(entryFor(r, "XLF", "2016-09-19")).toMatchObject({ sources: [EXCH], action: { kind: "CASH_DIVIDEND", amount: "0.02" } });
     expect(entryFor(r, "XLF", "2016-09-20")?.sources).toEqual([VENDOR]);
+  });
+
+  it("refuses a same-day record the curator has not classified, or one classified both ways (Codex, PR #114)", () => {
+    // Neither default is safe: setting it aside could drop a genuine dividend, writing it could count the spin-off twice.
+    const BARE = { action: SPINOFF, sources: ["issuer:ssga-press-release", "exchange:nyse-arca-notice"] };
+    const bare = [BARE];
+    expect(() => run(xlf, { ...opts, structural: bare })).toThrow(/supersedes .* or keeps .*XLF 2016-09-19: issuer:ssga-distributions CASH_DIVIDEND 0.139146; XLF 2016-09-19: vendor:tiingo-eod CASH_DIVIDEND 4.61/);
+    const partly = [{ ...BARE, supersedes: [{ source: SSGA, kind: "CASH_DIVIDEND" as const }] }];
+    expect(() => run(xlf, { ...opts, structural: partly })).toThrow(/vendor:tiingo-eod CASH_DIVIDEND 4.61/);
+    const both = [{ ...BARE, supersedes: SUPERSEDES, keeps: [{ source: VENDOR, kind: "CASH_DIVIDEND" as const }] }];
+    expect(() => run(xlf, { ...opts, structural: both })).toThrow(/both supersedes and keeps vendor:tiingo-eod CASH_DIVIDEND/);
   });
 
   it("ignores a structural action outside the window or universe, and then sets nothing aside", () => {
@@ -292,7 +316,7 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
   });
 
   it("writes a single-sourced structural action, which ingest then flags", () => {
-    const r = run(xlf, { ...opts, structural: [{ action: SPINOFF, sources: ["issuer:ssga-press-release"] }] });
+    const r = run(xlf, { ...opts, structural: [{ action: SPINOFF, sources: ["issuer:ssga-press-release"], supersedes: SUPERSEDES }] });
     expect(r.report.counts).toMatchObject({ verified: 1, singleSource: 1 });
     const signedFile = { ...r.file, approval: { ...r.file.approval, approvedBy: "Test Owner", approvedAt: "2026-10-06T00:00:00Z" } };
     const bytes = new TextEncoder().encode(JSON.stringify(signedFile));
@@ -300,7 +324,7 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     const spin = obs.find((o) => corporateActionFromValue(o.value).kind === "SPINOFF");
     expect(spin?.qualityFlags).toEqual([UNVERIFIED_SINGLE_SOURCE]);
     // One source named twice is still one source, as ingest counts it.
-    const twice = run(xlf, { ...opts, structural: [{ action: SPINOFF, sources: ["issuer:ssga-press-release", "issuer:ssga-press-release"] }] });
+    const twice = run(xlf, { ...opts, structural: [{ action: SPINOFF, sources: ["issuer:ssga-press-release", "issuer:ssga-press-release"], supersedes: SUPERSEDES }] });
     expect(twice.report.counts).toMatchObject({ verified: 1, singleSource: 1 });
   });
 

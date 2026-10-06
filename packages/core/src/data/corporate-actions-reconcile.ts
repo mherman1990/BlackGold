@@ -20,11 +20,13 @@ import { corporateActionsHash } from "./adapters/corporate-actions.ts";
  * the owner to resolve. Reconciliation can make the evidence citable; it can never make it look better than it is.
  *
  * Pure: records in, file and report out. CASH_DIVIDEND and SPLIT are reconciled. Structural actions (SPINOFF,
- * MERGER, DELISTING) are a handful of cases the owner curates with their own sources (D-58): they pass through as
- * written, and any cash or split record on the same entity and date is SET ASIDE and reported rather than written,
- * because an issuer can list a spin-off in its dividend column (SSGA's XLF row of 2016-09-19 is the XLRE ratio)
- * and writing both would count one event twice. Setting aside is the one place a record does not reach the file,
- * and only ever beside the structural action that already accounts for that date.
+ * MERGER, DELISTING) are a handful of cases the owner curates with their own sources (D-58), and they pass through
+ * as written. A cash or split record on the same entity and date is ambiguous: it may be the structural action
+ * itself in another source's columns (SSGA's XLF row of 2016-09-19 is the XLRE share ratio in its dollar column),
+ * which writing would count twice, or a genuine action of its own, which dropping would lose. Neither default is
+ * safe, so the curator classifies each one: `supersedes` sets it aside, reported but not written; `keeps` reconciles
+ * it as usual. An unclassified one refuses the run. Setting aside is the one place a record does not reach the
+ * file, and only ever on the owner's word.
  */
 export const RECONCILE_VERSION = 2;
 
@@ -47,8 +49,22 @@ export type SourceSplit = SourceBase & { kind: "SPLIT"; ratio: Dec };
 
 export type SourceAction = SourceCashDividend | SourceSplit;
 
-/** An owner-curated structural action, in the vendored file's entry shape (D-58). Written as given. */
-export type StructuralEntry = { action: Record<string, unknown>; sources: string[]; announcedAt?: string | undefined };
+/** A record on a structural action's entity and date, named by source and kind: each source has at most one. */
+export type SameDayRecord = { source: string; kind: SourceAction["kind"] };
+
+/**
+ * An owner-curated structural action (D-58). `action`, `sources` and `announcedAt` are written as given, in the
+ * vendored file's entry shape. `supersedes` and `keeps` classify the same-day records and are not written.
+ */
+export type StructuralEntry = {
+  action: Record<string, unknown>;
+  sources: string[];
+  announcedAt?: string | undefined;
+  /** Same-day records this action replaces, such as a spin-off listed in a dividend column: set aside. */
+  supersedes?: readonly SameDayRecord[] | undefined;
+  /** Same-day records that are separate, genuine actions: reconciled as usual. */
+  keeps?: readonly SameDayRecord[] | undefined;
+};
 
 const STRUCTURAL_KINDS = new Set(["SPINOFF", "MERGER", "DELISTING"]);
 
@@ -68,7 +84,7 @@ export type ReconcileOptions = {
   amountTolerance: Dec;
   /** How far apart two ex-dates may be to be reported as a likely match. Never used to reconcile. */
   nearMatchDays?: number;
-  /** Owner-curated structural actions, written as given. In-scope ones set aside same-day cash and split records. */
+  /** Owner-curated structural actions, written as given, each classifying its same-day records. */
   structural?: readonly StructuralEntry[];
 };
 
@@ -89,10 +105,12 @@ export type ReconcileFinding = {
 export type SetAsideFinding = {
   entityId: string;
   exDate: IsoDate;
-  /** The structural action that accounts for this entity and date. */
+  /** The structural action(s) on this entity and date. */
   structuralKind: string;
-  /** The records not written because of it. */
+  /** Records the owner said the structural action supersedes: not written. */
   records: { source: string; kind: SourceAction["kind"]; value: string; locator: string }[];
+  /** Records the owner said are separate actions: reconciled as usual, listed here so the audit sees the date. */
+  kept: { source: string; kind: SourceAction["kind"]; value: string; locator: string }[];
 };
 
 export type ReconcileReport = {
@@ -108,7 +126,7 @@ export type ReconcileReport = {
   disagreements: ReconcileFinding[];
   /** Exactly one source reports the action on this ex-date. */
   oneSided: ReconcileFinding[];
-  /** Cash and split records on the entity and date of a curated structural action, not written. */
+  /** Every entity and date with a curated structural action, and what happened to the records on it. */
   setAside: SetAsideFinding[];
   /** Per entity, how many actions each source reported in the window: a source that is silent for an entity is visible here. */
   perEntity: { entityId: string; bySource: Record<string, number>; verified: number; singleSource: number }[];
@@ -157,9 +175,11 @@ function storedAction(r: SourceAction): Record<string, unknown> {
 
 type Entry = ReconciledFile["actions"][number];
 
+const sameDayId = (r: SameDayRecord): string => `${r.source} ${r.kind}`;
+
 /** Validate the curated structural entries; return the in-scope ones with their entity, kind and date. */
 function structuralInScope(entries: readonly StructuralEntry[], entities: ReadonlySet<string>, window: { from: IsoDate; to: IsoDate }) {
-  const out: { key: string; day: string; entityId: string; exDate: IsoDate; kind: string; entry: Entry }[] = [];
+  const out: { key: string; day: string; entityId: string; exDate: IsoDate; kind: string; entry: Entry; supersedes: Set<string>; keeps: Set<string> }[] = [];
   const seen = new Set<string>();
   for (const [i, s] of entries.entries()) {
     let action;
@@ -185,7 +205,11 @@ function structuralInScope(entries: readonly StructuralEntry[], entities: Readon
     seen.add(key);
     const entry: Entry = { action: s.action, sources: [...s.sources] };
     if (s.announcedAt !== undefined) entry.announcedAt = s.announcedAt;
-    out.push({ key, day: dayOf({ entityId, exDate }), entityId, exDate, kind: action.kind, entry });
+    const supersedes = new Set((s.supersedes ?? []).map(sameDayId));
+    const keeps = new Set((s.keeps ?? []).map(sameDayId));
+    const both = [...supersedes].filter((id) => keeps.has(id));
+    if (both.length > 0) throw new ReconcileInputError(`structural[${i}] both supersedes and keeps ${both.join(", ")}`);
+    out.push({ key, day: dayOf({ entityId, exDate }), entityId, exDate, kind: action.kind, entry, supersedes, keeps });
   }
   return out;
 }
@@ -206,20 +230,40 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
   if (!opts.preferredSources.some((p) => sources.includes(p))) throw new ReconcileInputError(`none of the preferred sources (${opts.preferredSources.join(", ")}) supplied records`);
 
   const structural = structuralInScope(opts.structural ?? [], entities, opts.window);
-  const structuralDays = new Map(structural.map((s) => [s.day, s]));
+  // Every structural action on a day classifies that day's records; two on one day pool their lists.
+  const structuralDays = new Map<string, { kinds: string[]; supersedes: Set<string>; keeps: Set<string>; entityId: string; exDate: IsoDate }>();
+  for (const s of structural) {
+    const d = structuralDays.get(s.day) ?? { kinds: [], supersedes: new Set<string>(), keeps: new Set<string>(), entityId: s.entityId, exDate: s.exDate };
+    d.kinds.push(s.kind);
+    for (const id of s.supersedes) d.supersedes.add(id);
+    for (const id of s.keeps) d.keeps.add(id);
+    structuralDays.set(s.day, d);
+  }
 
   const inWindow = records.filter((r) => entities.has(r.entityId) && r.exDate >= opts.window.from && r.exDate <= opts.window.to);
   const setAsideByDay = new Map<string, SetAsideFinding>();
+  for (const [day, d] of structuralDays) setAsideByDay.set(day, { entityId: d.entityId, exDate: d.exDate, structuralKind: d.kinds.sort().join("+"), records: [], kept: [] });
   const inScope: SourceAction[] = [];
+  const unclassified: string[] = [];
   for (const r of inWindow) {
-    const s = structuralDays.get(dayOf(r));
-    if (s === undefined) {
+    const d = structuralDays.get(dayOf(r));
+    const finding = setAsideByDay.get(dayOf(r));
+    if (d === undefined || finding === undefined) {
       inScope.push(r);
       continue;
     }
-    const finding = setAsideByDay.get(s.day) ?? { entityId: s.entityId, exDate: s.exDate, structuralKind: s.kind, records: [] };
-    finding.records.push({ source: r.source, kind: r.kind, value: valueOf(r).toFixed(), locator: r.locator });
-    setAsideByDay.set(s.day, finding);
+    const id = sameDayId(r);
+    const listed = { source: r.source, kind: r.kind, value: valueOf(r).toFixed(), locator: r.locator };
+    if (d.supersedes.has(id)) finding.records.push(listed);
+    else if (d.keeps.has(id)) {
+      finding.kept.push(listed);
+      inScope.push(r);
+    } else unclassified.push(`${r.entityId} ${r.exDate}: ${id} ${valueOf(r).toFixed()}`);
+  }
+  if (unclassified.length > 0) {
+    throw new ReconcileInputError(
+      `each record on the date of a curated structural action must be listed under its supersedes (the structural action replaces it) or keeps (a separate, genuine action): ${unclassified.join("; ")}`,
+    );
   }
 
   const groups = new Map<string, Map<string, SourceAction>>();
@@ -282,7 +326,11 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
   // One order for the whole file, structural entries included, so the same inputs always hash the same.
   const entries = keyed.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)).map((k) => k.entry);
   const setAside = [...setAsideByDay.values()].sort((a, b) => (dayOf(a) < dayOf(b) ? -1 : dayOf(a) > dayOf(b) ? 1 : 0));
-  for (const f of setAside) f.records.sort((a, b) => (a.source < b.source ? -1 : a.source > b.source ? 1 : a.kind < b.kind ? -1 : 1));
+  const bySourceKind = (a: { source: string; kind: string }, b: { source: string; kind: string }): number => (a.source < b.source ? -1 : a.source > b.source ? 1 : a.kind < b.kind ? -1 : 1);
+  for (const f of setAside) {
+    f.records.sort(bySourceKind);
+    f.kept.sort(bySourceKind);
+  }
 
   const isVerified = (e: Entry): boolean => new Set(e.sources).size >= 2;
   const actionsHash = corporateActionsHash(entries);
