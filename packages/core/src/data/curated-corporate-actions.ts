@@ -1,6 +1,6 @@
-import { Dec, utc, type IsoDate } from "@blackgold/shared";
+import { Dec, isoDate, utc, type IsoDate } from "@blackgold/shared";
 import { z } from "zod";
-import type { SourceAction, StructuralEntry } from "./corporate-actions-reconcile.ts";
+import type { RecordSelector, SourceAction, StructuralEntry } from "./corporate-actions-reconcile.ts";
 import { plainIsoDate } from "./adapters/issuer-dates.ts";
 import { ISHARES_DISTRIBUTIONS_SOURCE } from "./adapters/ishares-distributions.ts";
 import { SSGA_DISTRIBUTIONS_SOURCE, SSGA_NAV_HISTORY_SOURCE } from "./adapters/ssga-distributions.ts";
@@ -28,7 +28,8 @@ import { VANGUARD_DISTRIBUTIONS_SOURCE } from "./adapters/vanguard-distributions
  * `sources` and `announcedAt` as given. `supersedes` and `keeps` classify every cash or split record any source
  * reports on the same entity and date, by `{ source, kind }`: superseded ones are the structural action in another
  * guise and are set aside; kept ones are separate actions and are reconciled. An unclassified one stops the run. A
- * MERGER or DELISTING also classifies every record dated after the entity's last bar, and may only supersede them.
+ * MERGER or DELISTING also classifies every record dated after the entity's last bar, naming each with an `exDate`,
+ * and may only supersede them.
  *
  * Every row is checked and every problem is reported at once, with its line, so an 80-row file is fixed in one
  * pass. Nothing here invents a value: a row the parser cannot read is an error, never a default.
@@ -160,8 +161,12 @@ export function parseCuratedActions(bytes: Uint8Array, opts: { file: string }): 
   return records;
 }
 
-const SameDaySchema = z
-  .object({ source: z.string().regex(/^(issuer|exchange|vendor):[a-z0-9][a-z0-9-]*$/, "must look like issuer:, exchange: or vendor:<name>"), kind: z.enum(["CASH_DIVIDEND", "SPLIT"]) })
+const SelectorSchema = z
+  .object({
+    source: z.string().regex(/^(issuer|exchange|vendor):[a-z0-9][a-z0-9-]*$/, "must look like issuer:, exchange: or vendor:<name>"),
+    kind: z.enum(["CASH_DIVIDEND", "SPLIT"]),
+    exDate: z.string().refine((d) => plainIsoDate(d) === d, "must be a YYYY-MM-DD date").optional(),
+  })
   .strict();
 
 const StructuralFileSchema = z
@@ -173,8 +178,8 @@ const StructuralFileSchema = z
           action: z.record(z.string(), z.unknown()),
           sources: z.array(z.string().regex(SOURCE_RE, "must look like issuer:<name> or exchange:<name>")).min(1),
           announcedAt: z.string().optional(),
-          supersedes: z.array(SameDaySchema).optional(),
-          keeps: z.array(SameDaySchema).optional(),
+          supersedes: z.array(SelectorSchema).optional(),
+          keeps: z.array(SelectorSchema).optional(),
         })
         .strict(),
     ),
@@ -204,11 +209,13 @@ export function parseCuratedStructural(bytes: Uint8Array, opts: { file: string }
     }
   }
   if (problems.length > 0) throw new CuratedInputError(opts.file, problems);
+  const selectors = (list: z.infer<typeof SelectorSchema>[]): RecordSelector[] =>
+    list.map((r) => ({ source: r.source, kind: r.kind, ...(r.exDate === undefined ? {} : { exDate: isoDate(r.exDate) }) }));
   return parsed.data.actions.map((e) => ({
     action: e.action,
     sources: e.sources,
     ...(e.announcedAt === undefined ? {} : { announcedAt: e.announcedAt }),
-    ...(e.supersedes === undefined ? {} : { supersedes: e.supersedes }),
-    ...(e.keeps === undefined ? {} : { keeps: e.keeps }),
+    ...(e.supersedes === undefined ? {} : { supersedes: selectors(e.supersedes) }),
+    ...(e.keeps === undefined ? {} : { keeps: selectors(e.keeps) }),
   }));
 }

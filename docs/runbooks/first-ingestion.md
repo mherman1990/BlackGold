@@ -222,6 +222,11 @@ every cash or split record after that point, the merger's own date included, mus
 action's `supersedes`; it cannot be kept. If it is a real payout, add it to the merger's `terms.cashPerShare` or the
 delisting's `finalPrice` first.
 
+Name a record on a later date with its `exDate`, for example
+`{ "source": "vendor:tiingo-eod", "kind": "CASH_DIVIDEND", "exDate": "2016-09-21" }`. Without one, a selector means
+the action's own date. A delisting can therefore keep a genuine dividend on its last trade date and supersede a
+later payout from the same source.
+
 The command that runs all of this and writes the unsigned file plus its report is the next PR (D-57 PR-B2).
 
 ## Step 2c — or load corporate actions automatically from Tiingo (D-49, research-only)

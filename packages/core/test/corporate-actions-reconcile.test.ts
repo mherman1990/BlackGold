@@ -381,7 +381,7 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
 
     it("refuses to keep a distribution on a merger's effective date: it would be verified and never applied", () => {
       expect(() => run(xlf, { ...opts, structural: [merger({ supersedes: [SUPERSEDES[0]], keeps: [SUPERSEDES[1]] })] })).toThrow(
-        /cannot be kept: XLF 2016-09-19: vendor:tiingo-eod CASH_DIVIDEND 4.61 \(series ends with its MERGER 2016-09-19\)\. Fold a payout into the merger's terms\.cashPerShare/,
+        /structural\[0\] keeps vendor:tiingo-eod CASH_DIVIDEND 2016-09-19, after the series its MERGER ends, which would ignore it: fold a payout into terms\.cashPerShare/,
       );
       // Superseded - folded into the cash per share - it is set aside and reported.
       const r = run(xlf, { ...opts, structural: [merger({ supersedes: SUPERSEDES })] });
@@ -389,22 +389,62 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
       expect(r.file.actions.map((e) => `${String(e.action["kind"])} ${String(e.action["exDate"] ?? e.action["effective"])}`)).toEqual(["CASH_DIVIDEND 2016-09-16", "MERGER 2016-09-19"]);
     });
 
-    it("has the terminal action classify every record after the series end, and lets it only supersede them", () => {
+    it("has the terminal action name each record after the series end by date, and only supersede it", () => {
       const before = xlf.slice(0, 2);
-      // Unclassified: refused, like a same-day record.
-      expect(() => run([...before, later], { ...opts, structural: [delisting()] })).toThrow(/past the merger or delisting that ends its entity's series, must be listed .*XLF 2016-09-21: vendor:tiingo-eod CASH_DIVIDEND 0.4/);
-      expect(() => run([...before, later], { ...opts, structural: [delisting({ keeps: [{ source: VENDOR, kind: "CASH_DIVIDEND" }] })] })).toThrow(/cannot be kept: XLF 2016-09-21/);
+      const LATER = { source: VENDOR, kind: "CASH_DIVIDEND" as const, exDate: D("2016-09-21") };
+      // Unclassified: refused, like a same-day record. An undated selector names only the action's own date.
+      for (const lists of [{}, { supersedes: [{ source: VENDOR, kind: "CASH_DIVIDEND" as const }] }]) {
+        expect(() => run([...before, later], { ...opts, structural: [delisting(lists)] })).toThrow(/under that action's supersedes, by exDate: XLF 2016-09-21: vendor:tiingo-eod CASH_DIVIDEND 0.4 \(after its DELISTING 2016-09-20\)/);
+      }
+      expect(() => run([...before, later], { ...opts, structural: [delisting({ keeps: [LATER] })] })).toThrow(/structural\[0\] keeps vendor:tiingo-eod CASH_DIVIDEND 2016-09-21, after the series its DELISTING ends/);
       // Superseded: set aside under the delisting's date, with its own date for the audit.
-      const r = run([...before, later], { ...opts, structural: [delisting({ supersedes: [{ source: VENDOR, kind: "CASH_DIVIDEND" }] })] });
+      const r = run([...before, later], { ...opts, structural: [delisting({ supersedes: [LATER] })] });
       expect(r.report.setAside).toEqual([
         { entityId: "XLF", exDate: "2016-09-20", structuralKind: "DELISTING", records: [{ source: VENDOR, kind: "CASH_DIVIDEND", exDate: "2016-09-21", value: "0.4", locator: `${VENDOR}/XLF/2016-09-21` }], kept: [] },
       ]);
       expect(r.file.actions.map((e) => e.action["kind"])).toEqual(["CASH_DIVIDEND", "DELISTING"]);
-      // The last trade date itself is inside the series: a genuine dividend there is kept and applied.
-      const onLastDay = run(before, { ...opts, structural: [delisting({ keeps: [{ source: SSGA, kind: "CASH_DIVIDEND" }, { source: VENDOR, kind: "CASH_DIVIDEND" }] }, "2016-09-16")] });
-      expect(entryFor(onLastDay, "XLF", "2016-09-16")?.sources).toEqual([SSGA, VENDOR]);
+      // A date is named only past the end, and only by a terminal action.
+      expect(() => run(before, { ...opts, structural: [delisting({ supersedes: [{ ...LATER, exDate: D("2016-09-16") }] })] })).toThrow(/only a MERGER or DELISTING names a later one, after its series ends/);
       // Other entities are untouched by XLF's end.
       expect(entryFor(run([...before, cash(SSGA, "VTI", "2016-09-21", "0.5"), cash(VENDOR, "VTI", "2016-09-21", "0.5")], { ...opts, entities: ["XLF", "VTI"], structural: [delisting()] }), "VTI", "2016-09-21")?.sources).toEqual([SSGA, VENDOR]);
+    });
+
+    it("keeps a genuine last-day dividend while superseding a later payout from the same sources", () => {
+      const lastDay = [cash(SSGA, "XLF", "2016-09-16", "0.11"), cash(VENDOR, "XLF", "2016-09-16", "0.11")];
+      const payout = [cash(SSGA, "XLF", "2016-09-21", "0.40"), cash(VENDOR, "XLF", "2016-09-21", "0.40")];
+      const lists = {
+        keeps: [{ source: SSGA, kind: "CASH_DIVIDEND" as const }, { source: VENDOR, kind: "CASH_DIVIDEND" as const }],
+        supersedes: [{ source: SSGA, kind: "CASH_DIVIDEND" as const, exDate: D("2016-09-21") }, { source: VENDOR, kind: "CASH_DIVIDEND" as const, exDate: D("2016-09-21") }],
+      };
+      const r = run([...lastDay, ...payout], { ...opts, structural: [delisting(lists, "2016-09-16")] });
+      expect(entryFor(r, "XLF", "2016-09-16")).toMatchObject({ sources: [SSGA, VENDOR], action: { kind: "CASH_DIVIDEND", amount: "0.11" } });
+      expect(r.report.setAside[0]?.records.map((x) => `${x.source} ${x.exDate}`)).toEqual([`${SSGA} 2016-09-21`, `${VENDOR} 2016-09-21`]);
+      expect(r.report.setAside[0]?.kept.map((x) => `${x.source} ${x.exDate}`)).toEqual([`${SSGA} 2016-09-16`, `${VENDOR} 2016-09-16`]);
+    });
+
+    it("never lets another action's list classify a record after the series end", () => {
+      // A same-day spin-off superseding the vendor's cash names only its own date; the later payout stays the delisting's.
+      const spin = { action: { ...SPINOFF, exDate: "2016-09-16" }, sources: SOURCES, supersedes: [{ source: VENDOR, kind: "CASH_DIVIDEND" as const }], keeps: [{ source: SSGA, kind: "CASH_DIVIDEND" as const }] };
+      const recs = [...xlf.slice(0, 2), later];
+      expect(() => run(recs, { ...opts, structural: [delisting({}, "2016-09-16"), spin] })).toThrow(/XLF 2016-09-21: vendor:tiingo-eod CASH_DIVIDEND 0.4 \(after its DELISTING 2016-09-16\)/);
+      // Nor may it name the later date itself.
+      const reaching = { ...spin, supersedes: [{ source: VENDOR, kind: "CASH_DIVIDEND" as const, exDate: D("2016-09-21") }] };
+      expect(() => run(recs, { ...opts, structural: [delisting({}, "2016-09-16"), reaching] })).toThrow(/structural\[1\] supersedes vendor:tiingo-eod CASH_DIVIDEND on 2016-09-21: an action classifies records on its own date/);
+    });
+
+    it("counts a terminal action outside the window: it still ends the series inside it", () => {
+      const early = { action: { kind: "MERGER", entityId: "XLF", acquirer: "ACQ", terms: { cashPerShare: "25" }, effective: "2015-12-15" }, sources: SOURCES };
+      const window = { from: D("2016-01-01"), to: D("2016-12-31") };
+      expect(() => run(xlf.slice(0, 2), { ...opts, window, structural: [early] })).toThrow(/fall after one outside the window: XLF 2016-09-16: issuer:ssga-distributions CASH_DIVIDEND 0.114386 \(after its MERGER 2015-12-15\)/);
+      const spin = { action: { ...SPINOFF, exDate: "2016-02-01" }, sources: SOURCES };
+      expect(() => run([cash(SSGA, "VTI", "2016-03-01", "0.5"), cash(VENDOR, "VTI", "2016-03-01", "0.5")], { ...opts, entities: ["XLF", "VTI"], window, structural: [spin, early] })).toThrow(
+        /the XLF SPINOFF 2016-02-01 falls after XLF's series ends with its MERGER 2015-12-15/,
+      );
+      // It counts towards one terminal action per entity, too.
+      expect(() => run(xlf.slice(0, 2), { ...opts, window, structural: [early, delisting()] })).toThrow(/XLF has two terminal actions, MERGER 2015-12-15 and DELISTING 2016-09-20/);
+      // One after the window ends nothing inside it, and is listed as out of scope.
+      const late = { ...early, action: { ...early.action, effective: "2017-03-01" } };
+      expect(run(xlf.slice(0, 2), { ...opts, window, structural: [late] }).report.structuralOutOfScope).toEqual([{ index: 0, kind: "MERGER", entityId: "XLF", exDate: "2017-03-01", reason: "outside the window" }]);
     });
 
     it("refuses a spin-off after the series end, whatever the order the entries come in", () => {

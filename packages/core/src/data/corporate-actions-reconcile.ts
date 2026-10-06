@@ -29,12 +29,16 @@ import { corporateActionsHash } from "./adapters/corporate-actions.ts";
  * file, and only ever on the owner's word.
  *
  * A MERGER or DELISTING ends its entity's total-return series, which ignores anything dated after its last bar. So
- * it also classifies every record dated after that - a merger's own date included - and may only supersede them:
- * a distribution paid with a merger or on delisting belongs in the terminal value (`terms.cashPerShare`,
- * `finalPrice`), and a kept one, or a spin-off, past the end would be written, verified, and never applied.
+ * it also classifies every record dated after that - naming each by `exDate`, a merger's own date included - and
+ * may only supersede them: a distribution paid with a merger or on delisting belongs in the terminal value
+ * (`terms.cashPerShare`, `finalPrice`), and a kept one, or a spin-off, past the end would be written, verified, and
+ * never applied. One outside the window is not written, so a record after it inside the window refuses the run.
  */
-/** 2 added structural pass-through and issuer sources (D-58); 3 classifies records past a series end. Every change to the output bumps this. */
-export const RECONCILE_VERSION = 3;
+/**
+ * 2 added structural pass-through and issuer sources (D-58); 3 classifies records past a series end; 4 names them
+ * by date and counts a terminal action outside the window. Every change to the output bumps this.
+ */
+export const RECONCILE_VERSION = 4;
 
 type SourceBase = {
   /** Written into `sources`, e.g. `vendor:tiingo-eod` or `issuer:ssga-distributions`. */
@@ -56,10 +60,11 @@ export type SourceSplit = SourceBase & { kind: "SPLIT"; ratio: Dec };
 export type SourceAction = SourceCashDividend | SourceSplit;
 
 /**
- * A record a structural action classifies, named by source and kind: one on its entity and date (each source has at
- * most one), or, for a MERGER or DELISTING, one dated after the entity's series ends.
+ * A record a structural action classifies, by source and kind (each source has at most one per entity, kind and
+ * date). With no `exDate` it is the one on the action's own date; a MERGER or DELISTING may also name, by `exDate`,
+ * one dated after the series end it sets.
  */
-export type SameDayRecord = { source: string; kind: SourceAction["kind"] };
+export type RecordSelector = { source: string; kind: SourceAction["kind"]; exDate?: IsoDate | undefined };
 
 /**
  * An owner-curated structural action (D-58). `action`, `sources` and `announcedAt` are written as given, in the
@@ -70,9 +75,9 @@ export type StructuralEntry = {
   sources: string[];
   announcedAt?: string | undefined;
   /** Records this action replaces, such as a spin-off listed in a dividend column or a merger's final payout: set aside. */
-  supersedes?: readonly SameDayRecord[] | undefined;
+  supersedes?: readonly RecordSelector[] | undefined;
   /** Same-day records that are separate, genuine actions: reconciled as usual. Never past a series end. */
-  keeps?: readonly SameDayRecord[] | undefined;
+  keeps?: readonly RecordSelector[] | undefined;
 };
 
 const STRUCTURAL_KINDS = new Set(["SPINOFF", "MERGER", "DELISTING"]);
@@ -188,14 +193,19 @@ function storedAction(r: SourceAction): Record<string, unknown> {
 
 type Entry = ReconciledFile["actions"][number];
 
-const sameDayId = (r: SameDayRecord): string => `${r.source} ${r.kind}`;
+/** One record, by entity, source, kind and date: what a structural action's `supersedes` and `keeps` name. */
+const recordId = (entityId: string, source: string, kind: string, exDate: IsoDate): string => `${entityId}|${source}|${kind}|${exDate}`;
+const shownId = (id: string): string => id.split("|").slice(1).join(" ");
+
+type SeriesEnd = { label: string; lastDate: IsoDate };
 
 /** Validate the curated structural entries; return the in-scope ones with their entity, kind and date. */
 function structuralInScope(entries: readonly StructuralEntry[], entities: ReadonlySet<string>, window: { from: IsoDate; to: IsoDate }) {
   const out: { key: string; day: string; entityId: string; exDate: IsoDate; kind: string; entry: Entry; supersedes: Set<string>; keeps: Set<string> }[] = [];
   const seen = new Set<string>();
-  // The series ends an entity at its first MERGER or DELISTING and ignores any other, so at most one may be written.
-  const terminal = new Map<string, string>();
+  // The series ends an entity at its first MERGER or DELISTING and ignores any other, so at most one may be given -
+  // written or not: one outside the window still ends the series inside it.
+  const ends = new Map<string, SeriesEnd & { written: boolean }>();
   const outOfScope: ReconcileReport["structuralOutOfScope"] = [];
   for (const [i, s] of entries.entries()) {
     let action;
@@ -221,39 +231,56 @@ function structuralInScope(entries: readonly StructuralEntry[], entities: Readon
       outOfScope.push({ index: i, kind: action.kind, entityId, exDate, reason: "entity not in scope" });
       continue;
     }
-    if (exDate < window.from || exDate > window.to) {
+    const inWindow = exDate >= window.from && exDate <= window.to;
+    const lastDate = action.kind === "MERGER" || action.kind === "DELISTING" ? seriesLastDate(action) : undefined;
+    if (lastDate !== undefined) {
+      const earlier = ends.get(entityId);
+      if (earlier !== undefined) throw new ReconcileInputError(`${entityId} has two terminal actions, ${earlier.label} and ${action.kind} ${exDate}; the series would apply only one`);
+      ends.set(entityId, { label: `${action.kind} ${exDate}`, lastDate, written: inWindow });
+    }
+    if (!inWindow) {
       outOfScope.push({ index: i, kind: action.kind, entityId, exDate, reason: "outside the window" });
       continue;
     }
     const key = keyOf({ entityId, kind: action.kind, exDate });
     if (seen.has(key)) throw new ReconcileInputError(`structural action ${key} is given twice`);
     seen.add(key);
-    if (action.kind === "MERGER" || action.kind === "DELISTING") {
-      const earlier = terminal.get(entityId);
-      if (earlier !== undefined) throw new ReconcileInputError(`${entityId} has two terminal actions, ${earlier} and ${action.kind} ${exDate}; the series would apply only one`);
-      terminal.set(entityId, `${action.kind} ${exDate}`);
+    // A selector with no exDate names the record on the action's own date. Only a terminal action may name another
+    // date, and only one past its series end - so no action's list can reach a record that is another's to classify.
+    const named = (list: readonly RecordSelector[] | undefined, which: string): { id: string; date: IsoDate }[] =>
+      (list ?? []).map((r) => {
+        const date = r.exDate ?? exDate;
+        if (date !== exDate && (lastDate === undefined || date <= lastDate)) {
+          throw new ReconcileInputError(
+            `structural[${i}] ${which} ${r.source} ${r.kind} on ${date}: an action classifies records on its own date; only a MERGER or DELISTING names a later one, after its series ends`,
+          );
+        }
+        return { id: recordId(entityId, r.source, r.kind, date), date };
+      });
+    const supersedes = new Set(named(s.supersedes, "supersedes").map((n) => n.id));
+    const kept = named(s.keeps, "keeps");
+    const keeps = new Set(kept.map((n) => n.id));
+    const both = [...supersedes].filter((id) => keeps.has(id));
+    if (both.length > 0) throw new ReconcileInputError(`structural[${i}] both supersedes and keeps ${both.map(shownId).join(", ")}`);
+    // The series ignores anything after its end - a merger's own date included - so nothing there can be kept.
+    const late = lastDate === undefined ? [] : kept.filter((n) => n.date > lastDate);
+    if (late.length > 0) {
+      throw new ReconcileInputError(
+        `structural[${i}] keeps ${late.map((n) => shownId(n.id)).join(", ")}, after the series its ${action.kind} ends, which would ignore it: fold a payout into terms.cashPerShare or finalPrice and list the record under supersedes`,
+      );
     }
     const entry: Entry = { action: s.action, sources: [...s.sources] };
     if (s.announcedAt !== undefined) entry.announcedAt = s.announcedAt;
-    const supersedes = new Set((s.supersedes ?? []).map(sameDayId));
-    const keeps = new Set((s.keeps ?? []).map(sameDayId));
-    const both = [...supersedes].filter((id) => keeps.has(id));
-    if (both.length > 0) throw new ReconcileInputError(`structural[${i}] both supersedes and keeps ${both.join(", ")}`);
     out.push({ key, day: dayOf({ entityId, exDate }), entityId, exDate, kind: action.kind, entry, supersedes, keeps });
   }
-  // The last date each entity's series applies anything; a spin-off after it would be written and never credited.
-  const seriesEnds = new Map<string, { label: string; lastDate: IsoDate; day: string }>();
+  // A spin-off after its parent's series ends would be written and never credited.
   for (const s of out) {
-    const action = corporateActionFromValue(s.entry.action);
-    if (action.kind === "MERGER" || action.kind === "DELISTING") seriesEnds.set(s.entityId, { label: `${action.kind} ${s.exDate}`, lastDate: seriesLastDate(action), day: s.day });
-  }
-  for (const s of out) {
-    const end = seriesEnds.get(s.entityId);
+    const end = ends.get(s.entityId);
     if (s.kind === "SPINOFF" && end !== undefined && s.exDate > end.lastDate) {
       throw new ReconcileInputError(`the ${s.entityId} SPINOFF ${s.exDate} falls after ${s.entityId}'s series ends with its ${end.label}, so its value would never be credited`);
     }
   }
-  return { inScope: out, outOfScope, seriesEnds };
+  return { inScope: out, outOfScope, ends };
 }
 
 /**
@@ -272,20 +299,23 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
   if (opts.preferredSources.length === 0) throw new ReconcileInputError("name at least one preferred source");
   if (!opts.preferredSources.some((p) => sources.includes(p))) throw new ReconcileInputError(`none of the preferred sources (${opts.preferredSources.join(", ")}) supplied records`);
 
-  const { inScope: structural, outOfScope: structuralOutOfScope, seriesEnds } = structuralInScope(opts.structural ?? [], entities, opts.window);
-  // Every structural action on a day classifies that day's records; two on one day pool their lists.
-  const structuralDays = new Map<string, { kinds: string[]; supersedes: Set<string>; keeps: Set<string>; entityId: string; exDate: IsoDate }>();
+  const { inScope: structural, outOfScope: structuralOutOfScope, ends } = structuralInScope(opts.structural ?? [], entities, opts.window);
+  // Which action, by its day, set aside or kept each record it names. Names are dated, so lists never overlap by accident.
+  const supersededBy = new Map<string, string>();
+  const keptBy = new Map<string, string>();
+  const structuralDays = new Map<string, { kinds: string[]; entityId: string; exDate: IsoDate }>();
   for (const s of structural) {
-    const d = structuralDays.get(s.day) ?? { kinds: [], supersedes: new Set<string>(), keeps: new Set<string>(), entityId: s.entityId, exDate: s.exDate };
+    const d = structuralDays.get(s.day) ?? { kinds: [], entityId: s.entityId, exDate: s.exDate };
     d.kinds.push(s.kind);
-    for (const id of s.supersedes) d.supersedes.add(id);
-    for (const id of s.keeps) d.keeps.add(id);
     structuralDays.set(s.day, d);
+    for (const id of s.supersedes) supersededBy.set(id, s.day);
+    for (const id of s.keeps) keptBy.set(id, s.day);
   }
-  // Each entry is checked alone above; two on one day can still contradict each other once pooled.
-  for (const [day, d] of structuralDays) {
-    const both = [...d.supersedes].filter((id) => d.keeps.has(id));
-    if (both.length > 0) throw new ReconcileInputError(`the structural actions on ${day.replace("|", " ")} disagree: one supersedes and another keeps ${both.join(", ")}`);
+  // Each entry is checked alone above; two can still contradict each other.
+  const contradicted = [...supersededBy.keys()].filter((id) => keptBy.has(id));
+  if (contradicted.length > 0) {
+    const day = supersededBy.get(contradicted[0] ?? "") ?? "";
+    throw new ReconcileInputError(`the structural actions on ${day.replace("|", " ")} disagree: one supersedes and another keeps ${contradicted.map(shownId).join(", ")}`);
   }
 
   const inWindow = records.filter((r) => entities.has(r.entityId) && r.exDate >= opts.window.from && r.exDate <= opts.window.to);
@@ -296,42 +326,46 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
     if (seenRecords.has(id)) throw new ReconcileInputError(`${r.source} reports ${keyOf(r)} twice; sum a distribution's components into one record before reconciling`);
     seenRecords.add(id);
   }
+  // A terminal action outside the window is not written, so nothing can classify a record after it: refuse.
+  const beyondUnwritten = inWindow.filter((r) => {
+    const end = ends.get(r.entityId);
+    return end !== undefined && !end.written && r.exDate > end.lastDate;
+  });
+  if (beyondUnwritten.length > 0) {
+    throw new ReconcileInputError(
+      `the series ignores anything after a merger's target stops trading or a delisted entity's last trade, and these fall after one outside the window: ${beyondUnwritten.map((r) => `${r.entityId} ${r.exDate}: ${r.source} ${r.kind} ${valueOf(r).toFixed()} (after its ${ends.get(r.entityId)?.label ?? ""})`).join("; ")}`,
+    );
+  }
   const setAsideByDay = new Map<string, SetAsideFinding>();
   for (const [day, d] of structuralDays) setAsideByDay.set(day, { entityId: d.entityId, exDate: d.exDate, structuralKind: d.kinds.sort().join("+"), records: [], kept: [] });
+  const findingFor = (day: string): SetAsideFinding => {
+    const f = setAsideByDay.get(day);
+    if (f === undefined) throw new Error(`no structural finding for ${day}`);
+    return f;
+  };
   const inScope: SourceAction[] = [];
   const unclassified: string[] = [];
-  const keptPastEnd: string[] = [];
   for (const r of inWindow) {
-    // A record past its entity's series end is the terminal action's to classify, whatever its date.
-    const end = seriesEnds.get(r.entityId);
+    // A record on a structural action's date, or past its entity's series end, must be named by the curator.
+    const end = ends.get(r.entityId);
     const pastEnd = end !== undefined && r.exDate > end.lastDate;
-    const day = pastEnd ? end.day : dayOf(r);
-    const d = structuralDays.get(day);
-    const finding = setAsideByDay.get(day);
-    if (d === undefined || finding === undefined) {
+    if (!pastEnd && !structuralDays.has(dayOf(r))) {
       inScope.push(r);
       continue;
     }
-    const id = sameDayId(r);
-    const described = `${r.entityId} ${r.exDate}: ${id} ${valueOf(r).toFixed()}`;
+    const id = recordId(r.entityId, r.source, r.kind, r.exDate);
     const listed = { source: r.source, kind: r.kind, exDate: r.exDate, value: valueOf(r).toFixed(), locator: r.locator };
-    if (d.supersedes.has(id)) finding.records.push(listed);
-    else if (d.keeps.has(id)) {
-      if (pastEnd) keptPastEnd.push(`${described} (series ends with its ${end.label})`);
-      else {
-        finding.kept.push(listed);
-        inScope.push(r);
-      }
-    } else unclassified.push(described);
-  }
-  if (keptPastEnd.length > 0) {
-    throw new ReconcileInputError(
-      `the total-return series ignores anything dated after a merger's target stops trading or a delisted entity's last trade, so these cannot be kept: ${keptPastEnd.join("; ")}. Fold a payout into the merger's terms.cashPerShare or the delisting's finalPrice and list the record under supersedes`,
-    );
+    const supersededOn = supersededBy.get(id);
+    const keptOn = keptBy.get(id);
+    if (supersededOn !== undefined) findingFor(supersededOn).records.push(listed);
+    else if (keptOn !== undefined) {
+      findingFor(keptOn).kept.push(listed);
+      inScope.push(r);
+    } else unclassified.push(`${r.entityId} ${r.exDate}: ${r.source} ${r.kind} ${valueOf(r).toFixed()}${pastEnd ? ` (after its ${end.label})` : ""}`);
   }
   if (unclassified.length > 0) {
     throw new ReconcileInputError(
-      `each record on the date of a curated structural action, or past the merger or delisting that ends its entity's series, must be listed under supersedes (the structural action replaces it) or keeps (a separate, genuine action): ${unclassified.join("; ")}`,
+      `each record on the date of a curated structural action must be listed under its supersedes (the structural action replaces it) or keeps (a separate, genuine action), and each after a merger or delisting ends its entity's series under that action's supersedes, by exDate: ${unclassified.join("; ")}`,
     );
   }
 

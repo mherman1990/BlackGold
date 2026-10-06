@@ -1636,6 +1636,14 @@ after that. So:
 - in the reconciler, the terminal action classifies every record dated after the end, a merger's own date
   included, and may only supersede them. A payout made with the merger or on delisting belongs in
   `terms.cashPerShare` or `finalPrice`. A kept or unclassified one, or a spin-off past the end, refuses the run.
+- **Selectors are dated.** A `{ source, kind }` names the record on the action's own date. Only a merger or
+  delisting may add an `exDate`, and only a date after its series end. So a delisting can keep a genuine
+  last-day dividend while superseding a later payout from the same source, and no other action's list can
+  classify a record after the end.
+- A terminal action outside the window still ends the series inside it. It is not written, so a record or
+  spin-off after it inside the window refuses the run, and it counts towards one terminal action per entity.
+- Ingest checks within one file. That is enough here, because the evaluation store takes exactly one
+  reconciled file (D-57(b)).
 
 A source reporting the same record twice is refused before anything is classified, so a duplicate cannot hide
 among set-aside records.

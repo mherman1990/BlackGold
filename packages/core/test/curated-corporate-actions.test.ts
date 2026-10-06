@@ -136,5 +136,13 @@ describe("parseCuratedStructural", () => {
     // The same-day classification names a record by a real source and a reconciled kind.
     expect(bad({ actions: [{ action: SPINOFF, sources: ["issuer:a"], supersedes: [{ source: "SSGA", kind: "CASH_DIVIDEND" }] }] })).toThrow(/issuer:, exchange: or vendor:/);
     expect(bad({ actions: [{ action: SPINOFF, sources: ["issuer:a"], keeps: [{ source: "vendor:tiingo-eod", kind: "SPINOFF" }] }] })).toThrow(CuratedInputError);
+    expect(bad({ actions: [{ action: SPINOFF, sources: ["issuer:a"], supersedes: [{ source: "vendor:tiingo-eod", kind: "CASH_DIVIDEND", exDate: "09/21/2016" }] }] })).toThrow(/exDate: must be a YYYY-MM-DD date/);
+    expect(bad({ actions: [{ action: SPINOFF, sources: ["issuer:a"], supersedes: [{ source: "vendor:tiingo-eod", kind: "CASH_DIVIDEND", exDate: "2016-02-30" }] }] })).toThrow(/must be a YYYY-MM-DD date/);
+  });
+
+  it("reads a dated selector, which a merger or delisting uses for a record after its series ends", () => {
+    const DELISTING = { kind: "DELISTING", entityId: "XLF", lastTradeDate: "2016-09-16", reason: "liquidated", finalPrice: "24" };
+    const entries = parseCuratedStructural(utf8(JSON.stringify({ actions: [{ action: DELISTING, sources: ["issuer:a"], supersedes: [{ source: "vendor:tiingo-eod", kind: "CASH_DIVIDEND", exDate: "2016-09-21" }] }] })), { file: "s.json" });
+    expect(entries[0]?.supersedes).toEqual([{ source: "vendor:tiingo-eod", kind: "CASH_DIVIDEND", exDate: "2016-09-21" }]);
   });
 });

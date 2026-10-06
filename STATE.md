@@ -19,13 +19,16 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
     name.
   - **The reconciler** now takes an ordered list of preferred sources. It writes curated structural actions as
     given and sets aside any same-day cash or split record.
-  - Tests: 1145 pass; 63 of 63 deliberate faults caught.
+  - Tests: 1149 pass; 74 of 74 deliberate faults caught.
   - **Round 4:** the owner now classifies every same-day record on a structural action's date as `supersedes`
     (set aside) or `keeps` (reconciled). An unclassified one refuses the run, because setting all of them aside
     could drop a genuine dividend.
   - **Round 11:** nothing may be dated after a merger or delisting ends an entity's series, which ignores it.
     Ingest refuses one; in the reconciler the terminal action classifies those records and may only supersede
     them. A duplicate record is refused before anything is set aside.
+  - **Codex was rate-limited after round 11, so an independent review stood in.** It found three holes, now
+    closed: selectors are dated, so lists can't reach across dates or actions; and a terminal action outside the
+    window still ends the series inside it.
   - **Codex's findings over three rounds are fixed.** Two are new in round 3:
     - a SPINOFF without `childFirstClose` is refused, since the series would leave its value uncredited;
     - a split needs both NAV rows to be trading sessions. The real files hold rows on the 2012 Sandy closure and
