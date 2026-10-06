@@ -85,7 +85,7 @@ describe("parseCuratedActions", () => {
     const vendor = { source: "vendor:tiingo-eod", kind: "CASH_DIVIDEND" as const, entityId: "VTI", exDate: isoDate("2010-03-24"), amount: new Dec("0.49"), locator: "tiingo" };
     const { file } = reconcileCorporateActions([...curated, vendor], {
       dataset: "d",
-      window: { from: isoDate("2007-06-01"), to: isoDate("2018-12-31") },
+      windows: [{ from: isoDate("2007-06-01"), to: isoDate("2018-12-31") }],
       entities: ["VTI"],
       preferredSources: ["issuer:vanguard-distributions", "issuer:vanguard-annual-report"],
       amountTolerance: new Dec("0.0001"),

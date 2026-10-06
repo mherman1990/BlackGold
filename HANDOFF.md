@@ -7,7 +7,7 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 1149 tests (unit 1082, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
+4. `npm ci && npm run check`. All of lint, typecheck, 1157 tests (unit 1090, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
 
 ## 2. Repository guard
 
@@ -17,7 +17,18 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 **Newest first (2026-10-06).**
 
-- **D-58 and D-57 PR-B1: the issuer readers, the curated format, and structural pass-through.**
+- **D-57 PR-B2: `reconcile corporate-actions`** (`ingest/reconcile-corporate-actions.ts`).
+  - **It reads Tiingo from the store it runs against, and that must be the research store.** It refuses a store
+    with no Tiingo rows. Never point it at the evaluation store.
+  - **Never make it write observations.** Its only writes are the two new files, artifacts, and one ledger event.
+  - **Never let it overwrite an output:** a signed file sits at a path a careless rerun could reuse.
+  - **The windows come from the charter through `featureLoadStart`,** the same function `computeFeatures` uses.
+    Never compute the warm-up separately, or the two will drift.
+  - **The reconciler takes several windows** (RECONCILE_VERSION 5), so the sealed stretch between DESIGN and
+    RECENT is neither read nor reported missing.
+  - **D-57's remaining steps are the owner's:** curate, sign, ingest into a fresh store, snapshot, register.
+
+- **D-58 and D-57 PR-B1 (merged, PR #114): the issuer readers, the curated format, and structural pass-through.**
   - **D-58 fixes where each second source comes from:**
     - State Street is fetched;
     - iShares and Vanguard are owner-downloaded files, **never fetched by code**, because their terms bar it;
@@ -50,7 +61,7 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
     ends the series inside it.
   - **A split also needs both NAV rows to be trading sessions.** SSGA's files carry rows on the 2012 Sandy closure
     and on Good Friday 2014; these are listed as `nonSessionDates`.
-  - **Next: PR-B2.**
+  - **PR-B2 (above) built the rest:**
     - Fetch the SSGA distribution workbook and each in-scope fund's NAV history through the allowlisted client.
     - Read Tiingo's records **from the research store** (`sourceActionsFromObservations` on its `tiingo/`
       locators). Never ingest Tiingo actions into the evaluation store (D-57(b)).

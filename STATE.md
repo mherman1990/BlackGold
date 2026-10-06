@@ -2,7 +2,26 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-10-06 (second pass) by Claude Code. **D-58 is decided and D-57 PR-B1 is built: the issuer readers, the owner-curated format, and structural pass-through.**
+**Last updated:** 2026-10-06 (third pass) by Claude Code. **D-57 PR-B2 is built: `reconcile corporate-actions` writes the unsigned vendored file for a charter, and the report Matt curates and audits from.**
+
+- **Scope** comes from the charter: universe, cash and benchmarks, over DESIGN and RECENT. Each window is led by the
+  feature warm-up (`featureLoadStart`, now shared with `computeFeatures`), so the windows open 2006-03-22 and
+  2023-10-23.
+- **Inputs:**
+  - Tiingo's rows from the research store; it refuses a store without them;
+  - State Street, fetched;
+  - the owner's Vanguard and iShares downloads, curated CSV and structural JSON.
+- **Outputs:** two new files and never an overwrite, an artifact per input, and one ledger event. No observation.
+- **`toCurate`** in the report is Matt's exact work list.
+- **Tests:** 1157 pass (unit 1090, policy 41, temporal 26); 16 of 16 deliberate faults caught.
+- **Matt's next acts:**
+  - run it on the Pi against the research store;
+  - curate the `toCurate` rows and rerun;
+  - audit the result and sign it;
+  - ingest it into a fresh evaluation store;
+  - snapshot and register.
+
+**2026-10-06 (second pass).** **D-58 is decided and D-57 PR-B1 is merged (PR #114, `63504d8`, merged by Matt): the issuer readers, the owner-curated format, and structural pass-through.**
 
 - **D-58 (Matt, "use your recommendations on all three").**
   - Black Gold fetches State Street only.

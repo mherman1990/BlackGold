@@ -100,4 +100,8 @@ book([NAV_HEADER, ["02-Dec-2025", 50.0, 100, 5000]], "navhist").save(OUT + "navh
 nav_book("XLK", [["02-Dec-2025", 50.0, 100, 5000], ["02-Dec-2025", 51.0, 100, 5100]]).save(OUT + "navhist-dupdate.xlsx")
 nav_book("XLK", [["02-Dec-2025", "n/a", 100, 5000]]).save(OUT + "navhist-badnav.xlsx")
 
+# Quiet NAV histories for the other funds in distributions.xlsx, so a full reconcile run has one per fund.
+for t in ["XLF", "SPY", "BIL"]:
+    nav_book(t, [["03-Dec-2025", 50.10, 1000000, 50100000], ["02-Dec-2025", 50.00, 1000000, 50000000]]).save(OUT + f"navhist-{t.lower()}.xlsx")
+
 print("wrote distributions*.xlsx and navhist-*.xlsx")

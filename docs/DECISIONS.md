@@ -1651,6 +1651,19 @@ among set-aside records.
 **Claude Code's limits are unchanged.** It never fills a curated value it has not been given, and it never signs
 the reconciled file.
 
+**Progress (2026-10-06).**
+
+- **PR-B1 is built and merged:** the issuer readers, the curated format, and structural pass-through.
+- **PR-B2 builds `reconcile corporate-actions`**, which takes everything it reconciles from the charter:
+  - **Windows:** DESIGN and RECENT, each led by the warm-up `computeFeatures` reads. That is 435 calendar days for
+    this charter, counted from the session before each window opens, so the windows open 2006-03-22 and 2023-10-23. The holdout's middle is never read.
+  - **Tiingo:** read from the research store and written nowhere. It refuses a store with no Tiingo rows, because
+    that store would be the evaluation store.
+  - **State Street:** fetched.
+  - **The owner's files:** the iShares and Vanguard downloads and the curated actions, read from disk.
+- **What it writes:** the unsigned file, a report whose `toCurate` lists every action only Tiingo reports, an
+  artifact for every input, and one ledger event. It appends no observation, and it never overwrites an output.
+
 ---
 
 ## Rejected

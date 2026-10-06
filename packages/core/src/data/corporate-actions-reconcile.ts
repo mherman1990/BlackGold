@@ -14,7 +14,7 @@ import { corporateActionsHash } from "./adapters/corporate-actions.ts";
  *
  * **Nothing is dropped.** A dividend that only one source reports, or that two sources report differently, is
  * still a dividend the total-return series needs; leaving it out would silently understate every return that
- * spans it. So every action in the window goes into the file. One that at least two sources agree on names them
+ * spans it. So every action in the windows goes into the file. One that at least two sources agree on names them
  * all in `sources`; one that they do not is written with the single source whose value it carries, which ingest
  * flags `UNVERIFIED_SINGLE_SOURCE` - so any run touching it stays uncitable - and it is listed in the report for
  * the owner to resolve. Reconciliation can make the evidence citable; it can never make it look better than it is.
@@ -32,13 +32,14 @@ import { corporateActionsHash } from "./adapters/corporate-actions.ts";
  * it also classifies every record dated after that - naming each by `exDate`, a merger's own date included - and
  * may only supersede them: a distribution paid with a merger or on delisting belongs in the terminal value
  * (`terms.cashPerShare`, `finalPrice`), and a kept one, or a spin-off, past the end would be written, verified, and
- * never applied. One outside the window is not written, so a record after it inside the window refuses the run.
+ * never applied. One outside the windows is not written, so a record after it inside them refuses the run.
  */
 /**
  * 2 added structural pass-through and issuer sources (D-58); 3 classifies records past a series end; 4 names them
- * by date and counts a terminal action outside the window. Every change to the output bumps this.
+ * by date and counts a terminal action outside the window; 5 reconciles over several windows. Every change to the
+ * output bumps this.
  */
-export const RECONCILE_VERSION = 4;
+export const RECONCILE_VERSION = 5;
 
 type SourceBase = {
   /** Written into `sources`, e.g. `vendor:tiingo-eod` or `issuer:ssga-distributions`. */
@@ -84,8 +85,12 @@ const STRUCTURAL_KINDS = new Set(["SPINOFF", "MERGER", "DELISTING"]);
 
 export type ReconcileOptions = {
   dataset: string;
-  /** Inclusive ex-date window. Records outside it are ignored on every side, so a longer history is not "one-sided". */
-  window: { from: IsoDate; to: IsoDate };
+  /**
+   * Inclusive ex-date windows - for a charter, each evaluated window with its feature warm-up in front. Records in
+   * none of them are ignored on every side, so a longer history is not "one-sided", and the sealed stretch between
+   * windows that no decision reads is left out rather than reported as missing.
+   */
+  windows: readonly { from: IsoDate; to: IsoDate }[];
   /** Entities in scope. A record for any other entity is ignored. */
   entities: readonly string[];
   /**
@@ -134,7 +139,7 @@ export type ReconcileReport = {
   dataset: string;
   sources: string[];
   preferredSources: string[];
-  window: { from: IsoDate; to: IsoDate };
+  windows: { from: IsoDate; to: IsoDate }[];
   entities: string[];
   amountTolerance: string;
   counts: { actions: number; verified: number; singleSource: number; structural: number; disagreements: number; oneSided: number; setAside: number };
@@ -144,9 +149,9 @@ export type ReconcileReport = {
   oneSided: ReconcileFinding[];
   /** Every entity and date with a curated structural action, and what happened to the records on it. */
   setAside: SetAsideFinding[];
-  /** Curated structural actions not written because they fall outside the entities or the window: listed, never silent. */
+  /** Curated structural actions not written because they fall outside the entities or the windows: listed, never silent. */
   structuralOutOfScope: { index: number; kind: string; entityId: string; exDate: IsoDate; reason: string }[];
-  /** Per entity, how many actions each source reported in the window: a source that is silent for an entity is visible here. */
+  /** Per entity, how many actions each source reported in the windows: a source that is silent for an entity is visible here. */
   perEntity: { entityId: string; bySource: Record<string, number>; verified: number; singleSource: number }[];
 };
 
@@ -199,12 +204,14 @@ const shownId = (id: string): string => id.split("|").slice(1).join(" ");
 
 type SeriesEnd = { label: string; lastDate: IsoDate };
 
+const inAny = (windows: ReconcileOptions["windows"], d: IsoDate): boolean => windows.some((w) => d >= w.from && d <= w.to);
+
 /** Validate the curated structural entries; return the in-scope ones with their entity, kind and date. */
-function structuralInScope(entries: readonly StructuralEntry[], entities: ReadonlySet<string>, window: { from: IsoDate; to: IsoDate }) {
+function structuralInScope(entries: readonly StructuralEntry[], entities: ReadonlySet<string>, windows: ReconcileOptions["windows"]) {
   const out: { key: string; day: string; entityId: string; exDate: IsoDate; kind: string; entry: Entry; supersedes: Set<string>; keeps: Set<string> }[] = [];
   const seen = new Set<string>();
   // The series ends an entity at its first MERGER or DELISTING and ignores any other, so at most one may be given -
-  // written or not: one outside the window still ends the series inside it.
+  // written or not: one outside the windows still ends the series inside them.
   const ends = new Map<string, SeriesEnd & { written: boolean }>();
   const outOfScope: ReconcileReport["structuralOutOfScope"] = [];
   for (const [i, s] of entries.entries()) {
@@ -231,7 +238,7 @@ function structuralInScope(entries: readonly StructuralEntry[], entities: Readon
       outOfScope.push({ index: i, kind: action.kind, entityId, exDate, reason: "entity not in scope" });
       continue;
     }
-    const inWindow = exDate >= window.from && exDate <= window.to;
+    const inWindow = inAny(windows, exDate);
     const lastDate = action.kind === "MERGER" || action.kind === "DELISTING" ? seriesLastDate(action) : undefined;
     if (lastDate !== undefined) {
       const earlier = ends.get(entityId);
@@ -239,7 +246,7 @@ function structuralInScope(entries: readonly StructuralEntry[], entities: Readon
       ends.set(entityId, { label: `${action.kind} ${exDate}`, lastDate, written: inWindow });
     }
     if (!inWindow) {
-      outOfScope.push({ index: i, kind: action.kind, entityId, exDate, reason: "outside the window" });
+      outOfScope.push({ index: i, kind: action.kind, entityId, exDate, reason: "outside the windows" });
       continue;
     }
     const key = keyOf({ entityId, kind: action.kind, exDate });
@@ -299,7 +306,9 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
   if (opts.preferredSources.length === 0) throw new ReconcileInputError("name at least one preferred source");
   if (!opts.preferredSources.some((p) => sources.includes(p))) throw new ReconcileInputError(`none of the preferred sources (${opts.preferredSources.join(", ")}) supplied records`);
 
-  const { inScope: structural, outOfScope: structuralOutOfScope, ends } = structuralInScope(opts.structural ?? [], entities, opts.window);
+  if (opts.windows.length === 0) throw new ReconcileInputError("name at least one ex-date window");
+  for (const w of opts.windows) if (w.to < w.from) throw new ReconcileInputError(`window ${w.from}..${w.to} ends before it starts`);
+  const { inScope: structural, outOfScope: structuralOutOfScope, ends } = structuralInScope(opts.structural ?? [], entities, opts.windows);
   // Which action, by its day, set aside or kept each record it names. Names are dated, so lists never overlap by accident.
   const supersededBy = new Map<string, string>();
   const keptBy = new Map<string, string>();
@@ -318,7 +327,7 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
     throw new ReconcileInputError(`the structural actions on ${day.replace("|", " ")} disagree: one supersedes and another keeps ${contradicted.map(shownId).join(", ")}`);
   }
 
-  const inWindow = records.filter((r) => entities.has(r.entityId) && r.exDate >= opts.window.from && r.exDate <= opts.window.to);
+  const inWindow = records.filter((r) => entities.has(r.entityId) && inAny(opts.windows, r.exDate));
   // Before anything is classified, so a duplicate is refused even where it would be set aside.
   const seenRecords = new Set<string>();
   for (const r of inWindow) {
@@ -326,14 +335,14 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
     if (seenRecords.has(id)) throw new ReconcileInputError(`${r.source} reports ${keyOf(r)} twice; sum a distribution's components into one record before reconciling`);
     seenRecords.add(id);
   }
-  // A terminal action outside the window is not written, so nothing can classify a record after it: refuse.
+  // A terminal action outside the windows is not written, so nothing can classify a record after it: refuse.
   const beyondUnwritten = inWindow.filter((r) => {
     const end = ends.get(r.entityId);
     return end !== undefined && !end.written && r.exDate > end.lastDate;
   });
   if (beyondUnwritten.length > 0) {
     throw new ReconcileInputError(
-      `the series ignores anything after a merger's target stops trading or a delisted entity's last trade, and these fall after one outside the window: ${beyondUnwritten.map((r) => `${r.entityId} ${r.exDate}: ${r.source} ${r.kind} ${valueOf(r).toFixed()} (after its ${ends.get(r.entityId)?.label ?? ""})`).join("; ")}`,
+      `the series ignores anything after a merger's target stops trading or a delisted entity's last trade, and these fall after one outside the windows: ${beyondUnwritten.map((r) => `${r.entityId} ${r.exDate}: ${r.source} ${r.kind} ${valueOf(r).toFixed()} (after its ${ends.get(r.entityId)?.label ?? ""})`).join("; ")}`,
     );
   }
   const setAsideByDay = new Map<string, SetAsideFinding>();
@@ -443,7 +452,7 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
   const perEntity = [...entities].sort().map((entityId) => {
     const bySource: Record<string, number> = {};
     for (const s of reportSources) {
-      // Every record a source reported in the window, set-aside ones included: the audit compares these with setAside.
+      // Every record a source reported in the windows, set-aside ones included: the audit compares these with setAside.
       bySource[s] = inWindow.filter((r) => r.entityId === entityId && r.source === s).length + structural.filter((x) => x.entityId === entityId && x.entry.sources.includes(s)).length;
     }
     const mine = entries.filter((e) => actionEntityId(corporateActionFromValue(e.action)) === entityId);
@@ -455,7 +464,7 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
     dataset: opts.dataset,
     sources: reportSources,
     preferredSources: [...opts.preferredSources],
-    window: opts.window,
+    windows: opts.windows.map((w) => ({ from: w.from, to: w.to })),
     entities: [...entities].sort(),
     amountTolerance: opts.amountTolerance.toFixed(),
     counts: {
@@ -476,7 +485,7 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
 
   const file: ReconciledFile = {
     dataset: opts.dataset,
-    notes: `Machine-reconciled (reconcile v${RECONCILE_VERSION}) from ${reportSources.join(", ")} over ex-dates ${opts.window.from}..${opts.window.to}, cash tolerance ${opts.amountTolerance.toFixed()} per share, preferred sources ${opts.preferredSources.join(" > ")}, with ${structural.length} owner-curated structural action(s). ${verifiedCount} of ${entries.length} actions are confirmed by two or more sources; the rest carry one source and are flagged UNVERIFIED_SINGLE_SOURCE on ingest. UNSIGNED: ingest refuses this file until the owner audits it against its report and fills approval.approvedBy and approval.approvedAt (D-57).`,
+    notes: `Machine-reconciled (reconcile v${RECONCILE_VERSION}) from ${reportSources.join(", ")} over ex-dates ${opts.windows.map((w) => `${w.from}..${w.to}`).join(" and ")}, cash tolerance ${opts.amountTolerance.toFixed()} per share, preferred sources ${opts.preferredSources.join(" > ")}, with ${structural.length} owner-curated structural action(s). ${verifiedCount} of ${entries.length} actions are confirmed by two or more sources; the rest carry one source and are flagged UNVERIFIED_SINGLE_SOURCE on ingest. UNSIGNED: ingest refuses this file until the owner audits it against its report and fills approval.approvedBy and approval.approvedAt (D-57).`,
     approval: { approvedBy: null, approvedAt: null, actionsHash },
     actions: entries,
   };
