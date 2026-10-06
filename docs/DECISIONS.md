@@ -57,6 +57,7 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-55 | Liquidity and order-level limits. A decision-time liquidity check (ADV and price floors, fail-closed) is the decision gate's fourth verdict. A pure order-level predicate (size, ADV participation, spread, long-only, per-session counts, turnover) is built but not wired. The per-position initial-risk budget is not built, because the charter has no stop. Six conflicts between `risk.yaml`, the charter and the synthetic shadow book are the owner's | **Proposed** 2026-10-05 by Claude Code (Matt: "start on the liquidity and order-level limits"). Conflicts 1, 4 and 6 resolved under D-56; 2, 3 and 5 open | Wiring the order-level predicate (conflicts 2 and 3) |
 | D-56 | The etf-trend-vol 0.3.0 charter bundle: keep the Sharpe-difference primary metric and add F2 as a promotion co-gate on chain-linked curves (OD-5, OD-6); a failed primary with Secondary 2 beaten goes to owner review, never ACTIVE (OD-7); §14.3's minimum restated as the schedule's capacity, 100 (OD-8); Secondary 2's two readings confirmed (OD-9); the prospective clock runs from registration (OD-10) | **Accepted** 2026-10-05 by Matt (answers in session), including D-55's conflicts 1, 4 and 6 folded in as OD-11 to OD-13; **owner-signed** 2026-10-05 with `charter_version` 0.3.0 (`code_commit 58d4474`) and `risk.yaml` 0.2.0, merged as PR #111 | - |
 | D-57 | B-2: Claude Code may build a second automated public corporate-actions adapter plus a machine reconciler, and the owner audits and approves the reconciled ≥2-source file per universe before ingest; the citable evaluation runs from a separate store with no Tiingo action rows | **Accepted** 2026-10-05 by Matt. Amends D-29 and D-49 | Citable evidence (approval gate and reconciler built 2026-10-06; the second-source adapter waits on the owner's source decisions) |
+| D-58 | D-57's second corporate-actions sources: SSGA is fetched automatically; BlackRock (IWM) and Vanguard (VTI, VTV, VUG) are read only from files the owner downloads; the gaps no issuer feed covers (VTI/VTV/VUG before 2016-12, and all of QQQ) close with owner-curated entries from the issuers' own documents; Nasdaq's feed is not used | **Accepted** 2026-10-06 by Matt ("use your recommendations on all three"). Scopes D-57 | Citable evidence |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -1577,6 +1578,78 @@ and the owner's ACTIVE acceptance, not the clock. Per `HANDOFF.md` §5 the recon
   - The owner decides:
     - which issuers may be fetched automatically, given their terms;
     - how those gaps close.
+
+---
+
+## D-58 Where D-57's second corporate-actions source comes from
+
+**Status:** Accepted 2026-10-06 by Matt: "use your recommendations on all three", answering the three questions in
+`docs/analysis/2026-10-06-d57-second-source-survey.md`. Scopes D-57; changes nothing it decided.
+
+1. **Automated fetching: SSGA only.**
+   - Black Gold fetches State Street's all-funds distribution workbook and each SPDR fund's NAV history from
+     `www.ssga.com`, which is already on the egress allowlist. This covers the nine SPDR funds and SPY.
+   - **BlackRock and Vanguard are never fetched by code.** Their terms ban robots and repeated automated access.
+     The owner downloads their files in a browser (iShares' fund workbook for IWM, Vanguard's distribution JSON for
+     VTI, VTV and VUG), and the same parsers read them locally, with no egress.
+2. **The gaps close with owner-curated entries.**
+   - Gaps: VTI, VTV and VUG before 2016-12 (Vanguard's file holds its latest 40 distributions only), and all of QQQ
+     (Invesco blocks automated access and offers no file the survey could find).
+   - The owner records each distribution from the issuer's own documents in a curated file, one row per
+     distribution, naming the document. The reconciler treats that file as one more source.
+   - This is the original D-29 path, kept for the part no feed reaches.
+3. **Nasdaq's dividend API is not used,** since its `robots.txt` disallows everything.
+
+**Splits.** SSGA's distribution workbook lists none, so SSGA splits come from its NAV history:
+- a split is read only where the one-day NAV ratio and the shares-outstanding ratio both sit near the same
+  standard ratio;
+- any other large one-day jump is reported, never turned into a record.
+
+Splits at the other issuers come from curated entries.
+
+**Structural actions** (spin-offs, mergers, delistings) are curated by the owner and passed through the reconciler
+as written.
+
+**A cash or split record on the same entity and date is ambiguous.** It may be the structural action in another
+source's columns: SSGA lists the XLF → XLRE spin-off as a 0.139146 row on 2016-09-19 in its dollar column.
+Writing that would count the event twice. It may also be a genuine action of its own, and dropping that would lose
+it. Neither default is safe, so the owner classifies each such record in the curated entry:
+- `supersedes` sets it aside, and it is reported but not written;
+- `keeps` reconciles it as usual.
+
+An unclassified one stops the run (Codex, PR #114).
+
+**A structural action must be one the total-return series can value.** Ingest and the reconciler refuse three
+cases where the series would only warn and value it wrongly (Codex, PR #114):
+- a spin-off without `childFirstClose`, whose value is never credited;
+- a merger paying stock (`terms.stockRatio`), whose stock leg is ignored;
+- a delisting with no stated `finalPrice`, which is read as zero. Write `"0"` if holders received nothing. A
+  negative price is refused too.
+
+They also refuse a second MERGER or DELISTING for one entity. The series ends the entity at its first terminal
+action and would ignore any other.
+
+**Nothing may be dated after the series ends** (Codex, PR #114). A merger's target trades until the day before it
+takes effect, and a delisted entity until its last trade date; the series ignores any dividend, split or spin-off
+after that. So:
+- ingest refuses one in the same file as the terminal action;
+- in the reconciler, the terminal action classifies every record dated after the end, a merger's own date
+  included, and may only supersede them. A payout made with the merger or on delisting belongs in
+  `terms.cashPerShare` or `finalPrice`. A kept or unclassified one, or a spin-off past the end, refuses the run.
+- **Selectors are dated.** A `{ source, kind }` names the record on the action's own date. Only a merger or
+  delisting may add an `exDate`, and only a date after its series end. So a delisting can keep a genuine
+  last-day dividend while superseding a later payout from the same source, and no other action's list can
+  classify a record after the end.
+- A terminal action outside the window still ends the series inside it. It is not written, so a record or
+  spin-off after it inside the window refuses the run, and it counts towards one terminal action per entity.
+- Ingest checks within one file. That is enough here, because the evaluation store takes exactly one
+  reconciled file (D-57(b)).
+
+A source reporting the same record twice is refused before anything is classified, so a duplicate cannot hide
+among set-aside records.
+
+**Claude Code's limits are unchanged.** It never fills a curated value it has not been given, and it never signs
+the reconciled file.
 
 ---
 

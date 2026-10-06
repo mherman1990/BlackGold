@@ -7,7 +7,7 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 1111 tests (unit 1044, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
+4. `npm ci && npm run check`. All of lint, typecheck, 1149 tests (unit 1082, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
 
 ## 2. Repository guard
 
@@ -16,6 +16,48 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 ## 3. Current position
 
 **Newest first (2026-10-06).**
+
+- **D-58 and D-57 PR-B1: the issuer readers, the curated format, and structural pass-through.**
+  - **D-58 fixes where each second source comes from:**
+    - State Street is fetched;
+    - iShares and Vanguard are owner-downloaded files, **never fetched by code**, because their terms bar it;
+    - the rest is owner-curated;
+    - Nasdaq is not used.
+  - **Modules:**
+    - `data/adapters/ssga-distributions.ts`: the distribution workbook, and splits read from NAV history;
+    - `vanguard-distributions.ts` and `ishares-distributions.ts`;
+    - `data/curated-corporate-actions.ts`: the curated CSV and structural JSON.
+  - **The reconciler** takes `preferredSources` in priority order (RECONCILE_VERSION 4).
+  - **Never let a curated row use an automated adapter's source name.** That is what keeps one source from
+    passing as two.
+  - **Never turn a NAV jump into a split** unless both ratios fit and the two rows are adjacent trading sessions;
+    the exact-ratio match against Tiingo is the backstop.
+  - **An action field its kind does not read is refused,** at ingest and in the reconciler (Codex, PR #114). The
+    read path ignores unknown keys, so a misspelled `childFirstClose` would otherwise be signed and then silently
+    dropped from the parent's total return.
+  - **So is a structural action the series cannot value** (`unvaluedActionReason`): a SPINOFF with no
+    `childFirstClose`, a MERGER paying stock, or a DELISTING with no stated `finalPrice`. In each case the series
+    only warns and values it wrongly.
+  - **Same-day records on a structural action's date are classified by the owner** (`supersedes` / `keeps`), and
+    an unclassified one refuses the run. Never go back to setting them all aside, which loses genuine actions, or
+    writing them all, which double-counts the spin-off.
+  - **Nothing may be dated after a terminal action's series end** (`seriesLastDate`): the day before a merger takes
+    effect, or a delisting's last trade date. Ingest refuses it; the reconciler lets the terminal action only
+    supersede it, so a real payout is folded into `cashPerShare` or `finalPrice`.
+  - **Selectors are dated** (`RecordSelector.exDate`, only on a terminal action, only past its end). Never go back
+    to undated selectors that span dates: they let a delisting's list swallow a genuine last-day dividend, and a
+    same-day spin-off's list classify the delisting's later records. A terminal action outside the window still
+    ends the series inside it.
+  - **A split also needs both NAV rows to be trading sessions.** SSGA's files carry rows on the 2012 Sandy closure
+    and on Good Friday 2014; these are listed as `nonSessionDates`.
+  - **Next: PR-B2.**
+    - Fetch the SSGA distribution workbook and each in-scope fund's NAV history through the allowlisted client.
+    - Read Tiingo's records **from the research store** (`sourceActionsFromObservations` on its `tiingo/`
+      locators). Never ingest Tiingo actions into the evaluation store (D-57(b)).
+    - Read the owner's files.
+    - Write the unsigned file and the report.
+
+**2026-10-06, first pass.**
 
 - **D-57 PR-A: the approval gate and the reconciler.**
   - **The approval gate:**

@@ -145,6 +145,90 @@ The owner fills `approvedBy` and `approvedAt` after auditing the file against th
 Code never does. Editing an action afterwards invalidates the signature, so make corrections first, recompute
 the hash, then sign.
 
+### Where the second source comes from (D-58)
+
+The reconciler compares Tiingo's records with an issuer's. Per D-58, an issuer source arrives in one of three
+ways.
+
+**Fetched by Black Gold:** State Street (XLK XLF XLV XLI XLP XLU XLY, BIL, SPY). This covers distributions, plus
+splits read from each fund's NAV history.
+
+**Downloaded by you, in a browser, then passed as files.** Black Gold never fetches these, because the sites'
+terms bar automated access.
+
+- **IWM:** on the iShares Russell 2000 ETF page, choose "Detailed Holdings and Analytics". It saves as
+  `iShares-Russell-2000-ETF_fund.xls`.
+- **VTI, VTV, VUG:** open each URL below and save the JSON it shows. The file does not name its fund, so keep the
+  fund in the file name.
+
+  ```
+  https://advisors.vanguard.com/investments/products/api/funds/0970/pricing/distributions   (VTI)
+  https://advisors.vanguard.com/investments/products/api/funds/0966/pricing/distributions   (VTV)
+  https://advisors.vanguard.com/investments/products/api/funds/0967/pricing/distributions   (VUG)
+  ```
+
+  These reach back only to late 2016.
+
+**Curated by you,** for what no feed reaches. Record each distribution from the issuer's own documents (annual or
+semi-annual reports, distribution notices) in a CSV laid out like
+`config/examples/curated-corporate-actions.example.csv`.
+
+**Wait for the reconcile report before you start.** It lists every action only Tiingo reports, by fund and
+ex-date, and that list is exactly what needs a curated row. Look each one up in the issuer's document and record
+what the document says, not Tiingo's figure: a copied number is one source counted twice.
+
+The ranges below cover each window plus its **feature warm-up**. The longest feature needs 253 sessions, so the
+code reads bars and corporate actions 435 calendar days before a window's first decision. The RECENT warm-up
+therefore reaches into 2023. That is not opening the holdout: evaluation already reads those bars, and a
+dividend missing from a warm-up would quietly understate every early momentum reading.
+
+- **VTI, VTV and VUG:** every distribution with an ex-date from late March 2006 through 2016-11-30, about 43 per fund.
+  Add VTI's June 2008 split as a `SPLIT` row.
+- **QQQ:** every distribution with an ex-date from late March 2006 through 2018-12-31, or from late October 2023 through 2026-09-06, about 63.
+  Nothing in between: no decision reads it. If Invesco's QQQ page offers a distribution-history download, save
+  that instead; a reader for it is a small addition and saves the typing.
+
+That is about 190 rows. In each row:
+- `value` is the TOTAL per share that went ex that day, income and capital gains summed;
+- `source` names the publisher, e.g. `issuer:vanguard-annual-report`;
+- `document` names the page the number came from.
+
+The reconciler checks each row against Tiingo. One that agrees is verified; one that does not is written
+single-sourced and listed in the report for you to settle.
+
+**Structural actions** (spin-offs, mergers, delistings) go in a separate JSON file, laid out like
+`config/examples/curated-structural.example.json`. It holds the XLF → XLRE spin-off, which needs:
+- its ratio and date checked against State Street's notice;
+- **XLRE's first close** (`childFirstClose`). It is required: without it the spun-off value never reaches XLF's
+  total return.
+
+Other structural actions have the same kind of rule: a merger must be cash-only, and a delisting must state
+`finalPrice`, as `"0"` if holders got nothing. The total-return series cannot value the alternatives, so ingest
+refuses them.
+
+The reconciler writes each structural action as given.
+
+**Classify every same-day record.** Any source may report a cash or split record on a structural action's entity
+and date, and each one must be listed:
+- under `supersedes` if it *is* the structural action in another guise. For example, State Street lists the
+  spin-off's share ratio in its dividend column. These are set aside.
+- under `keeps` if it is a separate, genuine action. These are reconciled as usual.
+
+The reconciler refuses to run while any such record is unclassified, and names each one.
+
+**A merger or delisting also classifies everything after it.** The total-return series ends a merged fund the day
+before the merger takes effect, and a delisted one on its last trade date, and ignores anything dated later. So
+every cash or split record after that point, the merger's own date included, must be listed under the terminal
+action's `supersedes`; it cannot be kept. If it is a real payout, add it to the merger's `terms.cashPerShare` or the
+delisting's `finalPrice` first.
+
+Name a record on a later date with its `exDate`, for example
+`{ "source": "vendor:tiingo-eod", "kind": "CASH_DIVIDEND", "exDate": "2016-09-21" }`. Without one, a selector means
+the action's own date. A delisting can therefore keep a genuine dividend on its last trade date and supersede a
+later payout from the same source.
+
+The command that runs all of this and writes the unsigned file plus its report is the next PR (D-57 PR-B2).
+
 ## Step 2c — or load corporate actions automatically from Tiingo (D-49, research-only)
 
 If you are pulling bars from Tiingo (`ingest tiingo-bars`, deeper history than the free IEX feed — see

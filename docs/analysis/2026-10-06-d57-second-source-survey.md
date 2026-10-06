@@ -1,6 +1,16 @@
 # D-57: where a second corporate-actions source can come from
 
-**Date:** 2026-10-06. **Author:** Claude Code. **Status:** survey for PR-B. Nothing here is decided.
+**Date:** 2026-10-06. **Author:** Claude Code. **Status:** decided the same day: Matt accepted all three
+recommendations ("use your recommendations on all three"), recorded as **D-58**.
+
+**Correction to (a) below.** "Roughly 80 dividends" made two mistakes:
+- it assumed Nasdaq would cover QQQ from 2012-06;
+- it ignored feature warm-up. The longest feature needs 253 sessions, so the code reads corporate actions 435
+  calendar days before each window's first decision: from late March 2006 for DESIGN and from late October 2023 for RECENT (the reconcile command computes the exact days from the charter).
+
+With both corrected, the curation is **about 190 rows**:
+- VTI, VTV and VUG from late March 2006 through 2016-11-30, about 130;
+- QQQ from late March 2006 through 2018-12-31 and from late October 2023 through 2026-09-06, about 63.
 
 D-57 lets Claude Code build a second automated corporate-actions source that is independent of Tiingo, plus a
 reconciler that writes the ≥2-source file the owner signs. PR-A builds the reconciler and the signing gate.

@@ -1,4 +1,4 @@
-import { Dec, dec, isoDate, utc, type IsoDate, type UtcInstant } from "@blackgold/shared";
+import { addDays, Dec, dec, isoDate, utc, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import type { PointInTimeObservation } from "../data/pit/types.ts";
 
 /**
@@ -315,12 +315,15 @@ export function corporateActionFromValue(value: unknown): CorporateAction {
     }
     case "DELISTING": {
       const fp = value["finalPrice"];
+      const finalPrice = fp === null || fp === undefined ? null : num(fp, "finalPrice");
+      // A negative price would become negative terminal proceeds and a negative total-return index.
+      if (finalPrice?.isNegative()) throw new MalformedCorporateActionError("delisting finalPrice must be non-negative");
       return {
         kind: "DELISTING",
         entityId: str(value["entityId"], "entityId"),
         lastTradeDate: date(value["lastTradeDate"], "lastTradeDate"),
         reason: str(value["reason"], "reason"),
-        finalPrice: fp === null || fp === undefined ? null : num(fp, "finalPrice"),
+        finalPrice,
       };
     }
     case "STALE_BAR":
@@ -338,6 +341,57 @@ export function corporateActionFromValue(value: unknown): CorporateAction {
         volume: bigintFromJson(value["volume"], "volume"),
       };
   }
+}
+
+/**
+ * Keys in a hand-written action value that its kind never reads, as dotted paths (`terms.cashPershare`). The parser
+ * reads named fields and ignores the rest, so a misspelled OPTIONAL field - `childFirstclose` on a spin-off - would
+ * otherwise vanish without a word and take the spun-off value out of the parent's total-return series. A key counts
+ * as read only if it survives the round trip through the canonical serialization; a null value counts as absent.
+ */
+export function unreadActionKeys(value: Readonly<Record<string, unknown>>, action: CorporateAction): string[] {
+  const out: string[] = [];
+  const walk = (raw: Readonly<Record<string, unknown>>, canon: Readonly<Record<string, unknown>>, prefix: string): void => {
+    for (const [key, v] of Object.entries(raw)) {
+      if (v === null || v === undefined) continue;
+      if (!Object.hasOwn(canon, key)) {
+        out.push(`${prefix}${key}`);
+        continue;
+      }
+      const c = canon[key];
+      if (isRecord(v) && isRecord(c)) walk(v, c, `${prefix}${key}.`);
+    }
+  };
+  walk(value, corporateActionToValue(action), "");
+  return out.sort();
+}
+
+/**
+ * Why the total-return series could not value this action, or undefined when it can (D-58). In each of these cases
+ * `TotalReturnSeries` warns and moves on - a spin-off with no child close credits nothing, a merger's stock leg is
+ * ignored, a delisting with no final price is read as zero - so a vendored action that hits one would distort the
+ * entity's returns in a run that otherwise looks citable. Ingest and the reconciler refuse it instead.
+ */
+export function unvaluedActionReason(a: CorporateAction): string | undefined {
+  if (a.kind === "SPINOFF" && a.childFirstClose === undefined) {
+    return `the ${a.parent} -> ${a.child} SPINOFF needs childFirstClose, the child's first raw close, or its value never reaches ${a.parent}'s total return`;
+  }
+  if (a.kind === "MERGER" && a.terms.stockRatio !== undefined) {
+    return `the ${a.entityId} MERGER pays stock (terms.stockRatio), which the total-return series cannot value - it would credit the cash leg only`;
+  }
+  if (a.kind === "DELISTING" && a.finalPrice === null) {
+    return `the ${a.entityId} DELISTING needs an explicit finalPrice ("0" if holders received nothing): a missing one is read as zero`;
+  }
+  return undefined;
+}
+
+/**
+ * The last date `TotalReturnSeries` applies anything to the entity this MERGER or DELISTING ends: a merger's target
+ * trades until the day before it takes effect, a delisted entity until its last trade date. A dividend, split or
+ * spin-off dated after it falls after the last bar and is ignored, so ingest and the reconciler refuse one (D-58).
+ */
+export function seriesLastDate(a: Extract<CorporateAction, { kind: "MERGER" | "DELISTING" }>): IsoDate {
+  return a.kind === "DELISTING" ? a.lastTradeDate : addDays(a.effective, -1);
 }
 
 /** Serialize with decimals as strings (canonical JSON does this for Dec anyway; explicit is reproducible). */

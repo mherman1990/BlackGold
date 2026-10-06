@@ -1,4 +1,4 @@
-import { compareInstants, hashJson, sha256Hex, utc, type UtcInstant } from "@blackgold/shared";
+import { compareInstants, hashJson, sha256Hex, utc, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import { z } from "zod";
 import type { ArtifactStore } from "../artifacts/store.ts";
 import type { PointInTimeObservation } from "../pit/types.ts";
@@ -8,6 +8,9 @@ import {
   corporateActionFromValue,
   corporateActionObservation,
   dateStartUtc,
+  seriesLastDate,
+  unreadActionKeys,
+  unvaluedActionReason,
 } from "../../market/types.ts";
 import { SchemaDriftError, type AdapterContext, type FetchOutcome, type ParseContext } from "./common.ts";
 
@@ -34,7 +37,14 @@ import { SchemaDriftError, type AdapterContext, type FetchOutcome, type ParseCon
  * reconciler pre-fills `actionsHash`; the owner fills `approvedBy` and `approvedAt`, and Claude Code never does.
  */
 export const ADAPTER_VERSION = "1.1.0";
-export const PARSER_VERSION = "1.1.0";
+/**
+ * 1.1.0 added the approval gate. 1.2.0 refuses an action field its kind does not read, and a SPINOFF without
+ * `childFirstClose`. 1.3.0 also refuses a MERGER paying stock and a DELISTING with no stated final price: the
+ * total-return series cannot value either (D-58). 1.4.0 refuses a negative delisting price. 1.5.0 refuses a second
+ * MERGER or DELISTING for one entity. 1.6.0 refuses a dividend, split or spin-off dated after the series end a
+ * MERGER or DELISTING in the file sets. Every change to what parses bumps this, released or not.
+ */
+export const PARSER_VERSION = "1.6.0";
 
 /** Label for SchemaDrift errors; the per-action source id is `corporate_action.<KIND>` from the model. */
 const SOURCE_KIND = "corporate_action.vendored";
@@ -151,14 +161,42 @@ export function parseCorporateActions(bytes: Uint8Array, ctx: CorporateActionsPa
   if (problems.length > 0) throw new UnapprovedCorporateActionsError(problems);
   const dataset = ctx.dataset ?? parsed.data.dataset;
 
-  const seen = new Set<string>();
-  return parsed.data.actions.map((entry, i) => {
+  const actions = parsed.data.actions.map((entry, i) => {
     let action;
     try {
       action = corporateActionFromValue(entry.action);
     } catch (err) {
       throw new SchemaDriftError(SOURCE_KIND, `actions[${i}]: ${err instanceof Error ? err.message : "malformed action"}`);
     }
+    // A field the parser does not read is a typo until shown otherwise; dropping it silently could drop a value.
+    const unread = unreadActionKeys(entry.action, action);
+    if (unread.length > 0) throw new SchemaDriftError(SOURCE_KIND, `actions[${i}]: a ${action.kind} has no field ${unread.join(", ")}`);
+    // An action the total-return series would only warn about - and so value wrongly - is refused.
+    const unvalued = unvaluedActionReason(action);
+    if (unvalued !== undefined) throw new SchemaDriftError(SOURCE_KIND, `actions[${i}]: ${unvalued}`);
+    return { entry, action };
+  });
+  // TotalReturnSeries ends an entity at its first MERGER or DELISTING, ignores any other, and ignores anything dated
+  // after its last bar: each would be evidence that is never applied.
+  const ends = new Map<string, { label: string; lastDate: IsoDate }>();
+  for (const [i, { action }] of actions.entries()) {
+    if (action.kind !== "MERGER" && action.kind !== "DELISTING") continue;
+    const id = actionEntityId(action);
+    const earlier = ends.get(id);
+    if (earlier !== undefined) throw new SchemaDriftError(SOURCE_KIND, `actions[${i}]: ${id} already ends with ${earlier.label}; a second terminal action would be ignored by the series`);
+    ends.set(id, { label: `${action.kind} ${actionEffectiveDate(action)}`, lastDate: seriesLastDate(action) });
+  }
+  for (const [i, { action }] of actions.entries()) {
+    if (action.kind !== "CASH_DIVIDEND" && action.kind !== "SPLIT" && action.kind !== "SPINOFF") continue;
+    const id = actionEntityId(action);
+    const end = ends.get(id);
+    if (end !== undefined && actionEffectiveDate(action) > end.lastDate) {
+      throw new SchemaDriftError(SOURCE_KIND, `actions[${i}]: the ${id} ${action.kind} ${actionEffectiveDate(action)} falls after ${id}'s series ends with its ${end.label} and would be ignored; fold a payout into the terminal value`);
+    }
+  }
+
+  const seen = new Set<string>();
+  return actions.map(({ entry, action }) => {
     const entityId = actionEntityId(action);
     const effectiveDate = actionEffectiveDate(action);
     const locator = `vendor/corporate-actions/${dataset}/${entityId}/${action.kind}/${effectiveDate}`;

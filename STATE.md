@@ -2,7 +2,60 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-10-06 by Claude Code. **D-57 PR-A is built: corporate-actions ingest now refuses a file the owner has not signed, and a pure reconciler writes the unsigned ≥2-source file plus a report.**
+**Last updated:** 2026-10-06 (second pass) by Claude Code. **D-58 is decided and D-57 PR-B1 is built: the issuer readers, the owner-curated format, and structural pass-through.**
+
+- **D-58 (Matt, "use your recommendations on all three").**
+  - Black Gold fetches State Street only.
+  - IWM, VTI, VTV and VUG come from files Matt downloads.
+  - What no feed reaches is owner-curated from issuer documents.
+  - Nasdaq is not used.
+- **PR-B1 is pure: bytes in, records out, no network.**
+  - **SSGA distribution workbook:** dividend and capital gains are summed per ex-date. Zero months are counted, not
+    emitted.
+  - **SSGA NAV history:** a split is read only where NAV and shares outstanding move by the same standard ratio;
+    other large moves are reported as jumps.
+  - **Vanguard JSON and the iShares fund workbook.**
+  - **A curated CSV, plus JSON for structural actions.** A curated row can never borrow an automated source's
+    name.
+  - **The reconciler** now takes an ordered list of preferred sources. It writes curated structural actions as
+    given and sets aside any same-day cash or split record.
+  - Tests: 1149 pass; 74 of 74 deliberate faults caught.
+  - **Round 4:** the owner now classifies every same-day record on a structural action's date as `supersedes`
+    (set aside) or `keeps` (reconciled). An unclassified one refuses the run, because setting all of them aside
+    could drop a genuine dividend.
+  - **Round 11:** nothing may be dated after a merger or delisting ends an entity's series, which ignores it.
+    Ingest refuses one; in the reconciler the terminal action classifies those records and may only supersede
+    them. A duplicate record is refused before anything is set aside.
+  - **Codex was rate-limited after round 11, so an independent review stood in.** It found three holes, now
+    closed: selectors are dated, so lists can't reach across dates or actions; and a terminal action outside the
+    window still ends the series inside it.
+  - **Codex's findings over three rounds are fixed.** Two are new in round 3:
+    - a SPINOFF without `childFirstClose` is refused, since the series would leave its value uncredited;
+    - a split needs both NAV rows to be trading sessions. The real files hold rows on the 2012 Sandy closure and
+      Good Friday 2014, which are now listed.
+  - **The two earlier findings:**
+    - an action field its kind does not read is refused, at ingest and in the reconciler. The vendored
+      corporate-actions parser is now 1.6.0;
+    - a split is read only across adjacent trading sessions, and NAV-history gaps are listed. The real files have
+      none.
+- **Run against the real files from the survey (counts only; nothing real is committed):**
+  - SSGA lists 1,010 in-scope distributions with no unreadable row.
+  - **One SSGA data error:** BIL's 2008-03-03 row carries February's pay date. The parser drops that pay date and
+    reports it; the ex-date and amount stand.
+  - **Splits:** the NAV histories show XLK, XLU and XLY 2:1 on 2025-12-05 and **BIL 1-for-2 on 2017-11-30**, inside
+    the design window, with no false jumps 2003–2026.
+  - iShares gives IWM 106 distributions; Vanguard gives 40 each, from 2016-12.
+- **Matt's next acts:**
+  - Download the IWM and Vanguard files now.
+  - Curate about 190 rows once PR-B2's reconcile report lists exactly which actions only Tiingo reports.
+  - The ranges include each window's feature warm-up, 435 calendar days before its first decision. That puts the
+    RECENT warm-up from late October 2023, inside the holdout window, which evaluation already reads bars from.
+  - This corrects the survey's 80, which assumed Nasdaq for QQQ and no warm-up.
+  - `docs/runbooks/first-ingestion.md` Step 2b says what and where.
+- **Claude Code's next:** PR-B2, the SSGA fetch and the `reconcile` command that writes the unsigned file and its
+  report.
+
+**2026-10-06 (first pass). D-57 PR-A is built: corporate-actions ingest now refuses a file the owner has not signed, and a pure reconciler writes the unsigned ≥2-source file plus a report.**
 
 - **The approval gate.**
   - The vendored file carries `approval: { approvedBy, approvedAt, actionsHash }`, and nothing ingests until
@@ -238,8 +291,8 @@ Items 1 and 2 below are updated by D-57 and D-56: curation is now Claude Code's 
   - how the VTI, VTV and VUG gap before 2016-12 and the QQQ gap before 2012-06 close;
   - whether Nasdaq may be used at all.
 
-  The options and Claude Code's recommendation are in `docs/analysis/2026-10-06-d57-second-source-survey.md`.
-  The SSGA adapter can be built before those answers; the rest cannot. **Still owner questions before registration and outside the charter:** D-54's readings (b) and (c), and the restricted-list and theme-membership content (B-3, B-4), which the packet wants in place before registration day.
+  ~~The options and Claude Code's recommendation are in `docs/analysis/2026-10-06-d57-second-source-survey.md`.~~
+  Decided 2026-10-06 as D-58. PR-B1, the parsers, is built; PR-B2, the fetch and `reconcile` command, is next. **Still owner questions before registration and outside the charter:** D-54's readings (b) and (c), and the restricted-list and theme-membership content (B-3, B-4), which the packet wants in place before registration day.
 
 **Claude Code's, available now without further owner input:** ~~D-53 slice 3a-3's code half~~ (done 2026-09-21); ~~slice 2c~~ (done 2026-09-21); ~~slice 3b~~ (merged 2026-10-04 with seven open findings; repaired by PR #107); **~~the reconciler-to-halt wiring~~ (D-54, merged as PR #108; reading (a) confirmed)**; **~~the deferred liquidity and order-level limit engines~~ (D-55)**. The liquidity check is wired into the gate; the order-level predicate is built but waits on D-55's conflicts before anything consumes it. Also available: a bars cross-source verifier (Tiingo vs Alpaca), which is worth real data-integrity confidence but **does not** clear the citability label and must not be presented as if it does. Factor-concentration caps stay blocked on the owner question of which factor tags are cap-bearing, since the `market` tag sits on every holding. Slice 4 needs paper keys and D-12. The live CR-12/CR-13 analyst run is now possible on the Pi, since `secrets.env` (D-52) gives `ANTHROPIC_API_KEY` a route into the container.
 

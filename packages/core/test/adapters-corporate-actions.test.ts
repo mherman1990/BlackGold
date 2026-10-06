@@ -121,6 +121,55 @@ describe("vendored corporate-action parser", () => {
     // Nonpositive spin-off ratio / childFirstClose would feed a zero or negative distribution into the TR series.
     expect(badEntry({ action: { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0", exDate: "2015-10-08" }, sources: ["a", "b"] })).toThrow(SchemaDriftError);
     expect(badEntry({ action: { kind: "SPINOFF", parent: "XLF", child: "XLRE", ratio: "0.5", exDate: "2015-10-08", childFirstClose: "-1" }, sources: ["a", "b"] })).toThrow(SchemaDriftError);
+    // A field the action's kind does not read: a misspelled optional field would otherwise vanish silently and,
+    // for childFirstClose, take the spun-off value out of the parent's total return (Codex, PR #114).
+    const { childFirstClose, ...spin } = SPINOFF.action;
+    expect(badEntry({ action: { ...spin, childFirstclose: childFirstClose }, sources: ["a", "b"] })).toThrow(/a SPINOFF has no field childFirstclose/);
+    expect(badEntry({ action: { kind: "MERGER", entityId: "X", acquirer: "Y", terms: { stockRatio: "0.5", cashPershare: "1" }, effective: "2015-10-08" }, sources: ["a", "b"] })).toThrow(/terms\.cashPershare/);
+    expect(badEntry({ action: { ...DIVIDEND.action, note: "special" }, sources: ["a", "b"] })).toThrow(/a CASH_DIVIDEND has no field note/);
+    // A null optional field is absent, not unknown.
+    const nullTerm = signed({ dataset: "d", actions: [{ action: { kind: "MERGER", entityId: "X", acquirer: "Y", terms: { cashPerShare: "10", stockRatio: null }, effective: "2015-10-08" }, sources: ["a", "b"] }] });
+    expect(parseCorporateActions(nullTerm, ctxFor(nullTerm))).toHaveLength(1);
+    // Actions the total-return series would only warn about, and so value wrongly, are refused (Codex, PR #114):
+    // a merger's stock leg is ignored there, and a delisting with no final price is read as zero.
+    expect(badEntry({ action: { kind: "MERGER", entityId: "X", acquirer: "Y", terms: { cashPerShare: "5", stockRatio: "0.5" }, effective: "2015-10-08" }, sources: ["a", "b"] })).toThrow(/X MERGER pays stock/);
+    expect(badEntry({ action: { kind: "DELISTING", entityId: "X", lastTradeDate: "2015-10-08", reason: "acquired", finalPrice: null }, sources: ["a", "b"] })).toThrow(/X DELISTING needs an explicit finalPrice/);
+    const worthless = signed({ dataset: "d", actions: [{ action: { kind: "DELISTING", entityId: "X", lastTradeDate: "2015-10-08", reason: "liquidated", finalPrice: "0" }, sources: ["a", "b"] }] });
+    expect(parseCorporateActions(worthless, ctxFor(worthless))).toHaveLength(1);
+    // Zero is a price; below it is not - it would become negative proceeds and a negative index (Codex, PR #114).
+    expect(badEntry({ action: { kind: "DELISTING", entityId: "X", lastTradeDate: "2015-10-08", reason: "x", finalPrice: "-1" }, sources: ["a", "b"] })).toThrow(/finalPrice must be non-negative/);
+    // One terminal action per entity: the series applies only the first and ignores the rest (Codex, PR #114).
+    const delist = (date: string) => ({ action: { kind: "DELISTING", entityId: "X", lastTradeDate: date, reason: "x", finalPrice: "1" }, sources: ["a", "b"] });
+    const cashMerger = { action: { kind: "MERGER", entityId: "X", acquirer: "Y", terms: { cashPerShare: "10" }, effective: "2015-12-01" }, sources: ["a", "b"] };
+    for (const pair of [[delist("2015-10-08"), delist("2016-01-04")], [delist("2015-10-08"), cashMerger]]) {
+      const two = signed({ dataset: "d", actions: pair });
+      expect(() => parseCorporateActions(two, ctxFor(two))).toThrow(/X already ends with/);
+    }
+    // Nor anything dated after the series end a terminal action sets, which the series ignores: a merger's target
+    // stops trading the day before it takes effect, a delisted entity on its last trade date (Codex, PR #114).
+    const divOn = (date: string) => ({ action: { ...DIVIDEND.action, entityId: "X", exDate: date, payDate: date }, sources: ["a", "b"] });
+    const splitOn = (date: string) => ({ action: { kind: "SPLIT", entityId: "X", ratio: "2", exDate: date }, sources: ["a", "b"] });
+    const spinOn = (date: string) => ({ action: { ...SPINOFF.action, parent: "X", exDate: date }, sources: ["a", "b"] });
+    const past = [
+      [divOn("2015-12-01"), cashMerger],
+      [cashMerger, splitOn("2015-12-02")],
+      [spinOn("2015-12-01"), cashMerger],
+      [delist("2015-10-08"), divOn("2015-10-09")],
+    ];
+    for (const pair of past) {
+      const after = signed({ dataset: "d", actions: pair });
+      expect(() => parseCorporateActions(after, ctxFor(after))).toThrow(/falls after X's series ends with its (MERGER 2015-12-01|DELISTING 2015-10-08)/);
+    }
+    // The day before a merger, a delisting's last trade date, and another entity are all inside a series.
+    const otherEntity = { ...divOn("2015-10-09"), action: { ...divOn("2015-10-09").action, entityId: "Y" } };
+    for (const pair of [[divOn("2015-11-30"), cashMerger], [delist("2015-10-08"), divOn("2015-10-08"), spinOn("2015-10-08")], [otherEntity, delist("2015-10-08")]]) {
+      const inside = signed({ dataset: "d", actions: pair });
+      expect(parseCorporateActions(inside, ctxFor(inside))).toHaveLength(pair.length);
+    }
+    // A spin-off with no first close, absent or null, would leave its value out of the parent's total return,
+    // which the series only warns about (Codex, PR #114).
+    expect(badEntry({ action: spin, sources: ["a", "b"] })).toThrow(/needs childFirstClose/);
+    expect(badEntry({ action: { ...spin, childFirstClose: null }, sources: ["a", "b"] })).toThrow(/needs childFirstClose/);
     // Unknown top-level key.
     const extra = signed({ dataset: "d", actions: [], oops: 1 });
     expect(() => parseCorporateActions(extra, ctxFor(extra))).toThrow(SchemaDriftError);
