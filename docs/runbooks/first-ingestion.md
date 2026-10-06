@@ -216,6 +216,12 @@ and date, and each one must be listed:
 
 The reconciler refuses to run while any such record is unclassified, and names each one.
 
+**A merger or delisting also classifies everything after it.** The total-return series ends a merged fund the day
+before the merger takes effect, and a delisted one on its last trade date, and ignores anything dated later. So
+every cash or split record after that point, the merger's own date included, must be listed under the terminal
+action's `supersedes`; it cannot be kept. If it is a real payout, add it to the merger's `terms.cashPerShare` or the
+delisting's `finalPrice` first.
+
 The command that runs all of this and writes the unsigned file plus its report is the next PR (D-57 PR-B2).
 
 ## Step 2c — or load corporate actions automatically from Tiingo (D-49, research-only)

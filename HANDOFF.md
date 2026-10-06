@@ -7,7 +7,7 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 1141 tests (unit 1074, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
+4. `npm ci && npm run check`. All of lint, typecheck, 1145 tests (unit 1078, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
 
 ## 2. Repository guard
 
@@ -27,7 +27,7 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
     - `data/adapters/ssga-distributions.ts`: the distribution workbook, and splits read from NAV history;
     - `vanguard-distributions.ts` and `ishares-distributions.ts`;
     - `data/curated-corporate-actions.ts`: the curated CSV and structural JSON.
-  - **The reconciler** takes `preferredSources` in priority order (RECONCILE_VERSION 2).
+  - **The reconciler** takes `preferredSources` in priority order (RECONCILE_VERSION 3).
   - **Never let a curated row use an automated adapter's source name.** That is what keeps one source from
     passing as two.
   - **Never turn a NAV jump into a split** unless both ratios fit and the two rows are adjacent trading sessions;
@@ -41,6 +41,9 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
   - **Same-day records on a structural action's date are classified by the owner** (`supersedes` / `keeps`), and
     an unclassified one refuses the run. Never go back to setting them all aside, which loses genuine actions, or
     writing them all, which double-counts the spin-off.
+  - **Nothing may be dated after a terminal action's series end** (`seriesLastDate`): the day before a merger takes
+    effect, or a delisting's last trade date. Ingest refuses it; the reconciler lets the terminal action only
+    supersede it, so a real payout is folded into `cashPerShare` or `finalPrice`.
   - **A split also needs both NAV rows to be trading sessions.** SSGA's files carry rows on the 2012 Sandy closure
     and on Good Friday 2014; these are listed as `nonSessionDates`.
   - **Next: PR-B2.**

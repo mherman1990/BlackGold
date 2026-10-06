@@ -1,5 +1,5 @@
 import { addDays, Dec, type IsoDate, type UtcInstant } from "@blackgold/shared";
-import { actionEffectiveDate, actionEntityId, corporateActionFromValue, unreadActionKeys, unvaluedActionReason } from "../market/types.ts";
+import { actionEffectiveDate, actionEntityId, corporateActionFromValue, seriesLastDate, unreadActionKeys, unvaluedActionReason } from "../market/types.ts";
 import type { PointInTimeObservation } from "./pit/types.ts";
 import { corporateActionsHash } from "./adapters/corporate-actions.ts";
 
@@ -27,8 +27,14 @@ import { corporateActionsHash } from "./adapters/corporate-actions.ts";
  * safe, so the curator classifies each one: `supersedes` sets it aside, reported but not written; `keeps` reconciles
  * it as usual. An unclassified one refuses the run. Setting aside is the one place a record does not reach the
  * file, and only ever on the owner's word.
+ *
+ * A MERGER or DELISTING ends its entity's total-return series, which ignores anything dated after its last bar. So
+ * it also classifies every record dated after that - a merger's own date included - and may only supersede them:
+ * a distribution paid with a merger or on delisting belongs in the terminal value (`terms.cashPerShare`,
+ * `finalPrice`), and a kept one, or a spin-off, past the end would be written, verified, and never applied.
  */
-export const RECONCILE_VERSION = 2;
+/** 2 added structural pass-through and issuer sources (D-58); 3 classifies records past a series end. Every change to the output bumps this. */
+export const RECONCILE_VERSION = 3;
 
 type SourceBase = {
   /** Written into `sources`, e.g. `vendor:tiingo-eod` or `issuer:ssga-distributions`. */
@@ -49,7 +55,10 @@ export type SourceSplit = SourceBase & { kind: "SPLIT"; ratio: Dec };
 
 export type SourceAction = SourceCashDividend | SourceSplit;
 
-/** A record on a structural action's entity and date, named by source and kind: each source has at most one. */
+/**
+ * A record a structural action classifies, named by source and kind: one on its entity and date (each source has at
+ * most one), or, for a MERGER or DELISTING, one dated after the entity's series ends.
+ */
 export type SameDayRecord = { source: string; kind: SourceAction["kind"] };
 
 /**
@@ -60,9 +69,9 @@ export type StructuralEntry = {
   action: Record<string, unknown>;
   sources: string[];
   announcedAt?: string | undefined;
-  /** Same-day records this action replaces, such as a spin-off listed in a dividend column: set aside. */
+  /** Records this action replaces, such as a spin-off listed in a dividend column or a merger's final payout: set aside. */
   supersedes?: readonly SameDayRecord[] | undefined;
-  /** Same-day records that are separate, genuine actions: reconciled as usual. */
+  /** Same-day records that are separate, genuine actions: reconciled as usual. Never past a series end. */
   keeps?: readonly SameDayRecord[] | undefined;
 };
 
@@ -84,7 +93,7 @@ export type ReconcileOptions = {
   amountTolerance: Dec;
   /** How far apart two ex-dates may be to be reported as a likely match. Never used to reconcile. */
   nearMatchDays?: number;
-  /** Owner-curated structural actions, written as given, each classifying its same-day records. */
+  /** Owner-curated structural actions, written as given, each classifying its same-day records (and, if terminal, later ones). */
   structural?: readonly StructuralEntry[];
 };
 
@@ -102,15 +111,17 @@ export type ReconcileFinding = {
   written: { source: string; value: string };
 };
 
+type ListedRecord = { source: string; kind: SourceAction["kind"]; exDate: IsoDate; value: string; locator: string };
+
 export type SetAsideFinding = {
   entityId: string;
   exDate: IsoDate;
   /** The structural action(s) on this entity and date. */
   structuralKind: string;
-  /** Records the owner said the structural action supersedes: not written. */
-  records: { source: string; kind: SourceAction["kind"]; value: string; locator: string }[];
+  /** Records the owner said the structural action supersedes, on its date or past a series end it sets: not written. */
+  records: ListedRecord[];
   /** Records the owner said are separate actions: reconciled as usual, listed here so the audit sees the date. */
-  kept: { source: string; kind: SourceAction["kind"]; value: string; locator: string }[];
+  kept: ListedRecord[];
 };
 
 export type ReconcileReport = {
@@ -230,7 +241,19 @@ function structuralInScope(entries: readonly StructuralEntry[], entities: Readon
     if (both.length > 0) throw new ReconcileInputError(`structural[${i}] both supersedes and keeps ${both.join(", ")}`);
     out.push({ key, day: dayOf({ entityId, exDate }), entityId, exDate, kind: action.kind, entry, supersedes, keeps });
   }
-  return { inScope: out, outOfScope };
+  // The last date each entity's series applies anything; a spin-off after it would be written and never credited.
+  const seriesEnds = new Map<string, { label: string; lastDate: IsoDate; day: string }>();
+  for (const s of out) {
+    const action = corporateActionFromValue(s.entry.action);
+    if (action.kind === "MERGER" || action.kind === "DELISTING") seriesEnds.set(s.entityId, { label: `${action.kind} ${s.exDate}`, lastDate: seriesLastDate(action), day: s.day });
+  }
+  for (const s of out) {
+    const end = seriesEnds.get(s.entityId);
+    if (s.kind === "SPINOFF" && end !== undefined && s.exDate > end.lastDate) {
+      throw new ReconcileInputError(`the ${s.entityId} SPINOFF ${s.exDate} falls after ${s.entityId}'s series ends with its ${end.label}, so its value would never be credited`);
+    }
+  }
+  return { inScope: out, outOfScope, seriesEnds };
 }
 
 /**
@@ -238,8 +261,9 @@ function structuralInScope(entries: readonly StructuralEntry[], entities: Readon
  *
  * Throws `ReconcileInputError` when the input itself is wrong - fewer than two sources, no record from any
  * preferred source, a source reporting the same entity, kind and ex-date twice (an adapter must sum a
- * distribution's components first), a record the action parser rejects, or a malformed or duplicated structural
- * entry - because guessing past any of those would put a fabricated number into evidence.
+ * distribution's components first), a record the action parser rejects, a malformed or duplicated structural
+ * entry, a record or spin-off past the series end a merger or delisting sets that the curator has not superseded -
+ * because guessing past any of those would put a fabricated number into evidence.
  */
 export function reconcileCorporateActions(records: readonly SourceAction[], opts: ReconcileOptions): { file: ReconciledFile; report: ReconcileReport } {
   const entities = new Set(opts.entities);
@@ -248,7 +272,7 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
   if (opts.preferredSources.length === 0) throw new ReconcileInputError("name at least one preferred source");
   if (!opts.preferredSources.some((p) => sources.includes(p))) throw new ReconcileInputError(`none of the preferred sources (${opts.preferredSources.join(", ")}) supplied records`);
 
-  const { inScope: structural, outOfScope: structuralOutOfScope } = structuralInScope(opts.structural ?? [], entities, opts.window);
+  const { inScope: structural, outOfScope: structuralOutOfScope, seriesEnds } = structuralInScope(opts.structural ?? [], entities, opts.window);
   // Every structural action on a day classifies that day's records; two on one day pool their lists.
   const structuralDays = new Map<string, { kinds: string[]; supersedes: Set<string>; keeps: Set<string>; entityId: string; exDate: IsoDate }>();
   for (const s of structural) {
@@ -265,28 +289,49 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
   }
 
   const inWindow = records.filter((r) => entities.has(r.entityId) && r.exDate >= opts.window.from && r.exDate <= opts.window.to);
+  // Before anything is classified, so a duplicate is refused even where it would be set aside.
+  const seenRecords = new Set<string>();
+  for (const r of inWindow) {
+    const id = `${r.source}|${keyOf(r)}`;
+    if (seenRecords.has(id)) throw new ReconcileInputError(`${r.source} reports ${keyOf(r)} twice; sum a distribution's components into one record before reconciling`);
+    seenRecords.add(id);
+  }
   const setAsideByDay = new Map<string, SetAsideFinding>();
   for (const [day, d] of structuralDays) setAsideByDay.set(day, { entityId: d.entityId, exDate: d.exDate, structuralKind: d.kinds.sort().join("+"), records: [], kept: [] });
   const inScope: SourceAction[] = [];
   const unclassified: string[] = [];
+  const keptPastEnd: string[] = [];
   for (const r of inWindow) {
-    const d = structuralDays.get(dayOf(r));
-    const finding = setAsideByDay.get(dayOf(r));
+    // A record past its entity's series end is the terminal action's to classify, whatever its date.
+    const end = seriesEnds.get(r.entityId);
+    const pastEnd = end !== undefined && r.exDate > end.lastDate;
+    const day = pastEnd ? end.day : dayOf(r);
+    const d = structuralDays.get(day);
+    const finding = setAsideByDay.get(day);
     if (d === undefined || finding === undefined) {
       inScope.push(r);
       continue;
     }
     const id = sameDayId(r);
-    const listed = { source: r.source, kind: r.kind, value: valueOf(r).toFixed(), locator: r.locator };
+    const described = `${r.entityId} ${r.exDate}: ${id} ${valueOf(r).toFixed()}`;
+    const listed = { source: r.source, kind: r.kind, exDate: r.exDate, value: valueOf(r).toFixed(), locator: r.locator };
     if (d.supersedes.has(id)) finding.records.push(listed);
     else if (d.keeps.has(id)) {
-      finding.kept.push(listed);
-      inScope.push(r);
-    } else unclassified.push(`${r.entityId} ${r.exDate}: ${id} ${valueOf(r).toFixed()}`);
+      if (pastEnd) keptPastEnd.push(`${described} (series ends with its ${end.label})`);
+      else {
+        finding.kept.push(listed);
+        inScope.push(r);
+      }
+    } else unclassified.push(described);
+  }
+  if (keptPastEnd.length > 0) {
+    throw new ReconcileInputError(
+      `the total-return series ignores anything dated after a merger's target stops trading or a delisted entity's last trade, so these cannot be kept: ${keptPastEnd.join("; ")}. Fold a payout into the merger's terms.cashPerShare or the delisting's finalPrice and list the record under supersedes`,
+    );
   }
   if (unclassified.length > 0) {
     throw new ReconcileInputError(
-      `each record on the date of a curated structural action must be listed under its supersedes (the structural action replaces it) or keeps (a separate, genuine action): ${unclassified.join("; ")}`,
+      `each record on the date of a curated structural action, or past the merger or delisting that ends its entity's series, must be listed under supersedes (the structural action replaces it) or keeps (a separate, genuine action): ${unclassified.join("; ")}`,
     );
   }
 
@@ -294,7 +339,6 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
   for (const r of inScope) {
     const key = keyOf(r);
     const bySource = groups.get(key) ?? new Map<string, SourceAction>();
-    if (bySource.has(r.source)) throw new ReconcileInputError(`${r.source} reports ${key} twice; sum a distribution's components into one record before reconciling`);
     bySource.set(r.source, r);
     groups.set(key, bySource);
   }
@@ -350,7 +394,8 @@ export function reconcileCorporateActions(records: readonly SourceAction[], opts
   // One order for the whole file, structural entries included, so the same inputs always hash the same.
   const entries = keyed.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)).map((k) => k.entry);
   const setAside = [...setAsideByDay.values()].sort((a, b) => (dayOf(a) < dayOf(b) ? -1 : dayOf(a) > dayOf(b) ? 1 : 0));
-  const bySourceKind = (a: { source: string; kind: string }, b: { source: string; kind: string }): number => (a.source < b.source ? -1 : a.source > b.source ? 1 : a.kind < b.kind ? -1 : 1);
+  const bySourceKind = (a: ListedRecord, b: ListedRecord): number =>
+    a.exDate !== b.exDate ? (a.exDate < b.exDate ? -1 : 1) : a.source < b.source ? -1 : a.source > b.source ? 1 : a.kind < b.kind ? -1 : 1;
   for (const f of setAside) {
     f.records.sort(bySourceKind);
     f.kept.sort(bySourceKind);

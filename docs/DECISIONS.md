@@ -1629,6 +1629,17 @@ cases where the series would only warn and value it wrongly (Codex, PR #114):
 They also refuse a second MERGER or DELISTING for one entity. The series ends the entity at its first terminal
 action and would ignore any other.
 
+**Nothing may be dated after the series ends** (Codex, PR #114). A merger's target trades until the day before it
+takes effect, and a delisted entity until its last trade date; the series ignores any dividend, split or spin-off
+after that. So:
+- ingest refuses one in the same file as the terminal action;
+- in the reconciler, the terminal action classifies every record dated after the end, a merger's own date
+  included, and may only supersede them. A payout made with the merger or on delisting belongs in
+  `terms.cashPerShare` or `finalPrice`. A kept or unclassified one, or a spin-off past the end, refuses the run.
+
+A source reporting the same record twice is refused before anything is classified, so a duplicate cannot hide
+among set-aside records.
+
 **Claude Code's limits are unchanged.** It never fills a curated value it has not been given, and it never signs
 the reconciled file.
 

@@ -1,4 +1,4 @@
-import { Dec, dec, isoDate, utc, type IsoDate, type UtcInstant } from "@blackgold/shared";
+import { addDays, Dec, dec, isoDate, utc, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import type { PointInTimeObservation } from "../data/pit/types.ts";
 
 /**
@@ -383,6 +383,15 @@ export function unvaluedActionReason(a: CorporateAction): string | undefined {
     return `the ${a.entityId} DELISTING needs an explicit finalPrice ("0" if holders received nothing): a missing one is read as zero`;
   }
   return undefined;
+}
+
+/**
+ * The last date `TotalReturnSeries` applies anything to the entity this MERGER or DELISTING ends: a merger's target
+ * trades until the day before it takes effect, a delisted entity until its last trade date. A dividend, split or
+ * spin-off dated after it falls after the last bar and is ignored, so ingest and the reconciler refuse one (D-58).
+ */
+export function seriesLastDate(a: Extract<CorporateAction, { kind: "MERGER" | "DELISTING" }>): IsoDate {
+  return a.kind === "DELISTING" ? a.lastTradeDate : addDays(a.effective, -1);
 }
 
 /** Serialize with decimals as strings (canonical JSON does this for Dec anyway; explicit is reproducible). */

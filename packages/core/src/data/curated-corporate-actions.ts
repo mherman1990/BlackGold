@@ -27,7 +27,8 @@ import { VANGUARD_DISTRIBUTIONS_SOURCE } from "./adapters/vanguard-distributions
  * announcedAt?, supersedes?, keeps? }] }`), because each kind has its own fields; the reconciler writes `action`,
  * `sources` and `announcedAt` as given. `supersedes` and `keeps` classify every cash or split record any source
  * reports on the same entity and date, by `{ source, kind }`: superseded ones are the structural action in another
- * guise and are set aside; kept ones are separate actions and are reconciled. An unclassified one stops the run.
+ * guise and are set aside; kept ones are separate actions and are reconciled. An unclassified one stops the run. A
+ * MERGER or DELISTING also classifies every record dated after the entity's last bar, and may only supersede them.
  *
  * Every row is checked and every problem is reported at once, with its line, so an 80-row file is fixed in one
  * pass. Nothing here invents a value: a row the parser cannot read is an error, never a default.

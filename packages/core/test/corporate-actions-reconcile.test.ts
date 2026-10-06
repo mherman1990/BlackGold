@@ -272,8 +272,8 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
         exDate: "2016-09-19",
         structuralKind: "SPINOFF",
         records: [
-          { source: SSGA, kind: "CASH_DIVIDEND", value: "0.139146", locator: `${SSGA}/XLF/2016-09-19` },
-          { source: VENDOR, kind: "CASH_DIVIDEND", value: "4.61", locator: `${VENDOR}/XLF/2016-09-19` },
+          { source: SSGA, kind: "CASH_DIVIDEND", exDate: "2016-09-19", value: "0.139146", locator: `${SSGA}/XLF/2016-09-19` },
+          { source: VENDOR, kind: "CASH_DIVIDEND", exDate: "2016-09-19", value: "4.61", locator: `${VENDOR}/XLF/2016-09-19` },
         ],
         kept: [],
       },
@@ -295,7 +295,7 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     const r = run([...xlf, split(VENDOR, "XLF", "2016-09-19", "2"), cash(EXCH, "XLF", "2016-09-19", "0.02"), cash(VENDOR, "XLF", "2016-09-20", "0.01")], { ...opts, structural: classified });
     expect(r.report.setAside[0]?.records.map((x) => `${x.source} ${x.kind}`)).toEqual([`${SSGA} CASH_DIVIDEND`, `${VENDOR} CASH_DIVIDEND`, `${VENDOR} SPLIT`]);
     // Kept: reconciled like any record - here one source, so written single-sourced - and listed for the audit.
-    expect(r.report.setAside[0]?.kept).toEqual([{ source: EXCH, kind: "CASH_DIVIDEND", value: "0.02", locator: `${EXCH}/XLF/2016-09-19` }]);
+    expect(r.report.setAside[0]?.kept).toEqual([{ source: EXCH, kind: "CASH_DIVIDEND", exDate: "2016-09-19", value: "0.02", locator: `${EXCH}/XLF/2016-09-19` }]);
     expect(entryFor(r, "XLF", "2016-09-19")).toMatchObject({ sources: [EXCH], action: { kind: "CASH_DIVIDEND", amount: "0.02" } });
     expect(entryFor(r, "XLF", "2016-09-20")?.sources).toEqual([VENDOR]);
   });
@@ -366,6 +366,54 @@ describe("reconcileCorporateActions: owner-curated structural actions (D-58)", (
     const merged = { action: { kind: "MERGER", entityId: "XLF", acquirer: "ACQ", terms: { cashPerShare: "10" }, effective: "2017-03-01" }, sources: ["issuer:x", "exchange:y"] };
     expect(() => run(xlf, { ...opts, structural: [delisted("2017-01-03"), delisted("2017-06-01")] })).toThrow(/XLF has two terminal actions, DELISTING 2017-01-03 and DELISTING 2017-06-01/);
     expect(() => run(xlf, { ...opts, structural: [delisted("2017-01-03"), merged] })).toThrow(/XLF has two terminal actions/);
+  });
+
+  it("refuses a duplicate record even where it would be set aside (Codex, PR #114)", () => {
+    expect(() => run([...xlf, cash(SSGA, "XLF", "2016-09-19", "0.139146")], opts)).toThrow(/issuer:ssga-distributions reports XLF\|CASH_DIVIDEND\|2016-09-19 twice/);
+  });
+
+  describe("a merger or delisting ends the series, which ignores anything dated after its last bar (Codex, PR #114)", () => {
+    const SOURCES = ["issuer:x", "exchange:y"];
+    // The target trades until 2016-09-16; the series stops there and realizes the cash on the effective date.
+    const merger = (extra: object = {}) => ({ action: { kind: "MERGER", entityId: "XLF", acquirer: "ACQ", terms: { cashPerShare: "25" }, effective: "2016-09-19" }, sources: SOURCES, ...extra });
+    const delisting = (extra: object = {}, lastTradeDate = "2016-09-20") => ({ action: { kind: "DELISTING", entityId: "XLF", lastTradeDate, reason: "liquidated", finalPrice: "24" }, sources: SOURCES, ...extra });
+    const later = cash(VENDOR, "XLF", "2016-09-21", "0.40");
+
+    it("refuses to keep a distribution on a merger's effective date: it would be verified and never applied", () => {
+      expect(() => run(xlf, { ...opts, structural: [merger({ supersedes: [SUPERSEDES[0]], keeps: [SUPERSEDES[1]] })] })).toThrow(
+        /cannot be kept: XLF 2016-09-19: vendor:tiingo-eod CASH_DIVIDEND 4.61 \(series ends with its MERGER 2016-09-19\)\. Fold a payout into the merger's terms\.cashPerShare/,
+      );
+      // Superseded - folded into the cash per share - it is set aside and reported.
+      const r = run(xlf, { ...opts, structural: [merger({ supersedes: SUPERSEDES })] });
+      expect(r.report.setAside[0]?.records.map((x) => `${x.source} ${x.exDate}`)).toEqual([`${SSGA} 2016-09-19`, `${VENDOR} 2016-09-19`]);
+      expect(r.file.actions.map((e) => `${String(e.action["kind"])} ${String(e.action["exDate"] ?? e.action["effective"])}`)).toEqual(["CASH_DIVIDEND 2016-09-16", "MERGER 2016-09-19"]);
+    });
+
+    it("has the terminal action classify every record after the series end, and lets it only supersede them", () => {
+      const before = xlf.slice(0, 2);
+      // Unclassified: refused, like a same-day record.
+      expect(() => run([...before, later], { ...opts, structural: [delisting()] })).toThrow(/past the merger or delisting that ends its entity's series, must be listed .*XLF 2016-09-21: vendor:tiingo-eod CASH_DIVIDEND 0.4/);
+      expect(() => run([...before, later], { ...opts, structural: [delisting({ keeps: [{ source: VENDOR, kind: "CASH_DIVIDEND" }] })] })).toThrow(/cannot be kept: XLF 2016-09-21/);
+      // Superseded: set aside under the delisting's date, with its own date for the audit.
+      const r = run([...before, later], { ...opts, structural: [delisting({ supersedes: [{ source: VENDOR, kind: "CASH_DIVIDEND" }] })] });
+      expect(r.report.setAside).toEqual([
+        { entityId: "XLF", exDate: "2016-09-20", structuralKind: "DELISTING", records: [{ source: VENDOR, kind: "CASH_DIVIDEND", exDate: "2016-09-21", value: "0.4", locator: `${VENDOR}/XLF/2016-09-21` }], kept: [] },
+      ]);
+      expect(r.file.actions.map((e) => e.action["kind"])).toEqual(["CASH_DIVIDEND", "DELISTING"]);
+      // The last trade date itself is inside the series: a genuine dividend there is kept and applied.
+      const onLastDay = run(before, { ...opts, structural: [delisting({ keeps: [{ source: SSGA, kind: "CASH_DIVIDEND" }, { source: VENDOR, kind: "CASH_DIVIDEND" }] }, "2016-09-16")] });
+      expect(entryFor(onLastDay, "XLF", "2016-09-16")?.sources).toEqual([SSGA, VENDOR]);
+      // Other entities are untouched by XLF's end.
+      expect(entryFor(run([...before, cash(SSGA, "VTI", "2016-09-21", "0.5"), cash(VENDOR, "VTI", "2016-09-21", "0.5")], { ...opts, entities: ["XLF", "VTI"], structural: [delisting()] }), "VTI", "2016-09-21")?.sources).toEqual([SSGA, VENDOR]);
+    });
+
+    it("refuses a spin-off after the series end, whatever the order the entries come in", () => {
+      const spinAfter = { action: { ...SPINOFF, exDate: "2016-09-20" }, sources: SOURCES };
+      expect(() => run(xlf.slice(0, 2), { ...opts, structural: [spinAfter, merger()] })).toThrow(/the XLF SPINOFF 2016-09-20 falls after XLF's series ends with its MERGER 2016-09-19/);
+      expect(() => run(xlf.slice(0, 2), { ...opts, structural: [{ ...spinAfter, action: { ...SPINOFF, exDate: "2016-09-19" } }, merger()] })).toThrow(/SPINOFF 2016-09-19 falls after/);
+      // On a delisting's last trade date the series still applies it.
+      expect(run(xlf.slice(0, 2), { ...opts, structural: [{ ...spinAfter, action: { ...SPINOFF, exDate: "2016-09-16" } }, delisting({ keeps: SUPERSEDES }, "2016-09-16")] }).report.counts.structural).toBe(2);
+    });
   });
 });
 

@@ -1,7 +1,7 @@
 import { addDays, Dec, ONE, ZERO, type IsoDate, type UtcInstant } from "@blackgold/shared";
 import type { ExchangeCalendar } from "../calendar/types.ts";
 import type { ReadOnlyPointInTime } from "../data/pit/types.ts";
-import { corporateActionFromValue, corporateActionSourceId, rawBarFromValue, type CorporateAction, type RawBar } from "./types.ts";
+import { corporateActionFromValue, corporateActionSourceId, rawBarFromValue, seriesLastDate, type CorporateAction, type RawBar } from "./types.ts";
 
 /**
  * Two price series, never mixed (docs/DATA_PROVENANCE_SPEC.md section 4).
@@ -153,7 +153,8 @@ export const TotalReturnSeries = {
     for (const a of actions) if (a.kind === "STALE_BAR") staleSessions.add(a.session);
     const delisting = actions.find((a) => a.kind === "DELISTING");
     const merger = actions.find((a) => a.kind === "MERGER");
-    const endDate = delisting?.kind === "DELISTING" ? delisting.lastTradeDate : merger?.kind === "MERGER" ? addDays(merger.effective, -1) : undefined;
+    const ending = delisting?.kind === "DELISTING" ? delisting : merger?.kind === "MERGER" ? merger : undefined;
+    const endDate = ending === undefined ? undefined : seriesLastDate(ending);
 
     const bars = [...raw]
       .filter((b) => !staleSessions.has(b.session) && !("tradable" in b && !b.tradable))
