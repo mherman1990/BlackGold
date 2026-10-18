@@ -2,7 +2,17 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-10-18 by Claude Code. **0.1.14 is being cut (Matt, 2026-10-18: "cut 0.1.14"), because the Pi still runs 0.1.13 and 0.1.13 cannot reconcile.**
+**Last updated:** 2026-10-18 by Claude Code. **0.1.14 is published and pinned:**
+`ghcr.io/mherman1990/blackgold:0.1.14@sha256:e0974f33e8d689384a314ba14bc944d6a2ddb2d1e179079288c968ec87fa24a0`.
+
+- **Built by** release run #17 from `b3127d5` (PR #116); `v0.1.14` is the workflow's own tag.
+- **Verified:** the index holds both `linux/amd64` and `linux/arm64`, and is anonymously pullable (HTTP 200).
+- **One stray tag was cleared.** A hand-pushed `v0.1.14` on `087897e`, made before the bump merged, failed its
+  run at the version guard and published nothing. It then blocked the dispatch path's existing-tag guard until
+  Matt deleted it.
+- **Updating the Pi is Matt's act,** after this pin merges.
+
+Why 0.1.14 was cut (Matt, 2026-10-18: "cut 0.1.14"): the Pi still ran 0.1.13, and 0.1.13 cannot reconcile.
 
 - **The Pi, read from its status page on 2026-10-18 at 01:31Z.** It runs 0.1.13, cut from PR #105 on 2026-10-04,
   so none of PRs #106-#115 is installed, `reconcile corporate-actions` included.
@@ -10,9 +20,15 @@ Authoritative snapshot of where Black Gold is. Update at every phase boundary an
     current to 2026-10-16, there are 609 GiB free, and the mode is RESEARCH.
   - **Tiingo corporate actions start too late and stop early.** They were ingested with the old runbook's
     `--start 2006-04-01 --end 2026-09-06`. Reconcile opens its window on 2006-03-22, and `BLACKGOLD_AUTO_INGEST_ACTIONS`
-    is unset, so nothing after 2026-09-01 is held. The fix is one rerun from 2006-03-01 to the last session
-    (runbook corrected).
-  - **One `ingest_market_data` run failed.** Bars caught up, so it isn't blocking; Matt is reading its error.
+    was unset, so nothing after 2026-09-01 was held.
+    - **Fixed the same day.** Matt re-ran it from 2006-03-01 to 2026-10-16: 26 new actions, and 1,188
+      same-value second copies flagged `CORRECTED`, because the new response hashes differently. Reads keep
+      one row per action, so nothing counts twice.
+    - **He asked for `BLACKGOLD_AUTO_INGEST_ACTIONS=tiingo`** in the research store's `secrets.env`. He was given
+      the commands; that they ran is not yet confirmed. It takes effect at the next restart. The status page's
+      `corporate_action.` row stops reading stale once it works.
+  - **One `ingest_market_data` run failed:** 2026-10-08, `TypeError: fetch failed`, a network error reaching
+    Tiingo. The next run caught up.
     Alpaca's "43d stale" is expected, since the bar source moved to Tiingo (D-49).
 - **0.1.14 ships PRs #106-#115** with no migration, dependency, host or compose change; see `CHANGELOG.md`. It
   also corrects the runbooks: `sudo` on every `docker` command (the `umbrel` user is refused the socket), the
