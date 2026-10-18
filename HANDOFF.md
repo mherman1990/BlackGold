@@ -15,7 +15,19 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 ## 3. Current position
 
-**Newest first (2026-10-06).**
+**Newest first (2026-10-18).**
+
+- **0.1.14 is the release that puts D-57 on the Pi.** It is cut the 0.1.13 way:
+  1. a bump PR, with the compose on the bare `0.1.14` tag;
+  2. dispatch `release.yml` with `0.1.14`;
+  3. a digest-pin PR.
+
+  Matt updates the app only after the pin.
+- **On the Pi, every command runs as `sudo docker exec blackgold-trading_core_1 node packages/core/dist/main.js …`.**
+  Two first attempts on 2026-10-18 failed for lack of each part: the bare `node` command on the host, and
+  `docker` without `sudo`. Files the container reads or writes live under
+  `~/umbrel/app-data/blackgold-trading/data`, which is `/data` inside it. Never hand the owner a command without
+  both.
 
 - **D-57 PR-B2: `reconcile corporate-actions`** (`ingest/reconcile-corporate-actions.ts`).
   - **It reads Tiingo from the store it runs against, and that must be the research store.** It refuses a store
