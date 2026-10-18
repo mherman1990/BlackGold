@@ -17,12 +17,16 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 **Newest first (2026-10-18).**
 
-- **0.1.14 is the release that puts D-57 on the Pi.** It is cut the 0.1.13 way:
-  1. a bump PR, with the compose on the bare `0.1.14` tag;
-  2. dispatch `release.yml` with `0.1.14`;
-  3. a digest-pin PR.
-
-  Matt updates the app only after the pin.
+- **0.1.14 is published and pinned** (`0.1.14@sha256:e0974f33…24a0`; release run #17 from `b3127d5`; both
+  architectures; anonymously pullable). Run `release-verify.yml` with `0.1.14` once the pin is on `main`, because
+  it asserts that the compose pins that digest. Updating the Pi is Matt's act.
+- **A tag pushed by hand before the bump merges blocks the release.** It names the wrong commit, fails the
+  version guard, and then trips the dispatch path's existing-tag guard. Only Matt can delete it, because this
+  credential is refused ref deletion. Both guards held on 2026-10-18 and nothing was published. Release by
+  dispatch only, after the bump PR merges.
+- **The research store is meant to pull Tiingo actions nightly** (`BLACKGOLD_AUTO_INGEST_ACTIONS=tiingo` in its
+  `secrets.env`; Matt asked for it on 2026-10-18, and it is unconfirmed until the status page shows fresh actions). The evaluation store must never do this (D-57(b)). Its commands must not read that file:
+  use a one-off container with its own `/data` and no `secrets` mount.
 - **On the Pi, every command runs as `sudo docker exec blackgold-trading_core_1 node packages/core/dist/main.js …`.**
   Two first attempts on 2026-10-18 failed for lack of each part: the bare `node` command on the host, and
   `docker` without `sudo`. Files the container reads or writes live under
