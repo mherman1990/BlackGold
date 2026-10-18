@@ -242,6 +242,27 @@ node packages/core/dist/main.js reconcile corporate-actions \
   [--curated curated.csv] [--structural structural.json]
 ```
 
+**On the Pi** it runs inside the app's container, which sees only the app's data directory, mounted as `/data`.
+So put your downloads there first, and name every file and output by its `/data/...` path:
+
+```bash
+D57=~/umbrel/app-data/blackgold-trading/data/d57
+sudo mkdir -p "$D57"
+sudo cp vti.json vtv.json vug.json iShares-Russell-2000-ETF_fund.xls "$D57"/
+sudo chown -R 1000:1000 "$D57"
+
+sudo docker exec blackgold-trading_core_1 \
+  node packages/core/dist/main.js reconcile corporate-actions \
+  --charter strategies/etf-trend-vol/charter.yaml \
+  --out /data/d57/reconciled-1.json --report /data/d57/reconciled-1.report.json \
+  --vanguard VTI=/data/d57/vti.json,VTV=/data/d57/vtv.json,VUG=/data/d57/vug.json \
+  --ishares IWM=/data/d57/iShares-Russell-2000-ETF_fund.xls
+```
+
+The charter path is relative to the image, which carries the signed charter. The outputs appear in `$D57` on
+the Pi. Keep a copy of the file you sign somewhere outside the app: uninstalling Black Gold deletes its data
+directory.
+
 **What it reads:**
 - The charter sets the scope: its universe, cash and benchmarks.
 - It also sets the windows: DESIGN and RECENT, each with the feature warm-up in front. The holdout's middle is
@@ -286,8 +307,13 @@ curating a file. Tiingo's daily rows carry `divCash` and `splitFactor`; `ingest 
 ```bash
 node packages/core/dist/main.js ingest tiingo-actions \
   --symbols VTI,QQQ,IWM,VTV,VUG,XLK,XLF,XLV,XLI,XLP,XLU,XLY,BIL,SPY \
-  --start 2006-04-01 --end 2026-09-06
+  --start 2006-03-01 --end <the last session>
 ```
+
+Start before 2006-03-22, where `reconcile corporate-actions` opens its design window. Starting later would
+make an action in the gap invisible to every source, so it would be neither written nor flagged. (Before
+0.1.14 this read `--start 2006-04-01`; a store loaded that way needs this rerun.) On the Pi, prefix the
+command with `sudo docker exec blackgold-trading_core_1`.
 
 Tiingo is a **single source**, so every action it produces is flagged `UNVERIFIED_SINGLE_SOURCE`: it feeds the
 total-return series for research and decisions, but any run that touches it is **barred from promotion evidence**

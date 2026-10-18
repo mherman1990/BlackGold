@@ -2,7 +2,23 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-10-06 (third pass) by Claude Code. **D-57 PR-B2 is built: `reconcile corporate-actions` writes the unsigned vendored file for a charter, and the report Matt curates and audits from.**
+**Last updated:** 2026-10-18 by Claude Code. **0.1.14 is being cut (Matt, 2026-10-18: "cut 0.1.14"), because the Pi still runs 0.1.13 and 0.1.13 cannot reconcile.**
+
+- **The Pi, read from its status page on 2026-10-18 at 01:31Z.** It runs 0.1.13, cut from PR #105 on 2026-10-04,
+  so none of PRs #106-#115 is installed, `reconcile corporate-actions` included.
+  - **Healthy:** the ledger (440 events) is intact, verified and sealed through 2026-10-16. Tiingo bars are
+    current to 2026-10-16, there are 609 GiB free, and the mode is RESEARCH.
+  - **Tiingo corporate actions start too late and stop early.** They were ingested with the old runbook's
+    `--start 2006-04-01 --end 2026-09-06`. Reconcile opens its window on 2006-03-22, and `BLACKGOLD_AUTO_INGEST_ACTIONS`
+    is unset, so nothing after 2026-09-01 is held. The fix is one rerun from 2006-03-01 to the last session
+    (runbook corrected).
+  - **One `ingest_market_data` run failed.** Bars caught up, so it isn't blocking; Matt is reading its error.
+    Alpaca's "43d stale" is expected, since the bar source moved to Tiingo (D-49).
+- **0.1.14 ships PRs #106-#115** with no migration, dependency, host or compose change; see `CHANGELOG.md`. It
+  also corrects the runbooks: `sudo` on every `docker` command (the `umbrel` user is refused the socket), the
+  Pi's `/data` paths for `reconcile`, and the Tiingo actions start date.
+
+**2026-10-06 (third pass).** **D-57 PR-B2 is built: `reconcile corporate-actions` writes the unsigned vendored file for a charter, and the report Matt curates and audits from.**
 
 - **Scope** comes from the charter: universe, cash and benchmarks, over DESIGN and RECENT. Each window is led by the
   feature warm-up (`featureLoadStart`, now shared with `computeFeatures`), so the windows open 2006-03-22 and

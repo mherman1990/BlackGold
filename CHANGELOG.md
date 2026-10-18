@@ -2,6 +2,85 @@
 
 Written for the operator. Each entry states what changed, why it matters, required actions, risk impact, migration, and rollback. The top heading's version must match `package.json`, `blackgold-trading/umbrel-app.yml`, and the compose image tag (CI enforces this).
 
+## 0.1.14
+
+Puts the D-57 corporate-actions reconciliation on the Pi, with the signed 0.3.0 charter. This release includes
+everything merged to `main` since 0.1.13, PRs #106-#115. The update switches nothing new on.
+
+**What changed**
+
+- **`reconcile corporate-actions` (D-57, D-58).** It builds the unsigned two-source corporate-actions file for
+  a charter, and a report to audit it against:
+  - **Scope:** the charter's universe, cash and benchmarks, over DESIGN and RECENT, each with its feature
+    warm-up. The windows open 2006-03-22 and 2023-10-23. The sealed holdout's middle is never read.
+  - **Sources:**
+    - Tiingo's actions, read from this store and written nowhere;
+    - State Street's distribution workbook and NAV histories, fetched;
+    - the Vanguard and iShares files you download;
+    - your curated CSV and structural JSON.
+  - **Output:** two new files and never an overwrite, an artifact per input, and one ledger event. It appends no
+    observation. The report's `toCurate` lists every action only Tiingo reports.
+- **Ingest refuses an unsigned corporate-actions file** (D-57 PR-A).
+  - `ingest corporate-actions --file` reads a file only once `approval.approvedBy` and `approvedAt` are filled
+    and `actionsHash` matches its actions.
+  - The vendored parser (1.6.0) also refuses actions the total-return series would value wrongly:
+    - an unread field;
+    - a spin-off without its child's first close;
+    - a merger paying stock;
+    - a delisting with no stated price;
+    - a second merger or delisting for one fund;
+    - anything dated after a fund's series ends.
+- **The signed charter 0.3.0 and `risk.yaml` 0.2.0** (D-56) are baked into the image.
+  - `research evaluate` now reads F2 as a promotion co-gate on chain-linked curves, and computes section 17's
+    conditions (`AGGREGATE_VERSION` 1 -> 2).
+  - A failed primary with Secondary 2 beaten routes to owner review, never to ACTIVE.
+  - `risk.yaml`'s daily turnover cap now admits gross turnover up to 2, for the one-pass weekly rebalance.
+- **Shadow track repairs.** None of these run on this release's settings.
+  - Slice 3b's seven open review findings are fixed (#107).
+  - Reconciler breaks now feed a sticky shadow halt that you re-arm, through the new `shadow status` and
+    `shadow rearm` commands (D-54).
+  - The liquidity check is wired into the decision gate (D-55). The order-level predicate is built, but
+    nothing consumes it until D-55's conflicts 2, 3 and 5 are resolved.
+- **Runbooks.**
+  - Commands on the Pi now carry `sudo`: umbrelOS refuses `docker` to the `umbrel` user without it.
+  - The Tiingo actions ingest now starts 2006-03-01, before the reconcile window opens, instead of 2006-04-01.
+  - Step 2b shows `reconcile` as it runs on the Pi: inside the container, with your downloads and its outputs
+    under the app's data directory (`/data/...`).
+
+**Why it matters**
+
+- This is the release the D-57 steps need. Nothing on 0.1.13 can build, check or load the reconciled file
+  that registration waits on.
+- **Don't compare a 0.1.13 `research evaluate` verdict with a 0.1.14 one.** The aggregate routing changed
+  with the 0.3.0 charter, and runs on either version are non-evidential anyway.
+
+**Required actions**
+
+1. **Wait until `main`'s compose pins 0.1.14 by digest** (`ghcr.io/mherman1990/blackgold:0.1.14@sha256:…`)
+   before refreshing the store. A follow-up PR pins it once `release.yml` has published.
+2. **Take a verified backup** (`backup`, then `verify-backup`), then update Black Gold in umbrelOS. Leave the
+   mode at `RESEARCH`.
+3. **Fill the start of the Tiingo actions history and the gap since 2026-09-01** in this research store:
+   ```bash
+   sudo docker exec blackgold-trading_core_1 \
+     node packages/core/dist/main.js ingest tiingo-actions \
+     --symbols BIL,IWM,QQQ,SPY,VTI,VTV,VUG,XLF,XLI,XLK,XLP,XLU,XLV,XLY \
+     --start 2006-03-01 --end <the last session>
+   ```
+4. **Optional:** add `BLACKGOLD_AUTO_INGEST_ACTIONS=tiingo` to `secrets.env` so the nightly ingest keeps actions
+   current here. Do this in the research store only, never in the evaluation store (D-57(b)).
+5. **Then run `reconcile corporate-actions`.** `docs/runbooks/first-ingestion.md` Step 2b covers the loop:
+   curate, rerun, audit, sign, ingest into a fresh evaluation store.
+
+**Risk / migration / rollback**
+
+- **No migration, no new dependency, no new outbound host.** `www.ssga.com` was already allowlisted, and
+  reconcile is its second, manual-only use. No compose or environment change.
+- **No live path,** broker credential, mode or authorization change. The gateway's LIMIT-sell pricing change
+  (D-55) is in code that no running path reaches. Live trading remains disabled by construction.
+- **Rollback:** reinstall 0.1.13 (`0.1.13@sha256:0b504052…7c66`) over the same data. No schema changed, so
+  0.1.13 reads the store as it was. Files written by `reconcile` are yours to keep or delete.
+
 ## 0.1.13
 
 Puts the D-53 shadow track and the corrected research evaluation on the Pi. Everything merged to `main` since

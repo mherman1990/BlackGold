@@ -47,15 +47,18 @@ account. They go in the app environment, never in the repo, the image, or a log.
 
 2. **Restart Black Gold** (umbrelOS → the app → Restart) so the container starts with the new environment.
 
-3. **Run the historical bulk pull** with `docker exec`, which inherits the container's environment. `ingest`
+3. **Run the historical bulk pull** with `docker exec`, which inherits the container's environment. On umbrelOS
+   the `umbrel` user is not in the `docker` group, so every `docker` command in this runbook needs `sudo`;
+   without it Docker answers `permission denied ... docker.sock`. Commands run inside the container, so a
+   `node packages/core/dist/main.js ...` typed at the Pi's own prompt fails with `Cannot find module`. `ingest`
    needs no charter file, so it runs self-contained. Follow the symbol batches and window in
    `docs/runbooks/first-ingestion.md`:
 
    ```bash
-   docker exec blackgold-trading_core_1 \
+   sudo docker exec blackgold-trading_core_1 \
      node packages/core/dist/main.js ingest alpaca-bars \
      --symbols VTI,QQQ,IWM,VTV,VUG,XLK,XLF --start 2006-04-01 --end 2026-09-06
-   docker exec blackgold-trading_core_1 \
+   sudo docker exec blackgold-trading_core_1 \
      node packages/core/dist/main.js ingest alpaca-bars \
      --symbols XLV,XLI,XLP,XLU,XLY,BIL,SPY --start 2006-04-01 --end 2026-09-06
    ```
@@ -69,7 +72,7 @@ account. They go in the app environment, never in the repo, the image, or a log.
 
    ```bash
    IMG="ghcr.io/mherman1990/blackgold:<version>@sha256:<digest>"   # the tag+digest this app is pinned to
-   docker run --rm --user 1000:1000 \
+   sudo docker run --rm --user 1000:1000 \
      -e BLACKGOLD_DATA_DIR=/data \
      -e BLACKGOLD_SEC_USER_AGENT_CONTACT="$BLACKGOLD_SEC_USER_AGENT_CONTACT" \
      -e BLACKGOLD_ALPACA_KEY_ID="$BLACKGOLD_ALPACA_KEY_ID" \
@@ -84,16 +87,17 @@ account. They go in the app environment, never in the repo, the image, or a log.
 4. **Confirm the bars landed** (no charter needed):
 
    ```bash
-   docker exec blackgold-trading_core_1 node packages/core/dist/main.js pit count --source alpaca.iex.bars.1d
-   docker exec blackgold-trading_core_1 node packages/core/dist/main.js pit latest --source alpaca.iex.bars.1d --entity VTI
+   sudo docker exec blackgold-trading_core_1 node packages/core/dist/main.js pit count --source alpaca.iex.bars.1d
+   sudo docker exec blackgold-trading_core_1 node packages/core/dist/main.js pit latest --source alpaca.iex.bars.1d --entity VTI
    ```
 
-5. **Coverage and the CR-09 depth measurement** read the charter, and the charter is not baked into the runtime
-   image (it bundles `config/examples` only), so pass it in with a bind mount from a checkout of this repo on the
-   Pi — or run the coverage/verify steps from a repo checkout pointed at the same `${APP_DATA_DIR}/data`:
+5. **Coverage and the CR-09 depth measurement** read the charter. Since 0.1.8 the image bundles `strategies/`,
+   so `sudo docker exec blackgold-trading_core_1 node packages/core/dist/main.js research coverage --path
+   strategies/etf-trend-vol/charter.yaml` reads the charter the installed release carries. To read a charter
+   from a checkout instead, bind-mount it as below:
 
    ```bash
-   docker run --rm --user 1000:1000 \
+   sudo docker run --rm --user 1000:1000 \
      -v ~/umbrel/app-data/blackgold-trading/data:/data \
      -v "$PWD/strategies:/app/strategies:ro" \
      ghcr.io/mherman1990/blackgold:<version>@sha256:<digest> \

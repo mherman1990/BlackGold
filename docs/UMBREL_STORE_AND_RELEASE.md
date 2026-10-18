@@ -138,7 +138,7 @@ Everything mutable lives under `${APP_DATA_DIR}`: `data/blackgold.sqlite` (+WAL)
    ```
 
    Expect HTTP 200 and a `docker-content-digest` header. Verified anonymous on 0.1.0: a package first published by Actions from a **public** repository inherits public visibility, so no manual visibility flip was needed. Do not assume that holds if the repository ever goes private - re-run this check, and if it returns 401 set the package back to public at github.com/users/mherman1990/packages/container/blackgold/settings. A private package fails the Umbrel install with `unauthorized`, which looks like a different fault from the missing-image `manifest unknown` but is the same step not done.
-7. `release-verify.yml` confirms `linux/arm64` and `linux/amd64` present and Pi can pull (`docker pull` on Pi).
+7. `release-verify.yml` confirms `linux/arm64` and `linux/amd64` present and Pi can pull (`sudo docker pull` on Pi).
 8. Compose in the store directory pinned to tag and digest in a follow-up PR if the digest was not known in advance; identity check green.
 9. Disposable-environment clean install, upgrade from previous version with existing data, health check, and rollback to previous tag all pass.
 10. Only then: Matt refreshes the store in umbrelOS and updates the app.
