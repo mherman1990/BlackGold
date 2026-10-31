@@ -4,10 +4,10 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parse } from "yaml";
 import { analyzeReport, DEFAULT_SOFT_MS, DEFAULT_THRESHOLD_MS, main as slowMain } from "../../scripts/check-slow-tests.ts";
 import { applyMutation, isMandatory, loadRecords, main as mutationsMain, verifyRecord, type MutationRecord } from "../../scripts/check-mutations.ts";
-import { evaluateReviewState, MAX_EXTERNAL_ROUNDS, parseRoundTable, REQUIRED_HEADINGS, type GitFacts, type PrFacts, type ReviewStateInput } from "../../scripts/check-review-state.ts";
+import { parse } from "yaml";
+import { evaluateReviewState, MAX_EXTERNAL_ROUNDS, parseRoundTable, REQUIRED_CHECKS, REQUIRED_HEADINGS, type GitFacts, type PrFacts, type ReviewStateInput } from "../../scripts/check-review-state.ts";
 
 /**
  * The review and test guardrails (D-59) are code, and this file proves each one refuses what it is there to
@@ -211,10 +211,7 @@ describe("check-review-state", () => {
     baseRef: "main",
     isDraft: false,
     body: bodyWith(["| 1 | " + HEAD + " | codex | fixed |"]),
-    checks: [
-      { name: "checks", conclusion: "success" },
-      { name: "image", conclusion: "success" },
-    ],
+    checks: REQUIRED_CHECKS.map((name) => ({ name, conclusion: "success" })),
     botReviewComments: [{ createdAt: "2026-11-02T15:00:00Z" }],
     headCommittedAt: "2026-11-02T14:00:00Z",
     ...over,
@@ -273,8 +270,9 @@ describe("check-review-state", () => {
   });
 
   it("CI must be green on the head and every template heading must be present", () => {
-    expect(evaluateReviewState(input({ checks: [{ name: "checks", conclusion: "success" }] }))).toEqual([expect.stringContaining('"image" has not reported')]);
-    expect(evaluateReviewState(input({ checks: [{ name: "checks", conclusion: "failure" }, { name: "image", conclusion: "success" }] }))).toEqual([expect.stringContaining("is failure")]);
+    const [checksJob, imageJob] = REQUIRED_CHECKS;
+    expect(evaluateReviewState(input({ checks: [{ name: checksJob, conclusion: "success" }] }))).toEqual([expect.stringContaining(`"${imageJob}" has not reported`)]);
+    expect(evaluateReviewState(input({ checks: [{ name: checksJob, conclusion: "failure" }, { name: imageJob, conclusion: "success" }] }))).toEqual([expect.stringContaining("is failure")]);
     const missing = pr().body.replace("## Rollback\nx\n", "");
     expect(evaluateReviewState(input({ body: missing }))).toEqual([expect.stringContaining('"## Rollback"')]);
     expect(REQUIRED_HEADINGS).toContain("## Review rounds");
@@ -305,7 +303,13 @@ describe("check-review-state", () => {
   it("the CLI prints the PR JSON shape for a cloud session without gh", () => {
     const out = execFileSync("node", ["scripts/check-review-state.ts", "--print-shape"], { cwd: ROOT, encoding: "utf8" });
     const shape = JSON.parse(out) as PrFacts;
-    expect(shape.checks.map((c) => c.name)).toEqual(["checks", "image"]);
+    expect(shape.checks.map((c) => c.name)).toEqual([...REQUIRED_CHECKS]);
+  });
+
+  it("the required check names are the CI workflow's job names (GitHub reports runs by name, not id)", () => {
+    const ci = parse(readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8")) as { jobs: Record<string, { name?: string }> };
+    expect(ci.jobs["checks"]?.name).toBe(REQUIRED_CHECKS[0]);
+    expect(ci.jobs["image"]?.name).toBe(REQUIRED_CHECKS[1]);
   });
 });
 

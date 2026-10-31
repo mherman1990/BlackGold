@@ -23,7 +23,12 @@ import { fileURLToPath } from "node:url";
 import { openFindingsForPr, parseKnownFindings, validateKnownFindings } from "./lib/known-findings.ts";
 
 export const MAX_EXTERNAL_ROUNDS = 3;
-export const REQUIRED_CHECKS = ["checks", "image"] as const;
+/**
+ * GitHub reports a check run by the workflow job's `name`, not its id, so these are the `name:` values in
+ * .github/workflows/ci.yml (ids `checks` and `image`). A rename there must be mirrored here, and
+ * review-tooling.test.ts asserts the two files agree.
+ */
+export const REQUIRED_CHECKS = ["lint, typecheck, test, policy, identity, secrets", "multi-arch image build (no push)"] as const;
 
 /** Every heading the PR template requires. A missing one is a missing record of what the merge did. */
 export const REQUIRED_HEADINGS = [
@@ -247,10 +252,7 @@ export const PR_JSON_SHAPE: PrFacts = {
   baseRef: "main",
   isDraft: false,
   body: "<the PR body, verbatim>",
-  checks: [
-    { name: "checks", conclusion: "success" },
-    { name: "image", conclusion: "success" },
-  ],
+  checks: REQUIRED_CHECKS.map((name) => ({ name, conclusion: "success" })),
   botReviewComments: [{ createdAt: "2026-11-02T15:04:05Z", body: "<review comment>" }],
   headCommittedAt: "2026-11-02T14:00:00Z",
 };
