@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeReport, DEFAULT_SOFT_MS, DEFAULT_THRESHOLD_MS, main as slowMain } from "../../scripts/check-slow-tests.ts";
-import { applyMutation, isMandatory, loadRecords, main as mutationsMain, verifyRecord, type MutationRecord } from "../../scripts/check-mutations.ts";
+import { applyMutation, isMandatory, loadRecords, main as mutationsMain, recordsToVerify, verifyRecord, type MutationRecord } from "../../scripts/check-mutations.ts";
 import { parse } from "yaml";
 import { evaluateReviewState, MAX_EXTERNAL_ROUNDS, parseRoundTable, REQUIRED_CHECKS, REQUIRED_HEADINGS, type GitFacts, type PrFacts, type ReviewStateInput } from "../../scripts/check-review-state.ts";
 
@@ -163,6 +163,19 @@ describe("check-mutations", () => {
     }
   });
 
+  it("a record is re-verified when its source, its YAML, or its guarding test changed (weakening the test alone cannot slip past)", () => {
+    const root = "/repo";
+    const record: MutationRecord = {
+      file: "packages/core/src/risk/orders.ts",
+      source: "/repo/test/mutations/risk-orders.yaml",
+      mutations: [{ name: "n", find: "a", replace: "b", test: "packages/core/test/risk-orders.test.ts" }],
+    };
+    expect(recordsToVerify([record], ["packages/core/src/risk/orders.ts"], root)).toHaveLength(1);
+    expect(recordsToVerify([record], ["test/mutations/risk-orders.yaml"], root)).toHaveLength(1);
+    expect(recordsToVerify([record], ["packages/core/test/risk-orders.test.ts"], root)).toHaveLength(1);
+    expect(recordsToVerify([record], ["packages/core/src/main.ts", "docs/STATE.md"], root)).toHaveLength(0);
+  });
+
   it("the tracked record for risk/orders.ts targets the notional cap's strictness", () => {
     const raw = parse(readFileSync(join(ROOT, "test/mutations/risk-orders.yaml"), "utf8")) as { file: string; mutations: { find: string; replace: string }[] };
     expect(raw.file).toBe("packages/core/src/risk/orders.ts");
@@ -212,7 +225,7 @@ describe("check-review-state", () => {
     isDraft: false,
     body: bodyWith(["| 1 | " + HEAD + " | codex | fixed |"]),
     checks: REQUIRED_CHECKS.map((name) => ({ name, conclusion: "success" })),
-    botReviewComments: [{ createdAt: "2026-11-02T15:00:00Z" }],
+    botReviewComments: [{ createdAt: "2026-11-02T15:00:00Z", commitSha: HEAD }],
     headCommittedAt: "2026-11-02T14:00:00Z",
     ...over,
   });
@@ -279,10 +292,24 @@ describe("check-review-state", () => {
     expect(REQUIRED_HEADINGS).toContain("## Known open findings");
   });
 
-  it("a round in flight blocks: the newest bot comment must postdate the head commit", () => {
+  it("a round in flight blocks: an external review must name the head commit, not merely postdate it", () => {
+    // A late review of the PREVIOUS head postdates the current commit and must still block (Codex P1, round 1).
+    const prev = "b".repeat(40);
+    expect(evaluateReviewState(input({ botReviewComments: [{ createdAt: "2026-11-02T15:00:00Z", commitSha: prev }] }))).toEqual([expect.stringContaining("no external review names the head commit")]);
+    expect(evaluateReviewState(input({ botReviewComments: [{ createdAt: "2026-11-02T13:00:00Z", commitSha: prev }, { createdAt: "2026-11-02T15:00:00Z", commitSha: HEAD }] }))).toEqual([]);
+    // Without a commit sha only the timestamp is available: an older comment blocks, a newer one is still reported as weak evidence.
     expect(evaluateReviewState(input({ botReviewComments: [{ createdAt: "2026-11-02T13:00:00Z" }] }))).toEqual([expect.stringContaining("has not completed")]);
+    expect(evaluateReviewState(input({ botReviewComments: [{ createdAt: "2026-11-02T15:00:00Z" }] }))).toEqual([expect.stringContaining("carry no commitSha")]);
     expect(evaluateReviewState(input({ botReviewComments: [] }))).toEqual([expect.stringContaining("no external review comment")]);
     expect(evaluateReviewState(input({ botReviewComments: [] }, {}, "", { noExternalReviewReason: "Codex rate-limited; non-financial path" }))).toEqual([]);
+  });
+
+  it("the no-external-review bypass is refused when a financial-critical file changed", () => {
+    const financial = { changedFiles: ["packages/core/src/risk/orders.ts", "docs/x.md"] };
+    const bypass = { noExternalReviewReason: "Codex rate-limited" };
+    expect(evaluateReviewState(input({ botReviewComments: [] }, financial, "", bypass))).toEqual([expect.stringContaining("--no-external-review is refused")]);
+    expect(evaluateReviewState(input({ botReviewComments: [] }, { changedFiles: ["packages/broker-gateway/src/guards/gateway.ts"] }, "", bypass))).toEqual([expect.stringContaining("--no-external-review is refused")]);
+    expect(evaluateReviewState(input({ botReviewComments: [] }, { changedFiles: ["packages/core/src/status/render.ts"] }, "", bypass))).toEqual([]);
   });
 
   it("moving a gate needs a decision on record, and the policy floor only rises", () => {

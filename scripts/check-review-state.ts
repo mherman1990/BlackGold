@@ -20,6 +20,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMandatory } from "./check-mutations.ts";
 import { openFindingsForPr, parseKnownFindings, validateKnownFindings } from "./lib/known-findings.ts";
 
 export const MAX_EXTERNAL_ROUNDS = 3;
@@ -57,8 +58,12 @@ export type PrFacts = {
   body: string;
   /** Status checks on the head commit; `conclusion` is GitHub's word (success, failure, neutral, ...). */
   checks: { name: string; conclusion: string | null }[];
-  /** Review comments by the external reviewer bot, newest or oldest order does not matter. */
-  botReviewComments: { createdAt: string; body?: string }[];
+  /**
+   * Review comments by the external reviewer bot, in any order. `commitSha` is the commit the bot reviewed
+   * (GitHub's `commit_id` on a review or review comment); when present it is what proves the current head was
+   * reviewed. A comment without it falls back to the timestamp comparison, which is weaker and is said so.
+   */
+  botReviewComments: { createdAt: string; body?: string; commitSha?: string }[];
   /** ISO instant the head commit was committed. */
   headCommittedAt: string;
 };
@@ -182,15 +187,30 @@ export function evaluateReviewState(input: ReviewStateInput): string[] {
   }
 
   // 6. No external round in flight (#94 and #102 merged mid-round). The bot must have reviewed THIS head.
+  //    A comment that names the commit it reviewed is the proof; a late-finishing review of the PREVIOUS head
+  //    can postdate the current head commit, so a timestamp alone is not (Codex P1, round 1).
+  const financialChanged = git.changedFiles.filter((f) => isMandatory(f));
   if (pr.botReviewComments.length === 0) {
     if (input.noExternalReviewReason === undefined) {
       problems.push("no external review comment exists on this PR; pass --no-external-review \"<reason>\" to record why it is merging without one (a financial-critical path may not)");
+    } else if (financialChanged.length > 0) {
+      problems.push(`--no-external-review is refused: this PR changes financial-critical files (${financialChanged.slice(0, 3).join(", ")}${financialChanged.length > 3 ? ", ..." : ""}) and must wait for an external round (D-59)`);
     }
   } else {
-    const newest = pr.botReviewComments.map((c) => Date.parse(c.createdAt)).reduce((a, b) => Math.max(a, b), 0);
-    const head = Date.parse(pr.headCommittedAt);
-    if (!Number.isFinite(newest) || !Number.isFinite(head)) problems.push("review comment or head commit timestamps are unreadable");
-    else if (newest < head) problems.push(`the newest external review comment predates the head commit; the round on ${pr.headSha.slice(0, 12)} has not completed, do not merge mid-round`);
+    const withSha = pr.botReviewComments.filter((c) => c.commitSha !== undefined);
+    if (withSha.length > 0) {
+      const reviewedHead = withSha.some((c) => c.commitSha === pr.headSha);
+      if (!reviewedHead) {
+        const latest = [...withSha].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+        problems.push(`no external review names the head commit ${pr.headSha.slice(0, 12)}; the latest reviewed ${latest?.commitSha?.slice(0, 12) ?? "?"}. The round on this head has not completed, do not merge mid-round`);
+      }
+    } else {
+      const newest = pr.botReviewComments.map((c) => Date.parse(c.createdAt)).reduce((a, b) => Math.max(a, b), 0);
+      const head = Date.parse(pr.headCommittedAt);
+      if (!Number.isFinite(newest) || !Number.isFinite(head)) problems.push("review comment or head commit timestamps are unreadable");
+      else if (newest < head) problems.push(`the newest external review comment predates the head commit; the round on ${pr.headSha.slice(0, 12)} has not completed, do not merge mid-round`);
+      else problems.push("external review comments carry no commitSha, so only their timestamps say the head was reviewed; supply commit_id from the GitHub review data (a late review of a previous head can postdate this commit)");
+    }
   }
 
   // 7. Moving a gate needs a decision on record.
@@ -253,7 +273,7 @@ export const PR_JSON_SHAPE: PrFacts = {
   isDraft: false,
   body: "<the PR body, verbatim>",
   checks: REQUIRED_CHECKS.map((name) => ({ name, conclusion: "success" })),
-  botReviewComments: [{ createdAt: "2026-11-02T15:04:05Z", body: "<review comment>" }],
+  botReviewComments: [{ createdAt: "2026-11-02T15:04:05Z", body: "<review comment>", commitSha: "0123456789abcdef0123456789abcdef01234567" }],
   headCommittedAt: "2026-11-02T14:00:00Z",
 };
 
@@ -272,8 +292,16 @@ function prFactsFromGh(root: string, number: number): PrFacts {
   const comments = JSON.parse(execFileSync("gh", ["api", `repos/{owner}/{repo}/pulls/${number}/comments`, "--paginate"], { cwd: root, encoding: "utf8" })) as {
     created_at: string;
     body?: string;
+    commit_id?: string;
     user?: { login?: string; type?: string };
   }[];
+  const reviews = JSON.parse(execFileSync("gh", ["api", `repos/{owner}/{repo}/pulls/${number}/reviews`, "--paginate"], { cwd: root, encoding: "utf8" })) as {
+    submitted_at?: string;
+    body?: string;
+    commit_id?: string;
+    user?: { login?: string; type?: string };
+  }[];
+  const isBot = (u: { login?: string; type?: string } | undefined): boolean => u?.type === "Bot" || /codex|\[bot\]/i.test(u?.login ?? "");
   const head = view.commits?.find((c) => c.oid === view.headRefOid);
   return {
     number: view.number,
@@ -282,13 +310,15 @@ function prFactsFromGh(root: string, number: number): PrFacts {
     isDraft: view.isDraft,
     body: view.body,
     checks: (view.statusCheckRollup ?? []).map((c) => ({ name: c.name ?? c.context ?? "", conclusion: (c.conclusion ?? c.state ?? null)?.toLowerCase() ?? null })),
-    botReviewComments: comments
-      .filter((c) => c.user?.type === "Bot" || /codex|\[bot\]/i.test(c.user?.login ?? ""))
-      .map((c) => {
-        const out: { createdAt: string; body?: string } = { createdAt: c.created_at };
-        if (c.body !== undefined) out.body = c.body;
-        return out;
-      }),
+    botReviewComments: [
+      ...comments.filter((c) => isBot(c.user)).map((c) => ({ createdAt: c.created_at, body: c.body, commitSha: c.commit_id })),
+      ...reviews.filter((r) => isBot(r.user) && r.submitted_at !== undefined).map((r) => ({ createdAt: r.submitted_at ?? "", body: r.body, commitSha: r.commit_id })),
+    ].map((c) => {
+      const out: { createdAt: string; body?: string; commitSha?: string } = { createdAt: c.createdAt };
+      if (c.body !== undefined) out.body = c.body;
+      if (c.commitSha !== undefined) out.commitSha = c.commitSha;
+      return out;
+    }),
     headCommittedAt: head?.committedDate ?? "",
   };
 }

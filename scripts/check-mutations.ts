@@ -60,6 +60,21 @@ export function mandatoryChangedFiles(changed: readonly string[]): string[] {
   return changed.filter(isMandatory);
 }
 
+/**
+ * Which records to verify for a set of changed files: a record whose source file changed, whose YAML record
+ * changed, or whose named test file changed. The last two matter as much as the first: a PR can weaken the
+ * guarding test, or edit the record itself, without touching the source (Codex P1, round 1). Pure.
+ */
+export function recordsToVerify(records: readonly MutationRecord[], changed: readonly string[], root: string): MutationRecord[] {
+  const changedSet = new Set(changed);
+  return records.filter((r) => {
+    if (changedSet.has(r.file)) return true;
+    const recordRel = r.source.startsWith(root + "/") ? r.source.slice(root.length + 1) : r.source;
+    if (changedSet.has(recordRel)) return true;
+    return r.mutations.some((m) => changedSet.has(m.test));
+  });
+}
+
 /** Pure: replaces `find` with `replace`, refusing unless `find` occurs exactly once. */
 export function applyMutation(content: string, find: string, replace: string): string {
   if (find.length === 0) throw new Error("mutation `find` is empty");
@@ -219,8 +234,8 @@ export function main(argv: readonly string[], root: string, out: (line: string) 
     for (const f of mandatory) {
       if (!byFile.has(f)) problems.push(`${f} changed and sits in the mandatory set but has no record under ${args.records}/`);
     }
-    toVerify = mandatory.map((f) => byFile.get(f)).filter((r): r is MutationRecord => r !== undefined);
-    out(`mutation check: ${changed.length} changed file(s) against ${args.base}, ${mandatory.length} in the mandatory set, ${toVerify.length} record(s) to verify`);
+    toVerify = recordsToVerify(records, changed, root);
+    out(`mutation check: ${changed.length} changed file(s) against ${args.base}, ${mandatory.length} in the mandatory set, ${toVerify.length} record(s) to verify (source, record or guarding test changed)`);
   }
 
   const runner = runnerOverride ?? vitestRunner(root, args.runner);
