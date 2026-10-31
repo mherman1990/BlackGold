@@ -148,6 +148,13 @@ export function verifyRecord(root: string, record: MutationRecord, runner: Runne
       problems.push(`${record.source} [${m.name}]: test file ${m.test} does not exist`);
       continue;
     }
+    // The same file and filter must be GREEN on the unmodified source first. A misspelled `testName` selects no
+    // tests and vitest exits non-zero, which would otherwise read as a kill (Codex P1, round 2).
+    const baseline = runner(m.test, m.testName);
+    if (baseline !== 0) {
+      problems.push(`${record.source} [${m.name}]: ${m.test}${m.testName ? ` -t "${m.testName}"` : ""} is not green on the unmodified source (exit ${baseline}); the filter matches no test, or the test is already red`);
+      continue;
+    }
     try {
       writeFileSync(path, mutated);
       const code = runner(m.test, m.testName);

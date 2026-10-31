@@ -141,6 +141,11 @@ describe("check-mutations", () => {
       // A `find` that does not occur is reported, not skipped.
       const missing: MutationRecord = { ...record, mutations: record.mutations.map((m) => ({ ...m, find: "x > 99" })) };
       expect(verifyRecord(dir, missing, catching, quiet)).toEqual([expect.stringContaining("not present")]);
+      // A runner that is red on the UNMODIFIED source (a misspelled testName selects nothing, or the test is
+      // already failing) is a problem, never a kill (Codex P1, round 2).
+      const alwaysRed = (): number => 1;
+      expect(verifyRecord(dir, record, alwaysRed, quiet)).toEqual([expect.stringContaining("not green on the unmodified source")]);
+      expect(readFileSync(join(dir, "src/guard.ts"), "utf8")).toContain("x > 10");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -302,6 +307,11 @@ describe("check-review-state", () => {
     expect(evaluateReviewState(input({ botReviewComments: [{ createdAt: "2026-11-02T15:00:00Z" }] }))).toEqual([expect.stringContaining("carry no commitSha")]);
     expect(evaluateReviewState(input({ botReviewComments: [] }))).toEqual([expect.stringContaining("no external review comment")]);
     expect(evaluateReviewState(input({ botReviewComments: [] }, {}, "", { noExternalReviewReason: "Codex rate-limited; non-financial path" }))).toEqual([]);
+  });
+
+  it("an unresolvable base is an error, never an empty diff that lets the financial checks pass", () => {
+    const problems = evaluateReviewState(input({ botReviewComments: [] }, { changedFiles: undefined }, "", { noExternalReviewReason: "x" }));
+    expect(problems).toEqual([expect.stringContaining("base ref could not be resolved")]);
   });
 
   it("the no-external-review bypass is refused when a financial-critical file changed", () => {

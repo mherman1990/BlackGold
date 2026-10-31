@@ -77,6 +77,14 @@ describe("known-findings rules on planted rows", () => {
     expect(p.errors.some((e) => e.includes("status"))).toBe(true);
   });
 
+  it("a document with no ledger table, or with two, is malformed rather than an empty ledger", () => {
+    const none = parseKnownFindings("# Known findings\n\n| Column | Meaning |\n|---|---|\n| x | y |\n");
+    expect(none.rows).toEqual([]);
+    expect(none.errors).toEqual([expect.stringContaining("no ledger table found")]);
+    const two = parseKnownFindings(HEADER + "\n" + HEADER);
+    expect(two.errors).toEqual([expect.stringContaining("2 ledger tables")]);
+  });
+
   it("tables with other headers are ignored, and open rows are found per PR", () => {
     const other = "| Column | Meaning |\n|---|---|\n| x | y |\n\n";
     const text = other + HEADER + row(["#118", "0123abc", "codex", "a", "P2", "tests", "next-pr", "open", ""]) + row(["#119", "0123abd", "codex", "b", "P2", "tests", "next-pr", "resolved", "#120"]);

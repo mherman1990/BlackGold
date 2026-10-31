@@ -25,6 +25,12 @@ import { openFindingsForPr, parseKnownFindings, validateKnownFindings } from "./
 
 export const MAX_EXTERNAL_ROUNDS = 3;
 /**
+ * The external reviewer's GitHub login(s). Only these count toward "an external review names the head": any
+ * other automation account (a dependency bot, a repository bot) is not a review (Codex P2, round 2).
+ * Override with --reviewer <login> when the reviewer changes.
+ */
+export const EXTERNAL_REVIEWER_LOGINS = ["chatgpt-codex-connector[bot]"] as const;
+/**
  * GitHub reports a check run by the workflow job's `name`, not its id, so these are the `name:` values in
  * .github/workflows/ci.yml (ids `checks` and `image`). A rename there must be mirrored here, and
  * review-tooling.test.ts asserts the two files agree.
@@ -59,9 +65,10 @@ export type PrFacts = {
   /** Status checks on the head commit; `conclusion` is GitHub's word (success, failure, neutral, ...). */
   checks: { name: string; conclusion: string | null }[];
   /**
-   * Review comments by the external reviewer bot, in any order. `commitSha` is the commit the bot reviewed
-   * (GitHub's `commit_id` on a review or review comment); when present it is what proves the current head was
-   * reviewed. A comment without it falls back to the timestamp comparison, which is weaker and is said so.
+   * Review comments by the external reviewer (EXTERNAL_REVIEWER_LOGINS only; a --pr-json file must apply the
+   * same filter), in any order. `commitSha` is the commit the bot reviewed (GitHub's `commit_id` on a review
+   * or review comment); when present it is what proves the current head was reviewed. A comment without it
+   * falls back to the timestamp comparison, which is weaker and is said so.
    */
   botReviewComments: { createdAt: string; body?: string; commitSha?: string }[];
   /** ISO instant the head commit was committed. */
@@ -74,8 +81,12 @@ export type GitFacts = {
   dirtyTrackedFiles: string[];
   /** undefined when the branch has no upstream. */
   unpushedCommits: number | undefined;
-  /** Files changed against the base ref, committed or in the working tree. */
-  changedFiles: string[];
+  /**
+   * Files changed against the base ref, committed or in the working tree. `undefined` when the base ref cannot
+   * be resolved (shallow checkout, mistyped --base): that is an error, never an empty diff, because an empty
+   * diff would let the financial-path checks pass vacuously (Codex P1, round 2).
+   */
+  changedFiles: string[] | undefined;
   /** Whether `sha` is reachable from HEAD. */
   isAncestorOfHead: (sha: string) => boolean;
   /** Returns old and new POLICY_FLOOR values when that file changed. */
@@ -189,7 +200,11 @@ export function evaluateReviewState(input: ReviewStateInput): string[] {
   // 6. No external round in flight (#94 and #102 merged mid-round). The bot must have reviewed THIS head.
   //    A comment that names the commit it reviewed is the proof; a late-finishing review of the PREVIOUS head
   //    can postdate the current head commit, so a timestamp alone is not (Codex P1, round 1).
-  const financialChanged = git.changedFiles.filter((f) => isMandatory(f));
+  if (git.changedFiles === undefined) {
+    problems.push("the base ref could not be resolved, so the changed files are unknown; fetch the base (origin/main) or pass --base, because the financial-path and gate checks cannot run on an unknown diff");
+  }
+  const changedFiles = git.changedFiles ?? [];
+  const financialChanged = changedFiles.filter((f) => isMandatory(f));
   if (pr.botReviewComments.length === 0) {
     if (input.noExternalReviewReason === undefined) {
       problems.push("no external review comment exists on this PR; pass --no-external-review \"<reason>\" to record why it is merging without one (a financial-critical path may not)");
@@ -214,7 +229,7 @@ export function evaluateReviewState(input: ReviewStateInput): string[] {
   }
 
   // 7. Moving a gate needs a decision on record.
-  const gated = git.changedFiles.filter((f) => (DECISION_GATED_PATHS as readonly string[]).includes(f));
+  const gated = changedFiles.filter((f) => (DECISION_GATED_PATHS as readonly string[]).includes(f));
   if (gated.length > 0 && !/\bD-\d+\b/.test(pr.body)) problems.push(`this PR changes ${gated.join(", ")} but the body cites no decision (D-NN)`);
   if (git.policyFloor.base !== undefined && git.policyFloor.head !== undefined && git.policyFloor.head < git.policyFloor.base) {
     problems.push(`test/policy/POLICY_FLOOR drops from ${git.policyFloor.base} to ${git.policyFloor.head}; the floor only rises`);
@@ -246,7 +261,7 @@ export function gatherGitFacts(root: string, base: string): GitFacts {
   const mergeBase = tryGit(root, ["merge-base", base, "HEAD"]);
   const changedFiles =
     mergeBase === undefined
-      ? []
+      ? undefined
       : [...new Set(`${git(root, ["diff", "--name-only", mergeBase, "HEAD"])}\n${git(root, ["diff", "--name-only", "HEAD"])}`.split("\n").filter(Boolean))];
   const floorAt = (ref: string): number | undefined => {
     const raw = tryGit(root, ["show", `${ref}:test/policy/POLICY_FLOOR`]);
@@ -277,7 +292,7 @@ export const PR_JSON_SHAPE: PrFacts = {
   headCommittedAt: "2026-11-02T14:00:00Z",
 };
 
-function prFactsFromGh(root: string, number: number): PrFacts {
+function prFactsFromGh(root: string, number: number, reviewerLogins: readonly string[]): PrFacts {
   const view = JSON.parse(
     execFileSync("gh", ["pr", "view", String(number), "--json", "number,headRefOid,baseRefName,isDraft,body,statusCheckRollup,commits"], { cwd: root, encoding: "utf8" }),
   ) as {
@@ -301,7 +316,7 @@ function prFactsFromGh(root: string, number: number): PrFacts {
     commit_id?: string;
     user?: { login?: string; type?: string };
   }[];
-  const isBot = (u: { login?: string; type?: string } | undefined): boolean => u?.type === "Bot" || /codex|\[bot\]/i.test(u?.login ?? "");
+  const isBot = (u: { login?: string; type?: string } | undefined): boolean => u?.login !== undefined && reviewerLogins.includes(u.login);
   const head = view.commits?.find((c) => c.oid === view.headRefOid);
   return {
     number: view.number,
@@ -323,10 +338,10 @@ function prFactsFromGh(root: string, number: number): PrFacts {
   };
 }
 
-type Args = { prJson?: string; pr?: number; maxRounds: number; base: string; noExternalReview?: string; printShape: boolean };
+type Args = { prJson?: string; pr?: number; maxRounds: number; base: string; noExternalReview?: string; printShape: boolean; reviewers: string[] };
 
 function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { maxRounds: MAX_EXTERNAL_ROUNDS, base: "origin/main", printShape: false };
+  const args: Args = { maxRounds: MAX_EXTERNAL_ROUNDS, base: "origin/main", printShape: false, reviewers: [...EXTERNAL_REVIEWER_LOGINS] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = (): string => {
@@ -339,6 +354,7 @@ function parseArgs(argv: readonly string[]): Args {
     else if (a === "--max-rounds") args.maxRounds = Number(next());
     else if (a === "--base") args.base = next();
     else if (a === "--no-external-review") args.noExternalReview = next();
+    else if (a === "--reviewer") args.reviewers = [next()];
     else if (a === "--print-shape") args.printShape = true;
     else throw new Error(`unknown argument ${a ?? ""}`);
   }
@@ -353,7 +369,7 @@ export function main(argv: readonly string[], root: string, out: (line: string) 
   }
   let pr: PrFacts;
   if (args.prJson !== undefined) pr = JSON.parse(readFileSync(args.prJson.startsWith("/") ? args.prJson : join(root, args.prJson), "utf8")) as PrFacts;
-  else if (args.pr !== undefined) pr = prFactsFromGh(root, args.pr);
+  else if (args.pr !== undefined) pr = prFactsFromGh(root, args.pr, args.reviewers);
   else {
     out("review-state check FAILED: pass --pr-json <file> (see --print-shape) or --pr <number>");
     return 2;

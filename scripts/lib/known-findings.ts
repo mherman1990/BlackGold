@@ -67,6 +67,7 @@ export function parseKnownFindings(markdown: string): ParseResult {
   const errors: string[] = [];
   const lines = markdown.split("\n");
   let inTable = false;
+  let tables = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     if (!line.trim().startsWith("|")) {
@@ -77,6 +78,7 @@ export function parseKnownFindings(markdown: string): ParseResult {
     if (!inTable) {
       if (cells.length === COLUMNS.length && cells.every((c, j) => c === COLUMNS[j])) {
         inTable = true;
+        tables += 1;
         const sep = splitRow(lines[i + 1] ?? "");
         if (!isSeparator(sep)) errors.push(`line ${i + 2}: ledger header is not followed by a separator row`);
         i += 1;
@@ -112,6 +114,10 @@ export function parseKnownFindings(markdown: string): ParseResult {
       line: lineNo,
     });
   }
+  // Exactly one ledger table must exist. A renamed or deleted header would otherwise parse as an empty, valid
+  // ledger, and every recorded finding would silently vanish from the gate (Codex P2, round 2).
+  if (tables === 0) errors.push(`no ledger table found: a table headed "| ${COLUMNS.join(" | ")} |" is required`);
+  else if (tables > 1) errors.push(`${tables} ledger tables found; the ledger is one table`);
   return { rows, errors };
 }
 
