@@ -1,0 +1,8 @@
+# Mutation record for the order-level limit predicate (D-55). See README.md in this directory.
+file: packages/core/src/risk/orders.ts
+mutations:
+  - name: notional cap must be strict, so an order exactly at the cap passes
+    find: "if (notional.gt(notionalCap))"
+    replace: "if (notional.gte(notionalCap))"
+    test: packages/core/test/risk-orders.test.ts
+    testName: "notional: at 1500 USD passes"

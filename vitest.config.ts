@@ -6,6 +6,14 @@ const src = (p: string): string => fileURLToPath(new URL(`./packages/${p}/src/in
 /** Suite timeout, applied to the root and to every project (projects do not inherit the root value). */
 const TIMEOUT_MS = 30_000;
 
+/**
+ * Slow-test budget. A test above this is a defect in the test, not a reason to raise the timeout: runner speed
+ * varies two to three times, and before the 2026-09-21 fixture pass a 7 s test on a fast machine was a timeout
+ * on a slow one (HANDOFF.md section 7). vitest only marks a slow test in its output; the gate that fails CI is
+ * `scripts/check-slow-tests.ts`, which reads the JSON report written below.
+ */
+const SLOW_MS = 5_000;
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -35,10 +43,14 @@ export default defineConfig({
      * forgotten. (Fixed standalone in the same session; ported here so this PR's CI is robust.)
      */
     testTimeout: TIMEOUT_MS,
+    slowTestThreshold: SLOW_MS,
+    /** The JSON report is what `npm run check:slow` reads; `.vitest/` is gitignored. */
+    reporters: ["default", "json"],
+    outputFile: { json: ".vitest/report.json" },
     projects: [
-      { test: { name: "unit", include: ["packages/*/test/**/*.test.ts"], environment: "node", testTimeout: TIMEOUT_MS } },
-      { test: { name: "policy", include: ["test/policy/**/*.test.ts"], environment: "node", testTimeout: TIMEOUT_MS } },
-      { test: { name: "temporal", include: ["test/temporal/**/*.test.ts"], environment: "node", testTimeout: TIMEOUT_MS } },
+      { test: { name: "unit", include: ["packages/*/test/**/*.test.ts"], environment: "node", testTimeout: TIMEOUT_MS, slowTestThreshold: SLOW_MS } },
+      { test: { name: "policy", include: ["test/policy/**/*.test.ts"], environment: "node", testTimeout: TIMEOUT_MS, slowTestThreshold: SLOW_MS } },
+      { test: { name: "temporal", include: ["test/temporal/**/*.test.ts"], environment: "node", testTimeout: TIMEOUT_MS, slowTestThreshold: SLOW_MS } },
     ],
     coverage: { provider: "v8", reporter: ["text", "lcov"] },
   },

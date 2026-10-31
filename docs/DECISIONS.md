@@ -58,6 +58,8 @@ ADR-style register. Status values: **Accepted** (Matt decided or a fixed constra
 | D-56 | The etf-trend-vol 0.3.0 charter bundle: keep the Sharpe-difference primary metric and add F2 as a promotion co-gate on chain-linked curves (OD-5, OD-6); a failed primary with Secondary 2 beaten goes to owner review, never ACTIVE (OD-7); §14.3's minimum restated as the schedule's capacity, 100 (OD-8); Secondary 2's two readings confirmed (OD-9); the prospective clock runs from registration (OD-10) | **Accepted** 2026-10-05 by Matt (answers in session), including D-55's conflicts 1, 4 and 6 folded in as OD-11 to OD-13; **owner-signed** 2026-10-05 with `charter_version` 0.3.0 (`code_commit 58d4474`) and `risk.yaml` 0.2.0, merged as PR #111 | - |
 | D-57 | B-2: Claude Code may build a second automated public corporate-actions adapter plus a machine reconciler, and the owner audits and approves the reconciled ≥2-source file per universe before ingest; the citable evaluation runs from a separate store with no Tiingo action rows | **Accepted** 2026-10-05 by Matt. Amends D-29 and D-49 | Citable evidence (approval gate and reconciler built 2026-10-06; the second-source adapter waits on the owner's source decisions) |
 | D-58 | D-57's second corporate-actions sources: SSGA is fetched automatically; BlackRock (IWM) and Vanguard (VTI, VTV, VUG) are read only from files the owner downloads; the gaps no issuer feed covers (VTI/VTV/VUG before 2016-12, and all of QQQ) close with owner-curated entries from the issuers' own documents; Nasdaq's feed is not used | **Accepted** 2026-10-06 by Matt ("use your recommendations on all three"). Scopes D-57 | Citable evidence |
+| D-59 | Review budget and definition of done: at most three external review rounds per PR; after that only a P1 finding on the severity floor (orders, accounts, money arithmetic, temporal reads, fail-open, live surfaces) blocks the merge, and every other open finding is a row in `docs/KNOWN_FINDINGS.md` with a target rung. Enforced by `scripts/check-review-state.ts`, `test/policy/known-findings.test.ts`, CI-verified mutation records (`scripts/check-mutations.ts`), the policy-count floor and a slow-test gate (10 s hard, 5 s soft) | **Accepted** 2026-10-31 by Matt ("3 rounds, then merge") | Every later PR |
+| D-60 | Owner cadence: one weekly owner sitting driven by a generated `docs/OWNER_QUEUE.md` of copy-paste Pi commands, sign commands and decisions, each decision carrying a recommended default; silence re-proposes a default and never applies it | **Accepted** 2026-10-31 by Matt ("weekly digest + sitting") | Owner acts from the first sitting on; the generator is the next PR |
 | R-01 | Postgres / Kafka / Kubernetes / vector DB | Rejected | - |
 | R-02 | Local LLM on the Pi | Rejected | - |
 | R-03 | Multi-agent committee (Scout/Analyst/Adjudicator) at MVP | Rejected | - |
@@ -1663,6 +1665,84 @@ the reconciled file.
   - **The owner's files:** the iShares and Vanguard downloads and the curated actions, read from disk.
 - **What it writes:** the unsigned file, a report whose `toCurate` lists every action only Tiingo reports, an
   artifact for every input, and one ledger event. It appends no observation, and it never overwrites an output.
+
+---
+
+## D-59 Review budget, definition of done, and the guardrails that enforce them
+
+**Status:** Accepted 2026-10-31 by Matt ("3 rounds, then merge"), choosing the recommended option in the plan to
+move toward live trading. Recorded with the PR that builds the enforcement.
+
+**Why.** Three failure modes recurred and prose rules did not stop them. Eleven external review rounds ran in one
+sitting on PR #91, again on #101 (2h11m) and #114 (1h41m); on #91 four of the eleven rounds introduced a defect the
+previous round's fix caused while the guarding test stayed green (STATE.md). PR #102's round-2 fixes were answered
+in the thread as "fixed in `02f381d`", a commit never pushed, and 0.1.13 shipped the unrepaired code. PRs #94 and
+#102 merged while a round was still running. The rule "never merge mid-round" was written after #94 and #102 still
+happened. Only code gates have held in this repository (the D-38 release guard, the policy tests), so the review
+protocol is code.
+
+**Decision.**
+
+1. **Budget.** At most three external review rounds per PR. A round is one pass by the external reviewer bot or
+   the owner on a pushed head. A Claude Code review subagent is `self` and never counts.
+2. **Severity floor.** After the third round, a finding blocks the merge only if it is P1 **and** in one of
+   `orders`, `accounts`, `money-arithmetic`, `temporal-reads`, `fail-open`, `live-surfaces`. Every other open
+   finding is a row in `docs/KNOWN_FINDINGS.md` with a target rung, named in the PR body, and the PR merges. A
+   finding outside the PR's declared scope is a follow-up from round one. Claude Code may call the stop under
+   this rule; the owner may override either way. Marking a finding `accepted` (it does not matter) is the
+   owner's act alone.
+3. **Definition of done.** `npm run check` green, including the new gates; the PR body complete with **Review
+   rounds**, **Mutation check** and **Known open findings**; a verified mutation record for every changed file
+   in the mandatory set (`scripts/check-mutations.ts`); `scripts/check-review-state.ts` passing and pasted
+   into the body.
+4. **Merge discipline.** Never merge during a round: the check refuses a head the bot has not commented on.
+   Zero unpushed commits, no modified tracked files, local HEAD equal to the PR head. Merge commits, not squash;
+   review-fix subjects end with `(review round N)`. One PR per session; split what does not fit.
+5. **Tests.** No test over 10 s, with 5 s the soft target that is warned on (`scripts/check-slow-tests.ts` on
+   vitest's JSON report; the 30 s timeout stays as the hang guard). The hard limit sits three times under the
+   timeout so a passing test cannot time out on a runner three times slower, and above the suite's slowest
+   legitimate tests (4 to 6 s under load on 2026-10-31) so the gate itself does not flake. The policy-test count only rises (`test/policy/POLICY_FLOOR`,
+   `test/policy/policy-count-floor.test.ts`, the test `docs/THREAT_MODEL.md` section 8 promised). Lowering the
+   floor, changing `docs/DECLARED_RUNG` or editing `test/policy/live-disabled.test.ts` needs a `D-NN` cited in
+   the PR body.
+6. **Rate-limited reviewer.** A completed round counts; an incomplete one does not. A financial-critical PR waits
+   for an external round. A non-financial PR may merge with `--no-external-review "<reason>"`, printed and
+   recorded.
+
+**Enforcement.** `scripts/check-review-state.ts` (pre-merge, pure evaluation plus git/GitHub facts;
+`--pr-json` for cloud sessions without `gh`), `scripts/check-slow-tests.ts` and `scripts/check-mutations.ts` in
+`npm run check` and CI, `test/policy/{known-findings,policy-count-floor,review-tooling}.test.ts`, the extended PR
+template, and `.claude/rules/review-and-tests.md`. `docs/REPOSITORY_AND_PR_WORKFLOW.md`'s authority matrix is
+aligned with D-37 in the same PR; it had still said "Merge: Matt only".
+
+**What it does not do.** It changes no financial code, no gate's content and no owner act. It adds no test that
+could be weakened without the floor noticing.
+
+---
+
+## D-60 Owner cadence: a weekly sitting driven by a generated queue
+
+**Status:** Accepted 2026-10-31 by Matt ("weekly digest + sitting"). The generator and the Pi wrappers are the
+next PR; this entry records the decision they implement.
+
+**Why.** Every act that moves Black Gold up its ladder and that Claude Code may not perform (sign, register, re-arm,
+place a credential, update the Pi, decide) has been requested ad hoc in chat, each with its own long Pi command
+that failed twice on 2026-10-18 for a missing `sudo` or a host `node`. The owner asked for his interaction time to
+drop and for the acts to be repeatable and batchable.
+
+**Decision.**
+
+1. One owner sitting a week (Sunday), driven by `docs/OWNER_QUEUE.md`, generated from `docs/owner-queue.yaml` and
+   tested for idempotency. Items are typed `command`, `sign`, `decision` or `data`; each command item is a
+   copy-paste block for the Pi (`bg ...`, `sudo tee ...`); each decision carries a recommended default, a reply
+   format and the cost of deciding wrong.
+2. Silence on a decision re-proposes the default the following week. Nothing is marked applied without
+   `decidedBy` and `decidedAt`. A default is never applied by Claude Code.
+3. Releases bundle compose changes so a Pi update is at most one per sitting. A week with an empty queue says so.
+4. Owner-only acts (`experiment register`, `policy sign`, `corporate-actions sign`, `shadow rearm`, credential
+   placement, mode flips) stay owner-only; the queue makes each one paste, it does not move the act.
+
+**What it does not do.** It grants Claude Code no new authority. The carve-outs in `CLAUDE.md` are unchanged.
 
 ---
 
