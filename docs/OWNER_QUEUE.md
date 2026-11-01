@@ -117,27 +117,30 @@ Legend: **PENDING** is yours this sitting; **BLOCKED** waits on the named PR or 
 2. Open and save each as JSON, naming the fund in the file name: https://advisors.vanguard.com/investments/products/api/funds/0970/pricing/distributions (VTI), .../0966/... (VTV), .../0967/... (VUG).
 3. Keep them with your other Black Gold files; d57-reconcile.sh stages them on the Pi in sitting 2.
 
-### [BLOCKED] install-wrappers: Install the Pi wrappers from the image and set your signer name
+### [BLOCKED] update-0115: Back up, then update the Pi to 0.1.15 (the long form, once; the wrappers arrive with this update)
 
-Blocked by: release 0.1.15 (PR B2) installed on the Pi
+Blocked by: release 0.1.15 (PR B2) published and pinned
 
 ```bash
-sudo docker cp blackgold-trading_core_1:/app/scripts/pi ~/bg
+sudo docker exec blackgold-trading_core_1 node packages/core/dist/main.js backup
+sudo docker exec blackgold-trading_core_1 node packages/core/dist/main.js health
+# umbrelOS: App Store -> Community App Stores -> Black Gold -> refresh -> Update
+# then the next item installs the wrappers from the new image, and ends with: pi-update.sh after
+```
+
+### [BLOCKED] install-wrappers: Install the Pi wrappers from the 0.1.15 image and set your signer name
+
+Blocked by: the update to 0.1.15 above (the 0.1.14 image has no /app/scripts/pi)
+
+```bash
+mkdir -p ~/bg
+sudo docker cp blackgold-trading_core_1:/app/scripts/pi/. ~/bg
 sudo chown -R "$USER" ~/bg
 echo 'export PATH="$HOME/bg:$PATH"' >> ~/.profile
 echo 'export BLACKGOLD_SIGNER="Matt Herman"' >> ~/.profile
 export PATH="$HOME/bg:$PATH"
 export BLACKGOLD_SIGNER="Matt Herman"
 bg health
-```
-
-### [BLOCKED] update-0115: Back up, then update the Pi to 0.1.15
-
-Blocked by: release 0.1.15 (PR B2) published and pinned
-
-```bash
-pi-update.sh before
-# umbrelOS: App Store -> Community App Stores -> Black Gold -> refresh -> Update
 pi-update.sh after
 ```
 
@@ -251,7 +254,10 @@ bg policy sign --dir /data/policy --file restricted-list.yaml --signer "$BLACKGO
 bg policy sign --dir /data/policy --file theme-membership.yaml --signer "$BLACKGOLD_SIGNER"
 bg policy verify --dir /data/policy
 bg shadow status --charter strategies/etf-trend-vol/charter.yaml
-# paste the exact rearm line `bg shadow status` prints, which ends in --to NORMAL
+# the one re-arm (D-54 b). If shadow status lists unresolved breaks, read them first and add
+# --acknowledge <break,...> to the line below.
+bg shadow rearm --charter strategies/etf-trend-vol/charter.yaml --to NORMAL --actor "$BLACKGOLD_SIGNER" --reason "signed restricted-list and theme-membership replaced the placeholders (D-54 b)"
+bg shadow status --charter strategies/etf-trend-vol/charter.yaml
 ```
 
 ### [BLOCKED] paper-keys: Create the dedicated Alpaca paper account and place its keys where only the gateway reads them (owner only)

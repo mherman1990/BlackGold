@@ -12,39 +12,52 @@ The store is added by URL. Nothing below may be done until `docs/UMBREL_STORE_AN
 1. umbrelOS → App Store → Community App Stores → add `https://github.com/mherman1990/BlackGold`.
 2. Open the Black Gold store, install Black Gold.
 3. Open the app; the status page shows mode, `liveCapable: false`, database integrity, ledger chain, and next session.
-4. Run `scripts/pi-benchmark.sh` on the Pi and compare with `docs/RESOURCE_BUDGET.md`.
+4. Run `scripts/pi/pi-benchmark.sh` on the Pi and compare with `docs/RESOURCE_BUDGET.md`.
 
 ## Install the Pi wrappers (once per Pi, after the first release that ships them)
 
-Every Pi command in these runbooks and in `docs/OWNER_QUEUE.md` is written as `bg <command>` (D-60). `bg` is
+A new Pi command in these runbooks and in `docs/OWNER_QUEUE.md` is written as `bg <command>` (D-60). `bg` is
 `sudo docker exec -i blackgold-trading_core_1 node packages/core/dist/main.js "$@"`, so the two things that fail
 when typed by hand, a host `node` and a `docker` without `sudo`, cannot happen. The image carries the wrappers
-under `/app/scripts/pi`; one copy installs them and no checkout is needed on the Pi:
+under `/app/scripts/pi` from 0.1.15 on; one copy installs them and no checkout is needed on the Pi:
 
 ```bash
-sudo docker cp blackgold-trading_core_1:/app/scripts/pi ~/bg
+mkdir -p ~/bg
+sudo docker cp blackgold-trading_core_1:/app/scripts/pi/. ~/bg
 sudo chown -R "$USER" ~/bg
 echo 'export PATH="$HOME/bg:$PATH"' >> ~/.profile
 export PATH="$HOME/bg:$PATH"
 bg health
 ```
 
+The trailing `/.` matters: `docker cp` copies a directory's *contents* into an existing destination only when the
+source ends in `/.`; without it a second run nests the new files under `~/bg/pi` and leaves the old wrappers on
+`PATH`. The same line therefore re-installs after an update that changes the wrappers (the release notes say
+when).
+
 | Wrapper | Does |
 |---|---|
 | `bg <cmd>` | runs a core CLI command inside the running core container |
 | `bg-gateway <cmd>` | the same for the broker gateway |
 | `pi-update.sh before` / `after` | backup and health around an umbrelOS update (the "Update" section) |
+| `pi-benchmark.sh` | the resource measurement against `docs/RESOURCE_BUDGET.md` |
 | `d57-reconcile.sh` | `first-ingestion.md` Step 2b, "Building the file", as one line |
 | `eval-store.sh` | builds the separate evaluation store (D-57(b)) and stops before registration |
 | `stale-branches.sh` | run on your own machine: prints the one `git push --delete` line for merged `claude/*` branches |
-
-Re-run the `docker cp` after an update that changes the wrappers; the release notes say when.
 
 ## Update
 
 1. `pi-update.sh before` (a verified backup and a health record; `docs/runbooks/backup-and-restore.md` is what it runs).
 2. Refresh the community store in umbrelOS; update Black Gold.
 3. `pi-update.sh after`. Data under `${APP_DATA_DIR}/data` must be unchanged; the migration log in the health output lists applied migrations, and the script prints what changed between the two health records.
+
+The first update that brings the wrappers (0.1.14 to 0.1.15) cannot use them for step 1, because the 0.1.14 image
+has no `/app/scripts/pi`. That once, step 1 is the long form, and the install above follows step 2:
+
+```bash
+sudo docker exec blackgold-trading_core_1 node packages/core/dist/main.js backup
+sudo docker exec blackgold-trading_core_1 node packages/core/dist/main.js health
+```
 
 ## Provide research-data credentials and run the first ingest on the Pi
 

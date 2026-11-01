@@ -10,20 +10,27 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="${BG_STATE_DIR:-$HOME/bg-state}"
 mkdir -p "$STATE_DIR"
+record_health() { # $1 = file. `bg health` exits 1 when ok is false, which is exactly the state worth recording.
+  if "$HERE/bg" health > "$1"; then
+    echo "health ok, recorded $1"
+  else
+    echo "WARNING: health reports ok=false (recorded $1). Read it before you go on:"
+    cat "$1"
+  fi
+}
 case "${1:-}" in
   before)
     echo "== backup (online, integrity-checked) =="
     "$HERE/bg" backup
     echo "== health before =="
-    "$HERE/bg" health | tee "$STATE_DIR/health-before.json" >/dev/null
-    echo "recorded $STATE_DIR/health-before.json"
+    record_health "$STATE_DIR/health-before.json"
     echo
     echo "Now in umbrelOS: App Store -> Community App Stores -> Black Gold -> refresh -> Update."
     echo "Then run: pi-update.sh after"
     ;;
   after)
     echo "== health after =="
-    "$HERE/bg" health | tee "$STATE_DIR/health-after.json" >/dev/null
+    record_health "$STATE_DIR/health-after.json"
     echo "== version =="
     "$HERE/bg" version
     if [ -f "$STATE_DIR/health-before.json" ]; then
@@ -31,7 +38,8 @@ case "${1:-}" in
       diff <(tr ',' '\n' < "$STATE_DIR/health-before.json") <(tr ',' '\n' < "$STATE_DIR/health-after.json") || true
     fi
     echo
-    echo "If this update changed the compose file or resource use, run scripts/pi-benchmark.sh as well."
+    echo "If this update changed the wrappers, re-run the install line from the runbook (the image carries the new ones)."
+    echo "If it changed the compose file or resource use, run pi-benchmark.sh as well (installed next to this script)."
     ;;
   *)
     echo "usage: pi-update.sh before | after" >&2

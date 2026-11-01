@@ -10,7 +10,9 @@
 # (the umbrel user is refused the socket). Files the container reads or writes live under
 # ~/umbrel/app-data/blackgold-trading/data, which is /data inside it; name them by their /data path.
 #
-# Installed with the image: `sudo docker cp blackgold-trading_core_1:/app/scripts/pi ~/bg` then add ~/bg to PATH.
+# Installed with the image: `mkdir -p ~/bg && sudo docker cp blackgold-trading_core_1:/app/scripts/pi/. ~/bg`
+# (the trailing `/.` copies the contents into ~/bg on every run, so a re-run after an update replaces the
+# wrappers instead of nesting them under ~/bg/pi), then add ~/bg to PATH.
 set -euo pipefail
 CONTAINER="${BG_CORE_CONTAINER:-blackgold-trading_core_1}"
 exec sudo docker exec -i "$CONTAINER" node packages/core/dist/main.js "$@"

@@ -51,11 +51,16 @@ describe("docs/owner-queue.yaml and docs/OWNER_QUEUE.md", () => {
     }
   });
 
+  /** `$25,000`, `$25000`, `$25k`, `$1.5M`, `USD 25000`, `25,000 USD`, `25000 dollars`: the sleeve size never enters a tracked file (T-22). */
+  const DOLLAR_TOTAL = /(\$|\bUSD\s?)\s?\d[\d,]*(\.\d+)?\s?[kKmM]?\b|\b\d[\d,]*(\.\d+)?\s?(USD|dollars?)\b/;
+
   it("no paste block names a host node or an un-sudo'd docker, and none carries a dollar total", () => {
     const text = readFileSync(join(ROOT, "docs/OWNER_QUEUE.md"), "utf8");
     expect(text).not.toMatch(/^\s*node packages\//m);
     expect(text).not.toMatch(/^\s*docker /m);
-    expect(text).not.toMatch(/\$\s?\d{1,3}(,\d{3})+(\.\d{2})?/);
+    expect(text).not.toMatch(DOLLAR_TOTAL);
+    for (const s of ["$25,000", "$25000", "$25k", "$1.5M", "USD 25000", "25,000 USD", "25000 dollars"]) expect(s, s).toMatch(DOLLAR_TOTAL);
+    for (const s of ['"$BLACKGOLD_SIGNER"', "$HOME/bg", "25 percent", "divided by 5.00", "0.1.15", "1000:1000"]) expect(s, s).not.toMatch(DOLLAR_TOTAL);
   });
 });
 
@@ -74,11 +79,42 @@ describe("owner-queue rules on planted items", () => {
     expect(validateQueue(queueWith([{ status: "applied", decidedBy: "Matt", decidedAt: "2026-11-08" }]))).toEqual([expect.stringContaining("only a decision")]);
   });
 
+  it("decidedBy may not be Claude Code, silence or a default, and decidedAt is a date", () => {
+    const base = { kind: "decision" as const, question: "q?", recommendedDefault: "d", replyFormat: "r", costIfWrong: "c", status: "applied" as const };
+    for (const who of ["Claude Code", "claude (default, owner silent)", "silence", "default applied", "auto"]) {
+      expect(validateQueue(queueWith([{ ...base, decidedBy: who, decidedAt: "2026-11-08" }])), who).toEqual([expect.stringContaining("is not the owner")]);
+    }
+    expect(validateQueue(queueWith([{ ...base, decidedBy: "Matt", decidedAt: "soon" }]))).toEqual([expect.stringContaining("YYYY-MM-DD")]);
+  });
+
   it("a paste block may not run a host node or an un-sudo'd docker, and must start with bg or sudo", () => {
     expect(validateQueue(queueWith([{ kind: "command", block: "node packages/core/dist/main.js health" }]))).toEqual([expect.stringContaining("host `node`")]);
     expect(validateQueue(queueWith([{ kind: "command", block: "docker exec x node packages/core/dist/main.js health" }]))).toEqual([expect.stringContaining("without sudo")]);
     expect(validateQueue(queueWith([{ kind: "command", block: "npm run check" }]))).toEqual([expect.stringContaining("must start with")]);
     expect(validateQueue(queueWith([{ kind: "command", block: "# comment\nbg health\nsudo docker exec -i c node packages/core/dist/main.js version" }]))).toEqual([]);
+  });
+
+  it("every command on a line is checked: a chained or substituted host node or bare docker is refused", () => {
+    for (const block of ["cd ~/BlackGold/packages/core && node dist/main.js health", "sudo true; node packages/core/dist/main.js health", "echo $(docker ps)", "ls | docker exec -i c sh", "export X=1 && docker rm x"]) {
+      const problems = validateQueue(queueWith([{ kind: "command", block }]));
+      expect(problems.length, block).toBeGreaterThan(0);
+      expect(problems.join("\n"), block).toMatch(/host `node`|without sudo/);
+    }
+    expect(validateQueue(queueWith([{ kind: "command", block: "bg health | sudo tee /tmp/h.json" }]))).toEqual([]);
+  });
+
+  it("a heredoc fed to a shell is commands, not content", () => {
+    const shell = "sudo bash <<'EOF'\ncd /app && node packages/core/dist/main.js health\nEOF";
+    expect(validateQueue(queueWith([{ kind: "command", block: shell }]))).toEqual([expect.stringContaining("host `node`")]);
+    const sh = "sudo sh <<EOF\ndocker rm x\nEOF";
+    expect(validateQueue(queueWith([{ kind: "command", block: sh }]))).toEqual([expect.stringContaining("without sudo")]);
+  });
+
+  it("an owner-only act may not sit in a command item", () => {
+    for (const line of ["bg experiment register --charter x", "bg policy sign --dir /data/policy --file risk.yaml", "bg corporate-actions sign --file x", "bg shadow rearm --to NORMAL", "sudo tee ~/umbrel/app-data/blackgold-trading/gateway-secrets/gateway.env", "echo X | sudo tee -a ~/umbrel/app-data/blackgold-trading/secrets/secrets.env"]) {
+      expect(validateQueue(queueWith([{ kind: "command", block: line }])), line).toEqual([expect.stringContaining("owner-only act")]);
+      expect(validateQueue(queueWith([{ kind: "sign", ownerOnly: true, block: line }])), line).toEqual([]);
+    }
   });
 
   it("a sign item must be owner-only; a blocked item names its blocker; ids are unique", () => {
@@ -95,13 +131,16 @@ describe("owner-queue rules on planted items", () => {
     expect(validateQueue(queueWith([{ kind: "command", block: "KEY=value\nbg health" }]))).toEqual([expect.stringContaining("must start with")]);
   });
 
-  it("renders deterministically with a badge per status", () => {
-    const q = queueWith([{ title: "Do a thing", steps: ["one", "two"] }, { kind: "command", status: "blocked", blockedBy: "PR X", block: "bg health" }]);
+  it("renders deterministically with a badge per status, and reproduces a paste block byte for byte", () => {
+    const block = "sudo tee /x/f >/dev/null <<'EOF'\nline one\n\n\nline four\nEOF";
+    const q = queueWith([{ title: "Do a thing", steps: ["one", "two"] }, { kind: "command", status: "blocked", blockedBy: "PR X", block: "bg health" }, { kind: "command", block }]);
     const a = renderQueue(q);
     expect(a).toBe(renderQueue(q));
     expect(a).toContain("[PENDING] i0: Do a thing");
     expect(a).toContain("[BLOCKED] i1");
     expect(a).toContain("Blocked by: PR X");
     expect(a).toContain("```bash\nbg health\n```");
+    expect(a).toContain("```bash\n" + block + "\n```");
+    expect(a).not.toMatch(/\n{3,}(?![^`]*```\n\n)/);
   });
 });

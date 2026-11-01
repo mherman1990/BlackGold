@@ -5,10 +5,14 @@
 #   export BLACKGOLD_SEC_USER_AGENT_CONTACT=you@example.com
 #   eval-store.sh ~/umbrel/app-data/blackgold-trading/data-eval /path/to/reconciled-N.signed.json [--dry-run]
 #
-# Three refusals protect the evidence (HANDOFF.md section 5; D-57(b)):
-#   1. the target directory may not be, or sit inside, the research data directory;
-#   2. no argument may name a secrets file or mount (the one-off container gets credentials from the owner's
-#      shell environment only, and only the two the bars pull needs);
+# Refusals that protect the evidence (HANDOFF.md section 5; D-57(b)):
+#   1. the target directory may not be, sit inside, or CONTAIN the research data directory (a target such as the
+#      app-data directory would be chowned and mounted whole); the research directory must exist so this can be
+#      checked, or BG_RESEARCH_DIR names it;
+#   2. no argument may name a secrets file or mount, and no argument other than the two paths and --dry-run is
+#      accepted (nothing is passed through to docker); the one-off container gets credentials from the owner's
+#      shell environment only, and only the two the bars pull needs, by name (value-less -e under sudo -E), so no
+#      key appears on a command line or in the sudo log;
 #   3. this script never runs `ingest tiingo-actions`: the evaluation store takes exactly one signed reconciled
 #      file, ingested BEFORE the snapshot so the registered experiment can read it.
 #
@@ -17,16 +21,33 @@
 # the owner's act (D-61).
 set -euo pipefail
 usage() { echo "usage: eval-store.sh <eval-data-dir> <signed-reconciled.json> [--dry-run]" >&2; exit 2; }
-[ "$#" -ge 2 ] || usage
-EVAL_DIR_RAW="$1"; SIGNED="$2"; DRY=""
-[ "${3:-}" = "--dry-run" ] && DRY=1
 for a in "$@"; do
   case "$a" in *secrets*) echo "refused: argument names a secrets file or mount ($a); the evaluation store never sees one" >&2; exit 3;; esac
 done
-RESEARCH_DIR="$(realpath -m "${BG_RESEARCH_DIR:-$HOME/umbrel/app-data/blackgold-trading/data}")"
+DRY=""
+POS=()
+for a in "$@"; do
+  case "$a" in
+    --dry-run) DRY=1;;
+    -*) echo "refused: unknown option $a; only --dry-run is accepted, nothing is passed through to docker" >&2; exit 2;;
+    *) POS+=("$a");;
+  esac
+done
+[ "${#POS[@]}" -eq 2 ] || usage
+EVAL_DIR_RAW="${POS[0]}"
+SIGNED="${POS[1]}"
+UMBREL="${UMBREL_ROOT:-$HOME/umbrel}"
+RESEARCH_DIR="$(realpath -m "${BG_RESEARCH_DIR:-$UMBREL/app-data/blackgold-trading/data}")"
+if [ ! -d "$RESEARCH_DIR" ]; then
+  echo "refused: research data directory not found at $RESEARCH_DIR; set BG_RESEARCH_DIR to the app's data directory so the separation can be checked" >&2
+  exit 3
+fi
 EVAL_DIR="$(realpath -m "$EVAL_DIR_RAW")"
 case "$EVAL_DIR/" in
   "$RESEARCH_DIR/"*) echo "refused: $EVAL_DIR is the research data directory or inside it; the evaluation store must be a separate directory" >&2; exit 3;;
+esac
+case "$RESEARCH_DIR/" in
+  "$EVAL_DIR/"*) echo "refused: $EVAL_DIR contains the research data directory $RESEARCH_DIR and would be chowned and mounted whole; use a sibling such as $(dirname "$RESEARCH_DIR")/data-eval" >&2; exit 3;;
 esac
 [ -f "$SIGNED" ] || { echo "missing signed file: $SIGNED" >&2; exit 2; }
 if [ -z "$DRY" ]; then
@@ -44,10 +65,12 @@ TODAY="$(date -u +%Y-%m-%d)"
 run() {
   echo "== $* =="
   if [ -n "$DRY" ]; then return 0; fi
-  sudo docker run --rm --user 1000:1000 \
+  # Value-less -e: docker reads the two variables from the environment that sudo -E preserves, so neither value
+  # is on a command line, in `ps`, or in the sudo log.
+  sudo -E docker run --rm --user 1000:1000 \
     -e BLACKGOLD_DATA_DIR=/data \
-    -e "BLACKGOLD_SEC_USER_AGENT_CONTACT=${BLACKGOLD_SEC_USER_AGENT_CONTACT:-}" \
-    -e "BLACKGOLD_TIINGO_API_KEY=${BLACKGOLD_TIINGO_API_KEY:-}" \
+    -e BLACKGOLD_SEC_USER_AGENT_CONTACT \
+    -e BLACKGOLD_TIINGO_API_KEY \
     -v "$EVAL_DIR:/data" "$IMG" packages/core/dist/main.js "$@"
 }
 if [ -z "$DRY" ]; then
@@ -60,9 +83,17 @@ run migrate
 run ingest universe --charter "$CHARTER" --actions none --source tiingo
 run ingest corporate-actions --file "/data/$SIGNED_BASE"
 run snapshot create --dataset prices_daily --description "evaluation store, reconciled actions $SIGNED_BASE, $TODAY"
-run research coverage --path "$CHARTER" --from 2007-06-01 --to "$TODAY"
+GAPS=""
+run research coverage --path "$CHARTER" --from 2007-06-01 --to "$TODAY" || {
+  GAPS=1
+  echo "coverage reported uncovered members (exit $?). The store is built; read the report above and HANDOFF.md section 5 before going on."
+}
 run charter show --path "$CHARTER"
 echo
-echo "STOP. Registration is yours. If charter show printed registrable: true, the next line (B1) is:"
+if [ -n "$GAPS" ]; then
+  echo "STOP. Coverage has gaps; do not register until they are understood."
+else
+  echo "STOP. Registration is yours. If charter show printed registrable: true, the next line (B1) is:"
+fi
 echo "  sudo docker run --rm --user 1000:1000 -e BLACKGOLD_DATA_DIR=/data -v \"$EVAL_DIR:/data\" \"$IMG\" packages/core/dist/main.js \\"
 echo "    experiment register --charter $CHARTER --snapshot prices_daily=<id from snapshot create> --registered-by \"\$BLACKGOLD_SIGNER\" --require-citable --no-shadow-clock \"clock anchored at the research-store registration\""

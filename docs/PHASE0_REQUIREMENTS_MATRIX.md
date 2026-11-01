@@ -24,7 +24,7 @@ Status values: `implemented`, `tested`, `deferred`, `blocked`, `not applicable`.
 | 17 | PR template and CODEOWNERS | implemented | `.github/pull_request_template.md`, `.github/CODEOWNERS` |
 | 18 | `ci.yml` multi-arch build without push | tested | Both jobs green on PR #2 head `31e649a`; the first head failed on a `.gitignore` rule hiding an example file, fixed in `5d20ea6` |
 | 19 | `release.yml` gated on `v*` tags reachable from `main` | tested (trigger filter) | `test/policy/identity.test.ts` |
-| 20 | `pi-benchmark.sh` | implemented; not run (no Pi in the build sandbox) | `scripts/pi-benchmark.sh` |
+| 20 | `pi-benchmark.sh` | implemented; not run (no Pi in the build sandbox) | `scripts/pi/pi-benchmark.sh` |
 | 21 | Secret scanning | tested | `scripts/check-secrets.ts`, gitleaks step in CI |
 | 22 | Release-consistency checker | tested | identity check rows 3–4 |
 
@@ -41,7 +41,7 @@ Status values: `implemented`, `tested`, `deferred`, `blocked`, `not applicable`.
 | Backup/restore and integrity tests pass | tested | shared db tests; core backup tests |
 | Synthetic order-state fault suite passes | tested | gateway tests |
 | No live credential or live order path | tested | `test/policy/live-disabled.test.ts`; config loader and gateway reject live modes; CI asserts the image refuses `BLACKGOLD_MODE=LIVE_MANUAL` |
-| Measured Pi resource use within budget | blocked | Requires `scripts/pi-benchmark.sh` on the Pi after the first install. |
+| Measured Pi resource use within budget | blocked | Requires `scripts/pi/pi-benchmark.sh` on the Pi after the first install. |
 
 The two blocked criteria are the only Phase 0 items that need Matt's hardware. Everything else is verified in this repository's test suite and CI.
 
@@ -56,4 +56,4 @@ The two blocked criteria are the only Phase 0 items that need Matt's hardware. E
 | 2026-09-07 | `blackgold-broker-gateway health` / `serve` | `liveCapable:false credentialLoaded:false adapters:["synthetic"]`; SIGTERM exit 0 |
 | 2026-09-07 | `ci.yml` on PR #2 head `31e649a` (run 34071000478) | `checks` green (lint, typecheck, 124 tests, identity, secrets, gitleaks, manifest parse); `image` green (amd64+arm64 build, health smoke for both roles, live-mode refusal) |
 | 2026-09-07 | Codex code and security review on PR #2 | 4 findings (3 P1, 1 P2), all fixed in `31e649a` and threads resolved; security review completed with no findings |
-| pending | Pi and Windows container runs; `scripts/pi-benchmark.sh` | Matt |
+| pending | Pi and Windows container runs; `scripts/pi/pi-benchmark.sh` | Matt |

@@ -26,7 +26,32 @@ import { parse } from "yaml";
 export const KINDS = ["decision", "command", "sign", "data", "github"] as const;
 export const STATUSES = ["pending", "blocked", "done", "applied"] as const;
 /** What a Pi paste line may start with. `bg`/`bg-gateway` and the scripts come from the image's scripts/pi. */
-export const COMMAND_LINE_PREFIXES = ["bg ", "bg-gateway ", "sudo ", "scp ", "export ", "cd ", "ls ", "cat ", "~/bg/", "./", "pi-update.sh", "d57-reconcile.sh", "eval-store.sh", "stale-branches.sh", "echo "] as const;
+export const COMMAND_LINE_PREFIXES = ["bg ", "bg-gateway ", "sudo ", "scp ", "export ", "cd ", "ls ", "cat ", "mkdir ", "~/bg/", "./", "pi-update.sh", "pi-benchmark.sh", "d57-reconcile.sh", "eval-store.sh", "stale-branches.sh", "echo "] as const;
+/**
+ * Lines only the owner may paste (CLAUDE.md, "What standing authorization never covers"; D-60 item 4). A block
+ * containing one must be a `sign` item tagged `ownerOnly: true`; a `command` item may not carry it.
+ */
+export const OWNER_ONLY_PATTERNS: readonly RegExp[] = [/\bexperiment (register|open-holdout|mark-viewed)\b/, /\bpolicy sign\b/, /\bcorporate-actions sign\b/, /\bshadow rearm\b/, /gateway-secrets/, /secrets\.env/, /live-authorization/i];
+/** `decidedBy` may not read as Claude Code, silence or a default: a default is never applied on the owner's behalf. */
+const NOT_A_DECIDER = /\b(claude|silence|silent|default|auto|unanswered)\b/i;
+/** A heredoc whose consumer executes the body (`sudo bash <<'EOF'`): its lines are commands, not content. */
+const SHELL_CONSUMER = /(^|\s|\/)(bash|sh|zsh|dash|su|eval)(\s|$)/;
+
+/** Split a shell line into the commands it runs: `a && b`, `a; b`, `a | b`, `a || b`, `$(b)`, backticks. */
+export function commandSegments(line: string): string[] {
+  return line
+    .split(/&&|\|\||;|\||\$\(|`/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function runsHostNode(seg: string): boolean {
+  return /^node\s/.test(seg) || (/node packages\//.test(seg) && !/docker exec/.test(seg));
+}
+
+function runsBareDocker(seg: string): boolean {
+  return /^docker\s/.test(seg);
+}
 
 export type Kind = (typeof KINDS)[number];
 export type Status = (typeof STATUSES)[number];
@@ -81,8 +106,12 @@ export function validateQueue(q: Queue): string[] {
       if (!str(it.title)) out.push(`${where}: title is required`);
       if (!(STATUSES as readonly string[]).includes(it.status)) out.push(`${where}: status must be one of ${STATUSES.join(", ")}`);
       if (it.status === "blocked" && !str(it.blockedBy)) out.push(`${where}: a blocked item names what blocks it (blockedBy)`);
-      if ((it.status === "applied" || it.status === "done") && (!str(it.decidedBy) || !str(it.decidedAt))) {
-        out.push(`${where}: "${it.status}" needs decidedBy and decidedAt; silence never applies a default`);
+      if (it.status === "applied" || it.status === "done") {
+        if (!str(it.decidedBy) || !str(it.decidedAt)) out.push(`${where}: "${it.status}" needs decidedBy and decidedAt; silence never applies a default`);
+        else {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(it.decidedAt)) out.push(`${where}: decidedAt must be a YYYY-MM-DD date, got "${it.decidedAt}"`);
+          if (NOT_A_DECIDER.test(it.decidedBy)) out.push(`${where}: decidedBy "${it.decidedBy}" is not the owner; a default is never applied by Claude Code or on silence`);
+        }
       }
       if (it.status === "applied" && it.kind !== "decision") out.push(`${where}: only a decision can be "applied"; other kinds are "done"`);
       if (it.kind === "decision") {
@@ -93,24 +122,45 @@ export function validateQueue(q: Queue): string[] {
       if (it.kind === "command" || it.kind === "sign") {
         if (!str(it.block)) out.push(`${where}: a ${it.kind} item needs a block to paste`);
         else {
+          const checkCommands = (line: string, prefixRule: boolean): void => {
+            let bad = false;
+            for (const seg of commandSegments(line)) {
+              if (runsHostNode(seg)) {
+                out.push(`${where}: a paste line runs a host \`node\` ("${line}"); use bg or sudo docker exec`);
+                bad = true;
+              } else if (runsBareDocker(seg)) {
+                out.push(`${where}: a paste line runs docker without sudo ("${line}")`);
+                bad = true;
+              }
+            }
+            if (!bad && prefixRule && !COMMAND_LINE_PREFIXES.some((p) => line.startsWith(p))) {
+              out.push(`${where}: a paste line must start with one of ${COMMAND_LINE_PREFIXES.join(" | ")} ("${line}")`);
+            }
+            // The ownerOnly tag itself is checked once per sign item below.
+            if (it.kind !== "sign" && OWNER_ONLY_PATTERNS.some((p) => p.test(line))) {
+              out.push(`${where}: an owner-only act ("${line}") must live in a sign item, never a ${it.kind} item`);
+            }
+          };
           let heredoc: string | undefined;
+          let heredocIsCommands = false;
           for (const raw of it.block.split("\n")) {
             const line = raw.trim();
             if (heredoc !== undefined) {
-              // inside `<<'EOF' ... EOF`: the body is file content, not a command
-              if (line === heredoc) heredoc = undefined;
+              if (line === heredoc) {
+                heredoc = undefined;
+                continue;
+              }
+              // `sudo tee <<'EOF'`: the body is file content. `sudo bash <<'EOF'`: the body is commands run as root.
+              if (heredocIsCommands && line.length > 0 && !line.startsWith("#")) checkCommands(line, false);
               continue;
             }
             if (line.length === 0 || line.startsWith("#")) continue;
             const here = /<<-?\s*'?([A-Z_]+)'?\s*$/.exec(line);
-            if (here?.[1] !== undefined) heredoc = here[1];
-            if (/^node\s/.test(line) || (/node packages\//.test(line) && !/docker exec/.test(line))) {
-              out.push(`${where}: a paste line runs a host \`node\` ("${line}"); use bg or sudo docker exec`);
-            } else if (/^docker\s/.test(line)) {
-              out.push(`${where}: a paste line runs docker without sudo ("${line}")`);
-            } else if (!COMMAND_LINE_PREFIXES.some((p) => line.startsWith(p))) {
-              out.push(`${where}: a paste line must start with one of ${COMMAND_LINE_PREFIXES.join(" | ")} ("${line}")`);
+            if (here?.[1] !== undefined) {
+              heredoc = here[1];
+              heredocIsCommands = SHELL_CONSUMER.test(line.slice(0, here.index));
             }
+            checkCommands(line, true);
           }
           if (heredoc !== undefined) out.push(`${where}: unterminated heredoc (no closing ${heredoc} line); nothing after it was checked`);
         }
@@ -153,7 +203,15 @@ export function renderQueue(q: Queue): string {
       if (it.decidedBy !== undefined && it.decidedAt !== undefined) lines.push(`Recorded: ${it.decidedBy}, ${it.decidedAt}.`, "");
     }
   }
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+  // Collapse runs of blank lines outside code fences only: a paste block is reproduced byte for byte.
+  const out: string[] = [];
+  let fence = false;
+  for (const l of lines) {
+    if (l.startsWith("```")) fence = !fence;
+    if (!fence && l === "" && out[out.length - 1] === "") continue;
+    out.push(l);
+  }
+  return out.join("\n").trimEnd() + "\n";
 }
 
 export function loadQueue(path: string): Queue {

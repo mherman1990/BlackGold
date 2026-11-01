@@ -31,7 +31,7 @@ COPY --chown=1000:1000 config/examples ./config/examples
 # Strategy definitions (charters) are read at runtime by `charter show|plan` and `research coverage`
 # via `--path strategies/<id>/charter.yaml`, resolved from this WORKDIR. Small, versioned, non-secret.
 COPY --chown=1000:1000 strategies ./strategies
-# The owner's Pi wrappers (D-60): `sudo docker cp blackgold-trading_core_1:/app/scripts/pi ~/bg` installs them.
+# The owner's Pi wrappers (D-60): `sudo docker cp blackgold-trading_core_1:/app/scripts/pi/. ~/bg` installs them.
 # Shell only, never run inside the container; shipped here so the Pi needs no checkout.
 COPY --chown=1000:1000 scripts/pi ./scripts/pi
 USER 1000:1000
