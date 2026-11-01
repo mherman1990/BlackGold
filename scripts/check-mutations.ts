@@ -238,15 +238,17 @@ export function vitestRunner(root: string, template?: string): Runner {
 export type BaseRecord = { path: string; file: string };
 
 /**
- * Records that existed on the base ref and are gone from the working tree while the source file they
- * protected still exists. Deleting a record is deleting a guard; it is refused unless the source went with it
- * (PR #118 verification round). Pure.
+ * Source files that a record protected on the base ref and that no record protects now, while the file still
+ * exists. Deleting a record, or retargeting its `file` to another source, is deleting a guard; both are
+ * refused unless the source went with it (PR #118 verification round; PR #119 round 1). The comparison is by
+ * protected FILE, not by record path, so a renamed YAML that still names the same source is fine. Pure.
  */
-export function deletedRecordProblems(baseRecords: readonly BaseRecord[], currentRecordPaths: ReadonlySet<string>, sourceExists: (file: string) => boolean): string[] {
+export function deletedRecordProblems(baseRecords: readonly BaseRecord[], currentRecords: readonly { file: string }[], sourceExists: (file: string) => boolean): string[] {
+  const protectedNow = new Set(currentRecords.map((r) => r.file));
   const out: string[] = [];
   for (const r of baseRecords) {
-    if (currentRecordPaths.has(r.path)) continue;
-    if (sourceExists(r.file)) out.push(`${r.path} was deleted but its source ${r.file} still exists; a record is only removed together with the file it guards`);
+    if (protectedNow.has(r.file)) continue;
+    if (sourceExists(r.file)) out.push(`${r.path} protected ${r.file} on the base ref; no record protects it now and the file still exists. A guard is only removed together with the file it guards`);
   }
   return out;
 }
@@ -300,11 +302,25 @@ function parseArgs(argv: readonly string[]): Args {
   return args;
 }
 
-export function main(argv: readonly string[], root: string, out: (line: string) => void, runnerOverride?: Runner): number {
+export function main(argv: readonly string[], root: string, out: (line: string) => void, runnerOverride?: Runner, inventoryOverride?: BaseRecord[]): number {
   const args = parseArgs(argv);
   const records = loadRecords(join(root, args.records));
   const byFile = new Map(records.map((r) => [r.file, r] as const));
   const problems: string[] = [];
+
+  // The guard-removal check runs in BOTH modes (PR #119 round 1): a record deleted or retargeted away from a
+  // source that still exists is refused whether the run is diff-scoped or --all.
+  const inventory = inventoryOverride ?? baseRecordInventory(root, args.base, args.records);
+  if (inventory === undefined) {
+    const msg = `mutation check: the record inventory at ${args.base} could not be read, so a removed guard cannot be detected`;
+    if (process.env["CI"]) {
+      out(`${msg}; in CI this is a failure`);
+      return 1;
+    }
+    out(`${msg}; continuing without that check`);
+  } else {
+    problems.push(...deletedRecordProblems(inventory, records, (file) => existsSync(join(root, file))));
+  }
 
   let toVerify: MutationRecord[];
   if (args.all) {
@@ -324,13 +340,6 @@ export function main(argv: readonly string[], root: string, out: (line: string) 
     for (const f of mandatory) {
       if (!byFile.has(f)) problems.push(`${f} changed and sits in the mandatory set but has no record under ${args.records}/`);
     }
-    const inventory = baseRecordInventory(root, args.base, args.records);
-    if (inventory === undefined) {
-      out(`mutation check: the record inventory at ${args.base} could not be read`);
-      return 1;
-    }
-    const currentPaths = new Set(records.map((r) => (r.source.startsWith(root + "/") ? r.source.slice(root.length + 1) : r.source)));
-    problems.push(...deletedRecordProblems(inventory, currentPaths, (file) => existsSync(join(root, file))));
     toVerify = recordsToVerify(records, changed, root);
     out(`mutation check: ${changed.length} changed file(s) against ${args.base}, ${mandatory.length} in the mandatory set, ${toVerify.length} record(s) to verify (source, record or guarding test changed)`);
   }

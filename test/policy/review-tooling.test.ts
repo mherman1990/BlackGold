@@ -181,8 +181,12 @@ describe("check-mutations", () => {
       writeFileSync(join(dir, "test/guard.test.ts"), "// placeholder\n");
       writeFileSync(join(dir, "test/mutations/guard.yaml"), "file: src/guard.ts\nmutations:\n  - name: strict\n    find: 'x > 10'\n    replace: 'x >= 10'\n    test: test/guard.test.ts\n");
       const catching = (): RunResult => (readFileSync(join(dir, "src/guard.ts"), "utf8").includes("x >= 10") ? { exitCode: 1, ranTests: 1, failedTests: 1 } : { exitCode: 0, ranTests: 1, failedTests: 0 });
-      expect(mutationsMain(["--all"], dir, quiet, catching)).toBe(0);
-      expect(mutationsMain(["--all"], dir, quiet, () => ({ exitCode: 0, ranTests: 1, failedTests: 0 }))).toBe(1);
+      expect(mutationsMain(["--all"], dir, quiet, catching, [])).toBe(0);
+      expect(mutationsMain(["--all"], dir, quiet, () => ({ exitCode: 0, ranTests: 1, failedTests: 0 }), [])).toBe(1);
+      // --all also runs the guard-removal check (PR #119 round 1): a base record for a still-existing source
+      // that no current record protects fails the run.
+      writeFileSync(join(dir, "src/other.ts"), "export const other = 1;\n");
+      expect(mutationsMain(["--all"], dir, quiet, catching, [{ path: "test/mutations/other.yaml", file: "src/other.ts" }])).toBe(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -201,16 +205,19 @@ describe("check-mutations", () => {
     expect(recordsToVerify([record], ["packages/core/src/main.ts", "docs/STATE.md"], root)).toHaveLength(0);
   });
 
-  it("a deleted record whose source still exists is refused; one deleted with its source is not", () => {
+  it("a guard removed by deleting or retargeting its record is refused while the source exists; a rename that keeps the source is fine", () => {
     const base = [
       { path: "test/mutations/a.yaml", file: "packages/core/src/risk/a.ts" },
       { path: "test/mutations/b.yaml", file: "packages/core/src/risk/b.ts" },
       { path: "test/mutations/c.yaml", file: "packages/core/src/risk/c.ts" },
     ];
-    const current = new Set(["test/mutations/a.yaml"]);
-    const exists = (f: string): boolean => f.endsWith("b.ts");
-    expect(deletedRecordProblems(base, current, exists)).toEqual([expect.stringContaining("test/mutations/b.yaml was deleted")]);
-    expect(deletedRecordProblems(base, new Set(base.map((r) => r.path)), exists)).toEqual([]);
+    const exists = (f: string): boolean => f.endsWith("a.ts") || f.endsWith("b.ts");
+    // b.yaml deleted (b.ts exists -> refused); c.yaml deleted with c.ts (fine); a.yaml kept.
+    expect(deletedRecordProblems(base, [{ file: "packages/core/src/risk/a.ts" }], exists)).toEqual([expect.stringContaining("test/mutations/b.yaml protected packages/core/src/risk/b.ts")]);
+    // Retargeting a.yaml's `file` to b.ts leaves a.ts unprotected (PR #119 round 1).
+    expect(deletedRecordProblems(base, [{ file: "packages/core/src/risk/b.ts" }], exists)).toEqual([expect.stringContaining("test/mutations/a.yaml protected packages/core/src/risk/a.ts")]);
+    // Renaming the YAML while keeping the same source is not a removal.
+    expect(deletedRecordProblems(base, [{ file: "packages/core/src/risk/a.ts" }, { file: "packages/core/src/risk/b.ts" }], exists)).toEqual([]);
   });
 
   it("the base inventory of this repository lists the tracked record", () => {
