@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parse, stringify } from "yaml";
 import { addMs, isoDate, sha256Hex, type Db, type UtcInstant } from "@blackgold/shared";
 import { Ledger, NyseCalendar, PointInTimeRepository, Scheduler, corporateActionObservation, openCoreDb } from "../src/index.ts";
@@ -12,45 +11,16 @@ import type { AppConfig } from "../src/config/schema.ts";
 import { isWeeklyDecisionSession, registerShadowDecisionJob, SHADOW_DECISION_SEALED } from "../src/decision/shadow-job.ts";
 import { appendDecisionRecord, decisionRecordCount, DECISION_RECORD_VERSION } from "../src/decision/decision-record.ts";
 import { loadCharterFile } from "../src/strategy/charter.ts";
+import { registerExperiment, type RegisterOutput } from "../src/research/experiment-cli.ts";
 import { buildMarket, D, N, type PricePath } from "./strategy-fixture.ts";
+import { CHARTER_VERSION, writeShadowCharter as writeCharterFile } from "./charter-file-fixture.ts";
 
 const cal = new NyseCalendar();
 const afterClose = (session: string, mins: number): UtcInstant => addMs(cal.sessionClose(isoDate(session)), mins * 60_000);
 
-/**
- * The registered charter, shrunk to the shadow-decision fixture's shape (same edits as shadow-decision.test.ts)
- * and written back to disk, because the job loads a charter FILE. The parse -> edit -> stringify round trip
- * keeps it a valid document under the real schema.
- */
-/**
- * The tracked charter's version, which the shrunk test charter below keeps. Read rather than written as a literal,
- * so cutting a new charter version does not silently empty every per-version query in this file.
- */
-const CHARTER_VERSION = (parse(readFileSync(fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url)), "utf8")) as { charter_version: string }).charter_version;
-
+/** The shrunk charter FILE the job loads, and the tracked charter's version (charter-file-fixture.ts). */
 function writeShadowCharter(dir: string, decisionOffsetMinutes?: number): string {
-  const src = fileURLToPath(new URL("../../../strategies/etf-trend-vol/charter.yaml", import.meta.url));
-  const doc = parse(readFileSync(src, "utf8")) as Record<string, unknown>;
-  const universe = doc["universe"] as Record<string, unknown>;
-  universe["risk_etfs"] = ["VTI", "QQQ", "IWM", "VTV", "VUG", "XLK", "XLV", "XLU"];
-  universe["conditional"] = [];
-  universe["look_through_flagged"] = [];
-  (doc["sizing"] as Record<string, unknown>)["clusters"] = [];
-  const features = doc["features"] as Record<string, unknown>;
-  Object.assign(features, { momentum_lookback_sessions: 20, momentum_skip_sessions: 4, trend_sma_sessions: 10, volatility_sessions: 15, adv_sessions: 5, min_adv_usd: "1000000" });
-  // Unlike the in-memory fixtures, a charter FILE goes through full validation: factor assignments must cover
-  // only universe members, and the registered feature point must be a member of the sensitivity grid.
-  const factors = doc["factors"] as { assignments: Record<string, unknown> };
-  const keep = new Set([...(universe["risk_etfs"] as string[]), universe["cash_etf"] as string]);
-  factors.assignments = Object.fromEntries(Object.entries(factors.assignments).filter(([sym]) => keep.has(sym)));
-  if (decisionOffsetMinutes !== undefined) (doc["rules"] as Record<string, unknown>)["decision_offset_minutes"] = decisionOffsetMinutes;
-  const grid = doc["sensitivity_grid"] as Record<string, unknown>;
-  grid["momentum"] = [{ lookback_sessions: 20, skip_sessions: 4 }, { lookback_sessions: 40, skip_sessions: 4 }];
-  grid["trend_sma_sessions"] = [10, 15];
-  grid["volatility_sessions"] = [15];
-  const path = join(dir, "charter.yaml");
-  writeFileSync(path, stringify(doc));
-  return path;
+  return writeCharterFile(dir, decisionOffsetMinutes === undefined ? {} : { decisionOffsetMinutes });
 }
 
 /** The baked policy directory: a relaxed risk.yaml, a clean restricted list, and a covering theme membership. */
@@ -349,6 +319,42 @@ describe("shadow_decision job: rung order and policy approval", () => {
     expect(decisionRecordCount(env.db)).toBe(0);
     const skips = env.db.prepare("SELECT payload FROM ledger_events WHERE kind = 'shadow.decision_skipped'").all() as { payload: string }[];
     expect(skips[0]?.payload).toContain("at the decision instant");
+  });
+
+  /** The B1 CLI path: the registration the owner types, against the SAME store and charter file the job reads. */
+  const BUILD_COMMIT = "0123456789abcdef0123456789abcdef01234567";
+  function registerThroughCli(env: Env, at: UtcInstant, noShadowClock?: string): RegisterOutput {
+    const snapshotId = new PointInTimeRepository(env.db).createSnapshot("prices_daily", "clock start").snapshotId;
+    return registerExperiment(
+      { db: env.db, config: { ...env.config, buildCommit: BUILD_COMMIT }, calendar: cal, clock: () => Date.parse(at) },
+      { charterPath: env.charterPath, snapshots: [{ dataset: "prices_daily", snapshotId }], registeredBy: "Ada Lovelace", ...(noShadowClock === undefined ? {} : { noShadowClock }) },
+    );
+  }
+
+  it("seals the week after a CLI registration, and the registration before it was skipped (B1: the clock starts from registration, OD-10)", async () => {
+    const env = setup("SHADOW", true, { registerExperiment: false });
+    await env.scheduler.tick(afterClose("2026-03-06", 150));
+    expect(decisionRecordCount(env.db)).toBe(0);
+    const out = registerThroughCli(env, afterClose("2026-03-12", 0));
+    expect(out.shadowClock).toMatchObject({ seals: true, startsClock: true, shadowCharterHash: loadCharterFile(env.charterPath).charterHash });
+    expect(out.experimentId).toMatch(/^EXP-2026-\d{4}$/);
+    expect(out.labels).toEqual([]);
+    await env.scheduler.tick(afterClose("2026-03-13", 150));
+    expect(decisionRecordCount(env.db)).toBe(2);
+    expect(sealedEvents(env.db).map((e) => e.session)).toEqual(["2026-03-13"]);
+  });
+
+  it("never starts sealing on a registration labelled NO_SHADOW_CLOCK (an evaluation-store child is not the clock's anchor)", async () => {
+    const env = setup("SHADOW", true, { registerExperiment: false });
+    const out = registerThroughCli(env, afterClose("2026-03-12", 0), "rehearsal: not the clock anchor");
+    expect(out.labels).toContain("NO_SHADOW_CLOCK");
+    expect(out.shadowClock.startsClock).toBe(false);
+    expect(env.db.prepare("SELECT COUNT(*) AS n FROM ledger_events WHERE kind = 'experiment.no_shadow_clock'").get()).toEqual({ n: 1 });
+    await env.scheduler.tick(afterClose("2026-03-13", 150));
+    expect(decisionRecordCount(env.db)).toBe(0);
+    const skips = env.db.prepare("SELECT payload FROM ledger_events WHERE kind = 'shadow.decision_skipped'").all() as { payload: string }[];
+    expect(skips).toHaveLength(1);
+    expect(skips[0]?.payload).toContain("no experiment registered");
   });
 
   it("treats an approval stamped AFTER the decision instant as unapproved, even when it exists by run time (Codex P1, round 5)", async () => {

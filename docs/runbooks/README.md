@@ -8,6 +8,7 @@ Operator procedures for Black Gold. Phase 0 provides the local-development and c
 | `backup-and-restore.md` | 0 | Available |
 | `first-ingestion.md` | 1 → 2 | Available |
 | `umbrel-install-update-remove.md` | 0 (design) / first release | Draft until first published image |
+| `register-experiment.md` | rung 1 → 2 | Available (the owner's act; starts the prospective clock) |
 | Startup, shutdown, reboot, missed jobs | 5 | Not yet written |
 | Provider outage, token expiry, stale data, disk full | 5–6 | Not yet written |
 | `UNKNOWN` order, partial fill, missing protection, unexpected position | 6 | Not yet written |

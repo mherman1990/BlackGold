@@ -36,6 +36,7 @@ export * from "./market/entity-map.ts";
 export * from "./market/series.ts";
 export * from "./universe/snapshots.ts";
 export * from "./research/registry.ts";
+export * from "./research/experiment-cli.ts";
 export * from "./research/nav.ts";
 export * from "./research/simulator.ts";
 export * from "./research/benchmarks.ts";

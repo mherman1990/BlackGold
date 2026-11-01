@@ -1,0 +1,7 @@
+file: packages/core/src/config/load.ts
+mutations:
+  - name: an image built without BLACKGOLD_BUILD_COMMIT must read as unset, never as a made-up commit
+    find: 'buildCommit: get("BUILD_COMMIT"),'
+    replace: 'buildCommit: get("BUILD_COMMIT") ?? "0000000",'
+    test: packages/core/test/experiment-cli.test.ts
+    testName: "an image built without BLACKGOLD_BUILD_COMMIT"

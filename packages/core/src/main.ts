@@ -28,6 +28,7 @@ import { buildCoverageReport } from "./research/coverage.ts";
 import { runEvaluation, type EvaluationProgress } from "./research/evaluate.ts";
 import { recordShadowReArm, ShadowReArmError } from "./decision/shadow-halt.ts";
 import { shadowStatusForNextDecision } from "./decision/shadow-job.ts";
+import { listExperiments, markExperimentViewed, openExperimentHoldout, parseLabelsArg, parseSnapshotArg, registerExperiment, showExperiment, type RegisterDeps } from "./research/experiment-cli.ts";
 
 /**
  * blackgold-core CLI. Operational commands plus Phase 1 public-source ingestion. No broker, no model, no live path.
@@ -78,6 +79,23 @@ Phase 3 runtime-LLM analyst (requires ANTHROPIC_API_KEY in the environment; abst
                    --sources <sourceId[:entityId],...> --charter <charter.yaml> [--mode historical]
                                             One analyst decision: seal a point-in-time packet, assess, archive the call.
                                             Factors are classified deterministically from the charter; an unclassified candidate is refused
+
+Experiment registry (rung 1; the owner's acts - Claude Code builds the line and runs --dry-run, never the rest):
+  experiment register --charter <charter.yaml> --snapshot <dataset>=<id>[,...] --registered-by <name>
+                      [--dry-run] [--require-citable] [--no-shadow-clock <reason>] [--labels a,b] [--coverage-report <path>]
+                      [--parent <EXP-id> --supersedes-reason <text>]
+                                            Freeze the charter, the baked build commit, the snapshots and the coverage
+                                            report into a registered experiment. Starts the 26/52-week clock (OD-10) only
+                                            from the SHADOW process for its configured charter; refused otherwise unless
+                                            --no-shadow-clock says why. Refuses a placeholder signer, an unregistrable
+                                            charter, a store with uncovered members and, under --require-citable, any
+                                            promotion-blocking data. --dry-run runs every check and writes nothing
+  experiment list                           Every registered experiment, one line each
+  experiment show --id <EXP-id>             The frozen definition and its record
+  experiment mark-viewed --id <EXP-id> --viewed-by <name>
+                                            Log the first view of a result (once; a change afterwards is a new experiment)
+  experiment open-holdout --id <EXP-id> --reason <text> --requested-by <name>
+                                            Open the sealed holdout once, after review, with the written decision
 
 Shadow halt state (D-54; the owner's re-arm path - no order, no broker, no live mode):
   shadow status --charter <charter.yaml>    The halt picture as the NEXT shadow decision will see it (its instant and session):
@@ -142,6 +160,73 @@ async function run(argv: readonly string[]): Promise<CommandResult> {
         }
       }
       throw new UsageError("shadow requires a subcommand: status | rearm");
+    }
+    case "experiment": {
+      const [sub, ...rest] = args;
+      const o = parseOptions(rest, {
+        charter: { type: "string" },
+        snapshot: { type: "string" },
+        "registered-by": { type: "string" },
+        labels: { type: "string" },
+        "require-citable": { type: "boolean" },
+        "no-shadow-clock": { type: "string" },
+        "coverage-report": { type: "string" },
+        "dry-run": { type: "boolean" },
+        parent: { type: "string" },
+        "supersedes-reason": { type: "string" },
+        id: { type: "string" },
+        "viewed-by": { type: "string" },
+        reason: { type: "string" },
+        "requested-by": { type: "string" },
+      });
+      const str = (k: string): string | undefined => (typeof o[k] === "string" ? o[k] : undefined);
+      const flag = (k: string): boolean => o[k] === true;
+      const deps = (db: Db): RegisterDeps => ({ db, config, calendar, clock: Date.now });
+      if (sub === "register") {
+        const charterPath = str("charter");
+        if (charterPath === undefined) throw new UsageError("experiment register requires --charter <charter.yaml>");
+        const registeredBy = str("registered-by");
+        if (registeredBy === undefined) throw new UsageError("experiment register requires --registered-by <name>: the owner's name, typed on the line (no default, no environment fallback)");
+        const snapshots = parseSnapshotArg(str("snapshot"));
+        const noShadowClock = str("no-shadow-clock");
+        const coverageReportPath = str("coverage-report");
+        const parentExperimentId = str("parent");
+        const supersedesReason = str("supersedes-reason");
+        const out = withDb(config, (db) =>
+          registerExperiment(deps(db), {
+            charterPath,
+            snapshots,
+            registeredBy,
+            labels: parseLabelsArg(str("labels")),
+            requireCitable: flag("require-citable"),
+            dryRun: flag("dry-run"),
+            ...(noShadowClock === undefined ? {} : { noShadowClock }),
+            ...(coverageReportPath === undefined ? {} : { coverageReportPath }),
+            ...(parentExperimentId === undefined ? {} : { parentExperimentId }),
+            ...(supersedesReason === undefined ? {} : { supersedesReason }),
+          }),
+        );
+        return { exitCode: 0, output: out };
+      }
+      if (sub === "list") return { exitCode: 0, output: withDb(config, (db) => listExperiments(deps(db))) };
+      const id = str("id");
+      if (sub === "show") {
+        if (id === undefined) throw new UsageError("experiment show requires --id <EXP-id>");
+        return { exitCode: 0, output: withDb(config, (db) => showExperiment(deps(db), id)) };
+      }
+      if (sub === "mark-viewed") {
+        if (id === undefined) throw new UsageError("experiment mark-viewed requires --id <EXP-id>");
+        const viewedBy = str("viewed-by");
+        if (viewedBy === undefined) throw new UsageError("experiment mark-viewed requires --viewed-by <name>");
+        return { exitCode: 0, output: withDb(config, (db) => markExperimentViewed(deps(db), { experimentId: id, viewedBy })) };
+      }
+      if (sub === "open-holdout") {
+        if (id === undefined) throw new UsageError("experiment open-holdout requires --id <EXP-id>");
+        const requestedBy = str("requested-by");
+        if (requestedBy === undefined) throw new UsageError("experiment open-holdout requires --requested-by <name>");
+        return { exitCode: 0, output: withDb(config, (db) => openExperimentHoldout(deps(db), { experimentId: id, reason: str("reason"), requestedBy })) };
+      }
+      throw new UsageError("experiment requires a subcommand: register | list | show | mark-viewed | open-holdout");
     }
     case "health": {
       const report = withDb(config, (db) => runHealth(config, db, calendar, now));

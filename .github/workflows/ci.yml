@@ -57,6 +57,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: false
           tags: ghcr.io/mherman1990/blackgold:ci
+          build-args: |
+            BLACKGOLD_BUILD_COMMIT=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: smoke test amd64 image
@@ -66,13 +68,15 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: ghcr.io/mherman1990/blackgold:ci-amd64
+          build-args: |
+            BLACKGOLD_BUILD_COMMIT=${{ github.sha }}
           cache-from: type=gha
-      - name: health commands exit 0 with no credentials and live disabled
+      - name: health commands exit 0 with no credentials and live disabled; the build commit is baked
         run: |
           set -euo pipefail
           docker run --rm -e BLACKGOLD_DATA_DIR=/data ghcr.io/mherman1990/blackgold:ci-amd64 packages/core/dist/main.js health | tee core-health.json
           docker run --rm -e BLACKGOLD_DATA_DIR=/data ghcr.io/mherman1990/blackgold:ci-amd64 packages/broker-gateway/dist/main.js health | tee gw-health.json
-          node -e "const c=require('./core-health.json');const g=require('./gw-health.json');if(c.liveCapable!==false||g.liveCapable!==false||g.credentialLoaded!==false){console.error('live capability or credential detected');process.exit(1)}"
+          node -e "const c=require('./core-health.json');const g=require('./gw-health.json');if(c.liveCapable!==false||g.liveCapable!==false||g.credentialLoaded!==false){console.error('live capability or credential detected');process.exit(1)}if(c.buildCommit!==process.env.GITHUB_SHA){console.error('build commit not baked: '+String(c.buildCommit));process.exit(1)}"
       - name: live mode must be refused by the image
         run: |
           set +e

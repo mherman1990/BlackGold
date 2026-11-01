@@ -45,6 +45,13 @@ export const NotificationAdapters = ["stub", "ntfy"] as const;
 
 const AppConfigInput = z.object({
   mode: z.enum(MODES).default("RESEARCH"),
+  /**
+   * The git commit this executable was built from, baked into the image by CI (`BLACKGOLD_BUILD_COMMIT`,
+   * Dockerfile ARG set from the resolved release sha). Environment-only, never admitted to secrets.env: the
+   * data volume must not be able to forge the executable's provenance. Absent in a local build, and
+   * `experiment register` refuses without it, because `code.commit` is frozen into the evidence record.
+   */
+  buildCommit: z.string().regex(/^[0-9a-f]{7,40}$/, "build commit must be 7-40 lowercase hex characters").optional(),
   dataDir: z.string().min(1).default("./data"),
   /** Defaults to `${dataDir}/blackgold.sqlite`. */
   dbPath: z.string().min(1).optional(),

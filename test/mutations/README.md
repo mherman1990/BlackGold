@@ -23,6 +23,7 @@ Records are **mandatory** for any changed file in the set `MANDATORY_PATTERNS` i
   `packages/core/src/data/pit/**`
 - `packages/core/src/{market,calendar,universe}/**`
 - `packages/core/src/config/load.ts`
+- `packages/core/src/research/experiment-cli.ts` (the owner's registration guards)
 - `packages/broker-gateway/src/**`
 
 CI runs the check over the files changed against `origin/main`; run `npm run check:mutations -- --all` to

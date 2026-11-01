@@ -158,15 +158,20 @@ bg policy verify --dir /data/policy
 
 ### [BLOCKED] register: Snapshot, dry-run, then register charter 0.3.0 (starts the clock) (owner only)
 
-Blocked by: PR B1 (`experiment` CLI) in release 0.1.15, and DN-1, DN-3, DN-8, DN-16 answered
+Blocked by: release 0.1.15 (B1's `experiment` CLI, merged, plus B2's SHADOW compose) installed on the Pi, and DN-1, DN-3, DN-8, DN-16 answered
 
 ```bash
+# bg health must print a 40-hex buildCommit (a CI image) and mode SHADOW; otherwise register is refused, by design
 bg snapshot create --dataset prices_daily --description "shadow clock start"
-# copy the snapshot id from the output into the next two lines
+# copy the snapshotId from the output into the next two lines; read the dry run (uncovered must be empty, shadowClock.startsClock true)
 bg experiment register --charter strategies/etf-trend-vol/charter.yaml --snapshot prices_daily=<id> --registered-by "$BLACKGOLD_SIGNER" --dry-run
 bg experiment register --charter strategies/etf-trend-vol/charter.yaml --snapshot prices_daily=<id> --registered-by "$BLACKGOLD_SIGNER"
 bg shadow status --charter strategies/etf-trend-vol/charter.yaml
 ```
+
+The research-store registration is non-citable by construction (Tiingo's single-source actions label it
+`UNVERIFIED_SINGLE_SOURCE`); it anchors the clock. The citable child comes later on the evaluation store
+with `--require-citable --no-shadow-clock`. Runbook: `docs/runbooks/register-experiment.md`.
 
 ## Sitting 2: policy files, the paper account, notifications, first reconcile pass
 

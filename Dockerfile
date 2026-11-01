@@ -34,6 +34,11 @@ COPY --chown=1000:1000 strategies ./strategies
 # The owner's Pi wrappers (D-60): `sudo docker cp blackgold-trading_core_1:/app/scripts/pi/. ~/bg` installs them.
 # Shell only, never run inside the container; shipped here so the Pi needs no checkout.
 COPY --chown=1000:1000 scripts/pi ./scripts/pi
+# Build provenance: the commit this image was built from, passed by CI as a build-arg (ci.yml: github.sha;
+# release.yml: the guard's resolved sha). It is what `experiment register` freezes as `code.commit`. A build
+# without the arg bakes an empty value, which the config reads as unset, and registration refuses.
+ARG BLACKGOLD_BUILD_COMMIT=
+ENV BLACKGOLD_BUILD_COMMIT=${BLACKGOLD_BUILD_COMMIT}
 USER 1000:1000
 VOLUME ["/data"]
 ENV BLACKGOLD_DATA_DIR=/data

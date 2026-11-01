@@ -68,6 +68,8 @@ export function envToAppConfigInput(env: NodeJS.ProcessEnv): Record<string, unkn
 
   return stripUndefined({
     mode: get("MODE"),
+    // Image-baked provenance; an empty value (a build without the ARG) reads as unset and fails closed.
+    buildCommit: get("BUILD_COMMIT"),
     dataDir: get("DATA_DIR"),
     dbPath: get("DB_PATH"),
     artifactsDir: get("ARTIFACTS_DIR"),
@@ -115,7 +117,7 @@ export const SECRETS_FILE_NAME = "secrets.env";
  * here regardless) could never enable a live path. A live mode is still refused from every source in
  * loadAppConfig/parseAppConfig.
  */
-const SECRET_FILE_KEYS: ReadonlySet<string> = new Set([
+export const SECRET_FILE_KEYS: ReadonlySet<string> = new Set([
   `${ENV_PREFIX}SEC_USER_AGENT_CONTACT`,
   `${ENV_PREFIX}FRED_API_KEY`,
   `${ENV_PREFIX}ALPACA_KEY_ID`,

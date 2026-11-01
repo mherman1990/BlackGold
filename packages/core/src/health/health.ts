@@ -11,6 +11,8 @@ export type HealthCheck = { component: string; ok: boolean; detail: string };
 export type HealthReport = {
   ok: boolean;
   version: string;
+  /** The commit this executable was built from (BLACKGOLD_BUILD_COMMIT, baked by CI), or null in a local build. */
+  buildCommit: string | null;
   mode: Mode;
   /** Hard-coded false: this build contains no live trading path. */
   liveCapable: false;
@@ -112,6 +114,7 @@ export function runHealth(config: AppConfig, db: Db, calendar: ExchangeCalendar,
   return {
     ok,
     version: CORE_VERSION,
+    buildCommit: config.buildCommit ?? null,
     mode: config.mode,
     liveCapable,
     at: now,
