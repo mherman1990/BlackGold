@@ -29,7 +29,8 @@
  *                                   [--runner "<cmd with {test} and {name}>"]
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
@@ -123,12 +124,22 @@ export function loadRecords(dir: string): MutationRecord[] {
   return out;
 }
 
-export type Runner = (test: string, testName: string | undefined) => number;
+/**
+ * What one test run reported. `ranTests`/`failedTests` come from vitest's JSON report when the runner can
+ * produce one; a runner that cannot leaves them undefined and only the exit code is known.
+ */
+export type RunResult = { exitCode: number; ranTests?: number; failedTests?: number };
+export type Runner = (test: string, testName: string | undefined) => RunResult;
 
 /**
- * Applies each mutation of `record` to the file on disk, runs the named test through `runner`, and expects a
- * non-zero exit. Restores the original bytes in `finally`. Returns one problem string per surviving mutation
- * or per malformed mutation.
+ * Applies each mutation of `record` to the file on disk, runs the named test through `runner`, and expects an
+ * ASSERTION to fail. Restores the original bytes in `finally`. Returns one problem string per surviving or
+ * unproven mutation, or per malformed mutation.
+ *
+ * Two runs per mutation. The baseline (unmodified source) must be green and must have run at least one test,
+ * so a misspelled filter cannot pass as a kill (Codex P1, round 2). The mutated run must report at least one
+ * FAILED assertion: a non-zero exit with none (a syntax error the replacement introduced, an import error, a
+ * runner crash) proves nothing about the guard and is reported, never counted (Codex P1, round 3).
  */
 export function verifyRecord(root: string, record: MutationRecord, runner: Runner, log: (line: string) => void): string[] {
   const problems: string[] = [];
@@ -150,18 +161,21 @@ export function verifyRecord(root: string, record: MutationRecord, runner: Runne
     }
     // The same file and filter must be GREEN on the unmodified source first. A misspelled `testName` selects no
     // tests and vitest exits non-zero, which would otherwise read as a kill (Codex P1, round 2).
+    const label = `${m.test}${m.testName ? ` -t "${m.testName}"` : ""}`;
     const baseline = runner(m.test, m.testName);
-    if (baseline !== 0) {
-      problems.push(`${record.source} [${m.name}]: ${m.test}${m.testName ? ` -t "${m.testName}"` : ""} is not green on the unmodified source (exit ${baseline}); the filter matches no test, or the test is already red`);
+    if (baseline.exitCode !== 0 || baseline.ranTests === 0 || (baseline.failedTests ?? 0) > 0) {
+      problems.push(`${record.source} [${m.name}]: ${label} is not green on the unmodified source (exit ${baseline.exitCode}, ran ${baseline.ranTests ?? "?"}, failed ${baseline.failedTests ?? "?"}); the filter matches no test, or the test is already red`);
       continue;
     }
     try {
       writeFileSync(path, mutated);
-      const code = runner(m.test, m.testName);
-      if (code === 0) {
-        problems.push(`${record.source} [${m.name}]: SURVIVED - ${m.test}${m.testName ? ` -t "${m.testName}"` : ""} stayed green with the mutation applied; that test does not guard this invariant`);
+      const run = runner(m.test, m.testName);
+      if (run.exitCode === 0 && (run.failedTests ?? 0) === 0) {
+        problems.push(`${record.source} [${m.name}]: SURVIVED - ${label} stayed green with the mutation applied; that test does not guard this invariant`);
+      } else if (run.failedTests === undefined ? false : run.failedTests === 0) {
+        problems.push(`${record.source} [${m.name}]: ${label} errored without a failing assertion (exit ${run.exitCode}); the mutation broke the run (syntax, import, runner), which proves nothing about the guard`);
       } else {
-        log(`  killed: ${record.file} [${m.name}] -> ${m.test} went red (exit ${code})`);
+        log(`  killed: ${record.file} [${m.name}] -> ${label} went red (exit ${run.exitCode}, failed assertions ${run.failedTests ?? "unknown"})`);
       }
     } finally {
       writeFileSync(path, original);
@@ -170,19 +184,43 @@ export function verifyRecord(root: string, record: MutationRecord, runner: Runne
   return problems;
 }
 
+/** Counts tests run and failed in a vitest JSON report. Pure. */
+export function countReport(report: { testResults?: { assertionResults?: { status?: string }[] }[] }): { ranTests: number; failedTests: number } {
+  let ranTests = 0;
+  let failedTests = 0;
+  for (const file of report.testResults ?? []) {
+    for (const a of file.assertionResults ?? []) {
+      if (a.status === "pending" || a.status === "skipped" || a.status === "todo") continue;
+      ranTests += 1;
+      if (a.status === "failed") failedTests += 1;
+    }
+  }
+  return { ranTests, failedTests };
+}
+
 export function vitestRunner(root: string, template?: string): Runner {
   return (test, testName) => {
     if (template !== undefined) {
       const cmd = template.replaceAll("{test}", test).replaceAll("{name}", testName ?? "");
       const r = spawnSync("sh", ["-c", cmd], { cwd: root, stdio: "ignore" });
-      return r.status ?? 1;
+      return { exitCode: r.status ?? 1 };
     }
     // `--reporter` on the command line replaces the configured reporters, so these runs do not overwrite the
-    // JSON report `check-slow-tests` reads from the full `npm run test`.
-    const args = ["vitest", "run", "--reporter=dot", test];
-    if (testName !== undefined) args.push("-t", testName);
-    const r = spawnSync("npx", args, { cwd: root, stdio: "ignore" });
-    return r.status ?? 1;
+    // JSON report `check-slow-tests` reads from the full `npm run test`; they write their own to a temp file,
+    // which is how a failing ASSERTION is told apart from a run that errored.
+    const dir = mkdtempSync(join(tmpdir(), "bg-mutation-"));
+    const reportPath = join(dir, "report.json");
+    try {
+      const args = ["vitest", "run", "--reporter=json", `--outputFile=${reportPath}`, test];
+      if (testName !== undefined) args.push("-t", testName);
+      const r = spawnSync("npx", args, { cwd: root, stdio: "ignore" });
+      const exitCode = r.status ?? 1;
+      if (!existsSync(reportPath)) return { exitCode, ranTests: 0, failedTests: 0 };
+      const counts = countReport(JSON.parse(readFileSync(reportPath, "utf8")) as Parameters<typeof countReport>[0]);
+      return { exitCode, ...counts };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   };
 }
 

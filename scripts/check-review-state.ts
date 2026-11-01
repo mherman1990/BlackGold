@@ -73,6 +73,12 @@ export type PrFacts = {
   botReviewComments: { createdAt: string; body?: string; commitSha?: string }[];
   /** ISO instant the head commit was committed. */
   headCommittedAt: string;
+  /**
+   * ISO instant of the newest review REQUEST by the PR author (an `@codex review` comment by default). A
+   * request newer than the newest reviewer comment on the head means a round is in flight on an unchanged
+   * head, which the commit sha alone cannot show (Codex P1, round 3).
+   */
+  reviewRequestedAt?: string;
 };
 
 export type GitFacts = {
@@ -89,6 +95,8 @@ export type GitFacts = {
   changedFiles: string[] | undefined;
   /** Whether `sha` is reachable from HEAD. */
   isAncestorOfHead: (sha: string) => boolean;
+  /** Files that differ between `sha` and HEAD, or undefined when `sha` is unknown. */
+  filesChangedSince: (sha: string) => string[] | undefined;
   /** Returns old and new POLICY_FLOOR values when that file changed. */
   policyFloor: { base: number | undefined; head: number | undefined };
 };
@@ -147,6 +155,58 @@ export function sectionOf(body: string, heading: string): string | undefined {
   return lines.slice(start + 1, end).join("\n");
 }
 
+/**
+ * Has the external reviewer completed a round on THIS head? Pure.
+ *
+ *  - A reviewer comment naming the head commit is the proof. A late-finishing review of the previous head can
+ *    postdate the head commit, so a timestamp alone is not (round 1).
+ *  - A review request newer than the newest reviewer comment on the head means a round is in flight on an
+ *    unchanged head (round 3).
+ *  - One narrow exception: a head whose only difference from a reviewed commit is `docs/KNOWN_FINDINGS.md`
+ *    (the ledger commit a PR makes after its last round) counts as reviewed, and the note says so.
+ */
+export function headReviewState(pr: PrFacts, git: Pick<GitFacts, "filesChangedSince">): { reviewed: boolean; reason?: string; note?: string } {
+  if (pr.botReviewComments.length === 0) {
+    return { reviewed: false, reason: 'no external review comment exists on this PR; pass --no-external-review "<reason>" to record why it is merging without one (a financial-critical path may not)' };
+  }
+  const withSha = pr.botReviewComments.filter((c) => c.commitSha !== undefined);
+  if (withSha.length === 0) {
+    const newest = pr.botReviewComments.map((c) => Date.parse(c.createdAt)).reduce((a, b) => Math.max(a, b), 0);
+    const head = Date.parse(pr.headCommittedAt);
+    if (!Number.isFinite(newest) || !Number.isFinite(head)) return { reviewed: false, reason: "review comment or head commit timestamps are unreadable" };
+    if (newest < head) return { reviewed: false, reason: `the newest external review comment predates the head commit; the round on ${pr.headSha.slice(0, 12)} has not completed, do not merge mid-round` };
+    return { reviewed: false, reason: "external review comments carry no commitSha, so only their timestamps say the head was reviewed; supply commit_id from the GitHub review data (a late review of a previous head can postdate this commit)" };
+  }
+  const onHead = withSha.filter((c) => c.commitSha === pr.headSha);
+  let reviewedSha = pr.headSha;
+  let note: string | undefined;
+  if (onHead.length === 0) {
+    // Ledger-only exception: find a reviewed commit from which only the ledger changed.
+    const candidates = [...new Set(withSha.map((c) => c.commitSha ?? ""))].filter(Boolean);
+    const ledgerOnly = candidates.find((sha) => {
+      const diff = git.filesChangedSince(sha);
+      return diff !== undefined && diff.length > 0 && diff.every((f) => f === "docs/KNOWN_FINDINGS.md");
+    });
+    if (ledgerOnly === undefined) {
+      const latest = [...withSha].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+      return { reviewed: false, reason: `no external review names the head commit ${pr.headSha.slice(0, 12)}; the latest reviewed ${latest?.commitSha?.slice(0, 12) ?? "?"}. The round on this head has not completed, do not merge mid-round` };
+    }
+    reviewedSha = ledgerOnly;
+    note = `ok: the head differs from the reviewed commit ${ledgerOnly.slice(0, 12)} only in docs/KNOWN_FINDINGS.md (the post-round ledger commit)`;
+  }
+  const newestOnReviewed = withSha
+    .filter((c) => c.commitSha === reviewedSha)
+    .map((c) => Date.parse(c.createdAt))
+    .reduce((a, b) => Math.max(a, b), 0);
+  if (pr.reviewRequestedAt !== undefined) {
+    const requested = Date.parse(pr.reviewRequestedAt);
+    if (Number.isFinite(requested) && requested > newestOnReviewed) {
+      return { reviewed: false, reason: `a review was requested at ${pr.reviewRequestedAt}, after the newest reviewer comment on ${reviewedSha.slice(0, 12)}; that round is in flight, do not merge mid-round` };
+    }
+  }
+  return note === undefined ? { reviewed: true } : { reviewed: true, note };
+}
+
 /** Every check as a problem sentence, or none. Pure. */
 export function evaluateReviewState(input: ReviewStateInput): string[] {
   const { pr, git } = input;
@@ -186,8 +246,11 @@ export function evaluateReviewState(input: ReviewStateInput): string[] {
       problems.push(`${externalRounds} external review rounds exceed the budget of ${input.maxExternalRounds} (D-59); every still-open finding must be a row in docs/KNOWN_FINDINGS.md for #${pr.number}, or the section must say "none"`);
     }
   }
+  // The mention must be inside the section itself; the same words elsewhere in the body do not count (Codex P2,
+  // round 3).
+  const knownSection = sectionOf(pr.body, "## Known open findings") ?? "";
   for (const f of openForPr) {
-    if (!pr.body.includes(f.finding.slice(0, 40))) problems.push(`docs/KNOWN_FINDINGS.md line ${f.line} is open for #${pr.number} but the PR body's "Known open findings" section does not mention it`);
+    if (!knownSection.includes(f.finding.slice(0, 40))) problems.push(`docs/KNOWN_FINDINGS.md line ${f.line} is open for #${pr.number} but the PR body's "Known open findings" section does not mention it`);
   }
 
   // 5. CI on exactly this head.
@@ -205,27 +268,17 @@ export function evaluateReviewState(input: ReviewStateInput): string[] {
   }
   const changedFiles = git.changedFiles ?? [];
   const financialChanged = changedFiles.filter((f) => isMandatory(f));
-  if (pr.botReviewComments.length === 0) {
-    if (input.noExternalReviewReason === undefined) {
-      problems.push("no external review comment exists on this PR; pass --no-external-review \"<reason>\" to record why it is merging without one (a financial-critical path may not)");
-    } else if (financialChanged.length > 0) {
+  const headReview = headReviewState(pr, git);
+  if (headReview.reviewed) {
+    if (headReview.note !== undefined) problems.push(...(headReview.note.startsWith("ok:") ? [] : [headReview.note]));
+  } else if (input.noExternalReviewReason !== undefined) {
+    // The bypass applies to an UNREVIEWED head whatever stale comments exist on earlier commits (Codex P2,
+    // round 3), and never to a financial-critical path.
+    if (financialChanged.length > 0) {
       problems.push(`--no-external-review is refused: this PR changes financial-critical files (${financialChanged.slice(0, 3).join(", ")}${financialChanged.length > 3 ? ", ..." : ""}) and must wait for an external round (D-59)`);
     }
   } else {
-    const withSha = pr.botReviewComments.filter((c) => c.commitSha !== undefined);
-    if (withSha.length > 0) {
-      const reviewedHead = withSha.some((c) => c.commitSha === pr.headSha);
-      if (!reviewedHead) {
-        const latest = [...withSha].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
-        problems.push(`no external review names the head commit ${pr.headSha.slice(0, 12)}; the latest reviewed ${latest?.commitSha?.slice(0, 12) ?? "?"}. The round on this head has not completed, do not merge mid-round`);
-      }
-    } else {
-      const newest = pr.botReviewComments.map((c) => Date.parse(c.createdAt)).reduce((a, b) => Math.max(a, b), 0);
-      const head = Date.parse(pr.headCommittedAt);
-      if (!Number.isFinite(newest) || !Number.isFinite(head)) problems.push("review comment or head commit timestamps are unreadable");
-      else if (newest < head) problems.push(`the newest external review comment predates the head commit; the round on ${pr.headSha.slice(0, 12)} has not completed, do not merge mid-round`);
-      else problems.push("external review comments carry no commitSha, so only their timestamps say the head was reviewed; supply commit_id from the GitHub review data (a late review of a previous head can postdate this commit)");
-    }
+    problems.push(headReview.reason ?? "the head commit has not been reviewed");
   }
 
   // 7. Moving a gate needs a decision on record.
@@ -274,6 +327,10 @@ export function gatherGitFacts(root: string, base: string): GitFacts {
     unpushedCommits,
     changedFiles,
     isAncestorOfHead: (sha) => spawnSync("git", ["merge-base", "--is-ancestor", sha, "HEAD"], { cwd: root }).status === 0,
+    filesChangedSince: (sha) => {
+      const out = tryGit(root, ["diff", "--name-only", sha, "HEAD"]);
+      return out === undefined ? undefined : out.split("\n").filter(Boolean);
+    },
     policyFloor: {
       base: mergeBase === undefined ? undefined : floorAt(mergeBase),
       head: existsSync(headFloorPath) ? Number(readFileSync(headFloorPath, "utf8").trim()) : undefined,
@@ -290,9 +347,12 @@ export const PR_JSON_SHAPE: PrFacts = {
   checks: REQUIRED_CHECKS.map((name) => ({ name, conclusion: "success" })),
   botReviewComments: [{ createdAt: "2026-11-02T15:04:05Z", body: "<review comment>", commitSha: "0123456789abcdef0123456789abcdef01234567" }],
   headCommittedAt: "2026-11-02T14:00:00Z",
+  reviewRequestedAt: "2026-11-02T14:30:00Z",
 };
 
-function prFactsFromGh(root: string, number: number, reviewerLogins: readonly string[]): PrFacts {
+export const DEFAULT_REVIEW_REQUEST_MARKER = "@codex review";
+
+function prFactsFromGh(root: string, number: number, reviewerLogins: readonly string[], requestMarker: string): PrFacts {
   const view = JSON.parse(
     execFileSync("gh", ["pr", "view", String(number), "--json", "number,headRefOid,baseRefName,isDraft,body,statusCheckRollup,commits"], { cwd: root, encoding: "utf8" }),
   ) as {
@@ -317,8 +377,16 @@ function prFactsFromGh(root: string, number: number, reviewerLogins: readonly st
     user?: { login?: string; type?: string };
   }[];
   const isBot = (u: { login?: string; type?: string } | undefined): boolean => u?.login !== undefined && reviewerLogins.includes(u.login);
+  const issueComments = JSON.parse(execFileSync("gh", ["api", `repos/{owner}/{repo}/issues/${number}/comments`, "--paginate"], { cwd: root, encoding: "utf8" })) as {
+    created_at: string;
+    body?: string;
+    user?: { login?: string; type?: string };
+  }[];
+  const requests = issueComments.filter((c) => !isBot(c.user) && (c.body ?? "").includes(requestMarker)).map((c) => c.created_at);
   const head = view.commits?.find((c) => c.oid === view.headRefOid);
+  const newestRequest = requests.sort().at(-1);
   return {
+    ...(newestRequest !== undefined ? { reviewRequestedAt: newestRequest } : {}),
     number: view.number,
     headSha: view.headRefOid,
     baseRef: view.baseRefName,
@@ -338,10 +406,10 @@ function prFactsFromGh(root: string, number: number, reviewerLogins: readonly st
   };
 }
 
-type Args = { prJson?: string; pr?: number; maxRounds: number; base: string; noExternalReview?: string; printShape: boolean; reviewers: string[] };
+type Args = { prJson?: string; pr?: number; maxRounds: number; base: string; noExternalReview?: string; printShape: boolean; reviewers: string[]; requestMarker: string };
 
 function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { maxRounds: MAX_EXTERNAL_ROUNDS, base: "origin/main", printShape: false, reviewers: [...EXTERNAL_REVIEWER_LOGINS] };
+  const args: Args = { maxRounds: MAX_EXTERNAL_ROUNDS, base: "origin/main", printShape: false, reviewers: [...EXTERNAL_REVIEWER_LOGINS], requestMarker: DEFAULT_REVIEW_REQUEST_MARKER };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = (): string => {
@@ -355,6 +423,7 @@ function parseArgs(argv: readonly string[]): Args {
     else if (a === "--base") args.base = next();
     else if (a === "--no-external-review") args.noExternalReview = next();
     else if (a === "--reviewer") args.reviewers = [next()];
+    else if (a === "--review-request-marker") args.requestMarker = next();
     else if (a === "--print-shape") args.printShape = true;
     else throw new Error(`unknown argument ${a ?? ""}`);
   }
@@ -369,7 +438,7 @@ export function main(argv: readonly string[], root: string, out: (line: string) 
   }
   let pr: PrFacts;
   if (args.prJson !== undefined) pr = JSON.parse(readFileSync(args.prJson.startsWith("/") ? args.prJson : join(root, args.prJson), "utf8")) as PrFacts;
-  else if (args.pr !== undefined) pr = prFactsFromGh(root, args.pr, args.reviewers);
+  else if (args.pr !== undefined) pr = prFactsFromGh(root, args.pr, args.reviewers, args.requestMarker);
   else {
     out("review-state check FAILED: pass --pr-json <file> (see --print-shape) or --pr <number>");
     return 2;
@@ -382,7 +451,9 @@ export function main(argv: readonly string[], root: string, out: (line: string) 
   };
   if (args.noExternalReview !== undefined) input.noExternalReviewReason = args.noExternalReview;
   const problems = evaluateReviewState(input);
-  if (args.noExternalReview !== undefined) out(`note: merging without an external review round, reason recorded: ${args.noExternalReview}`);
+  const hr = headReviewState(pr, input.git);
+  if (hr.note !== undefined) out(`note: ${hr.note.replace(/^ok: /, "")}`);
+  if (args.noExternalReview !== undefined && !hr.reviewed) out(`note: merging without an external review of this head, reason recorded: ${args.noExternalReview}`);
   if (problems.length > 0) {
     out(`review-state check FAILED for #${pr.number} at ${pr.headSha.slice(0, 12)}:`);
     for (const p of problems) out(` - ${p}`);

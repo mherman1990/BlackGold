@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeReport, DEFAULT_SOFT_MS, DEFAULT_THRESHOLD_MS, main as slowMain } from "../../scripts/check-slow-tests.ts";
-import { applyMutation, isMandatory, loadRecords, main as mutationsMain, recordsToVerify, verifyRecord, type MutationRecord } from "../../scripts/check-mutations.ts";
+import { applyMutation, countReport, isMandatory, loadRecords, main as mutationsMain, recordsToVerify, verifyRecord, type MutationRecord, type RunResult } from "../../scripts/check-mutations.ts";
 import { parse } from "yaml";
-import { evaluateReviewState, MAX_EXTERNAL_ROUNDS, parseRoundTable, REQUIRED_CHECKS, REQUIRED_HEADINGS, type GitFacts, type PrFacts, type ReviewStateInput } from "../../scripts/check-review-state.ts";
+import { evaluateReviewState, headReviewState, MAX_EXTERNAL_ROUNDS, parseRoundTable, REQUIRED_CHECKS, REQUIRED_HEADINGS, type GitFacts, type PrFacts, type ReviewStateInput } from "../../scripts/check-review-state.ts";
 
 /**
  * The review and test guardrails (D-59) are code, and this file proves each one refuses what it is there to
@@ -129,12 +129,15 @@ describe("check-mutations", () => {
         source: "fixture",
         mutations: [{ name: "strict comparison", find: "x > 10", replace: "x >= 10", test: "test/guard.test.ts" }],
       };
-      // A runner that "fails" (non-zero) when the mutated text is present: the test guards the invariant.
-      const catching = (): number => (readFileSync(join(dir, "src/guard.ts"), "utf8").includes("x >= 10") ? 1 : 0);
+      const mutatedNow = (): boolean => readFileSync(join(dir, "src/guard.ts"), "utf8").includes("x >= 10");
+      const green: RunResult = { exitCode: 0, ranTests: 1, failedTests: 0 };
+      const assertionFailed: RunResult = { exitCode: 1, ranTests: 1, failedTests: 1 };
+      // A runner whose ASSERTION fails when the mutated text is present: the test guards the invariant.
+      const catching = (): RunResult => (mutatedNow() ? assertionFailed : green);
       expect(verifyRecord(dir, record, catching, quiet)).toEqual([]);
       expect(readFileSync(join(dir, "src/guard.ts"), "utf8")).toContain("x > 10");
       // A runner that stays green no matter what: the mutation survives and the check fails.
-      const blind = (): number => 0;
+      const blind = (): RunResult => green;
       const problems = verifyRecord(dir, record, blind, quiet);
       expect(problems).toEqual([expect.stringContaining("SURVIVED")]);
       expect(readFileSync(join(dir, "src/guard.ts"), "utf8")).toContain("x > 10");
@@ -143,8 +146,17 @@ describe("check-mutations", () => {
       expect(verifyRecord(dir, missing, catching, quiet)).toEqual([expect.stringContaining("not present")]);
       // A runner that is red on the UNMODIFIED source (a misspelled testName selects nothing, or the test is
       // already failing) is a problem, never a kill (Codex P1, round 2).
-      const alwaysRed = (): number => 1;
+      const alwaysRed = (): RunResult => assertionFailed;
       expect(verifyRecord(dir, record, alwaysRed, quiet)).toEqual([expect.stringContaining("not green on the unmodified source")]);
+      const noTests = (): RunResult => ({ exitCode: 1, ranTests: 0, failedTests: 0 });
+      expect(verifyRecord(dir, record, noTests, quiet)).toEqual([expect.stringContaining("not green on the unmodified source")]);
+      // A mutated run that exits non-zero WITHOUT a failing assertion (syntax error, import error) proves
+      // nothing and is reported, never counted as a kill (Codex P1, round 3).
+      const errored = (): RunResult => (mutatedNow() ? { exitCode: 1, ranTests: 0, failedTests: 0 } : green);
+      expect(verifyRecord(dir, record, errored, quiet)).toEqual([expect.stringContaining("errored without a failing assertion")]);
+      // A runner that cannot count (a custom --runner template) is judged on exit code alone.
+      const exitOnly = (): RunResult => ({ exitCode: mutatedNow() ? 1 : 0 });
+      expect(verifyRecord(dir, record, exitOnly, quiet)).toEqual([]);
       expect(readFileSync(join(dir, "src/guard.ts"), "utf8")).toContain("x > 10");
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -160,9 +172,9 @@ describe("check-mutations", () => {
       writeFileSync(join(dir, "src/guard.ts"), "export const ok = (x: number) => x > 10;\n");
       writeFileSync(join(dir, "test/guard.test.ts"), "// placeholder\n");
       writeFileSync(join(dir, "test/mutations/guard.yaml"), "file: src/guard.ts\nmutations:\n  - name: strict\n    find: 'x > 10'\n    replace: 'x >= 10'\n    test: test/guard.test.ts\n");
-      const catching = (): number => (readFileSync(join(dir, "src/guard.ts"), "utf8").includes("x >= 10") ? 1 : 0);
+      const catching = (): RunResult => (readFileSync(join(dir, "src/guard.ts"), "utf8").includes("x >= 10") ? { exitCode: 1, ranTests: 1, failedTests: 1 } : { exitCode: 0, ranTests: 1, failedTests: 0 });
       expect(mutationsMain(["--all"], dir, quiet, catching)).toBe(0);
-      expect(mutationsMain(["--all"], dir, quiet, () => 0)).toBe(1);
+      expect(mutationsMain(["--all"], dir, quiet, () => ({ exitCode: 0, ranTests: 1, failedTests: 0 }))).toBe(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -179,6 +191,12 @@ describe("check-mutations", () => {
     expect(recordsToVerify([record], ["test/mutations/risk-orders.yaml"], root)).toHaveLength(1);
     expect(recordsToVerify([record], ["packages/core/test/risk-orders.test.ts"], root)).toHaveLength(1);
     expect(recordsToVerify([record], ["packages/core/src/main.ts", "docs/STATE.md"], root)).toHaveLength(0);
+  });
+
+  it("counts ran and failed assertions from a vitest JSON report, ignoring skipped ones", () => {
+    const report = { testResults: [{ assertionResults: [{ status: "passed" }, { status: "failed" }, { status: "skipped" }, { status: "pending" }] }] };
+    expect(countReport(report)).toEqual({ ranTests: 2, failedTests: 1 });
+    expect(countReport({})).toEqual({ ranTests: 0, failedTests: 0 });
   });
 
   it("the tracked record for risk/orders.ts targets the notional cap's strictness", () => {
@@ -240,6 +258,7 @@ describe("check-review-state", () => {
     unpushedCommits: 0,
     changedFiles: ["packages/core/src/main.ts"],
     isAncestorOfHead: (sha) => sha === HEAD || sha === "b".repeat(40),
+    filesChangedSince: () => undefined,
     policyFloor: { base: 47, head: 47 },
     ...over,
   });
@@ -285,6 +304,38 @@ describe("check-review-state", () => {
     const problems = evaluateReviewState(input({}, {}, floorRow));
     expect(problems.some((p) => p.includes("blocks merge"))).toBe(true);
     expect(problems.some((p) => p.includes("does not mention it"))).toBe(true);
+  });
+
+  it("an open finding must be mentioned inside the Known open findings section, not elsewhere in the body", () => {
+    const row = `| #118 | ${HEAD.slice(0, 12)} | codex | status page omits halt state | P2 | ergonomics | rung-3 | open | |\n`;
+    const elsewhere = bodyWith(["| 1 | " + HEAD + " | codex | fixed |"], "none").replace("## Scope\nx", "## Scope\nstatus page omits halt state is deferred");
+    expect(evaluateReviewState(input({ body: elsewhere }, {}, row))).toEqual([expect.stringContaining("does not mention it")]);
+    const inSection = bodyWith(["| 1 | " + HEAD + " | codex | fixed |"], "status page omits halt state (rung-3)");
+    expect(evaluateReviewState(input({ body: inSection }, {}, row))).toEqual([]);
+  });
+
+  it("a review request newer than the reviewer's comment on an unchanged head means a round is in flight", () => {
+    expect(evaluateReviewState(input({ reviewRequestedAt: "2026-11-02T16:00:00Z" }))).toEqual([expect.stringContaining("that round is in flight")]);
+    expect(evaluateReviewState(input({ reviewRequestedAt: "2026-11-02T14:30:00Z" }))).toEqual([]);
+  });
+
+  it("the bypass applies to an unreviewed head even when stale comments exist on earlier commits", () => {
+    const stale = { botReviewComments: [{ createdAt: "2026-11-02T15:00:00Z", commitSha: "b".repeat(40) }] };
+    expect(evaluateReviewState(input(stale))).toEqual([expect.stringContaining("no external review names the head commit")]);
+    expect(evaluateReviewState(input(stale, {}, "", { noExternalReviewReason: "reviewer unavailable" }))).toEqual([]);
+    expect(evaluateReviewState(input(stale, { changedFiles: ["packages/core/src/risk/orders.ts"] }, "", { noExternalReviewReason: "reviewer unavailable" }))).toEqual([expect.stringContaining("--no-external-review is refused")]);
+  });
+
+  it("a head that differs from the reviewed commit only in the ledger counts as reviewed; any other file does not", () => {
+    const prev = "b".repeat(40);
+    const stale = { botReviewComments: [{ createdAt: "2026-11-02T15:00:00Z", commitSha: prev }] };
+    const ledgerOnly: Partial<GitFacts> = { filesChangedSince: (sha) => (sha === prev ? ["docs/KNOWN_FINDINGS.md"] : undefined) };
+    expect(evaluateReviewState(input(stale, ledgerOnly))).toEqual([]);
+    expect(headReviewState(pr(stale), git(ledgerOnly)).note).toContain("only in docs/KNOWN_FINDINGS.md");
+    const more: Partial<GitFacts> = { filesChangedSince: (sha) => (sha === prev ? ["docs/KNOWN_FINDINGS.md", "scripts/x.ts"] : undefined) };
+    expect(evaluateReviewState(input(stale, more))).toEqual([expect.stringContaining("no external review names the head commit")]);
+    // A request after the review on the reviewed commit still means in flight, even through the exception.
+    expect(evaluateReviewState(input({ ...stale, reviewRequestedAt: "2026-11-02T16:00:00Z" }, ledgerOnly))).toEqual([expect.stringContaining("in flight")]);
   });
 
   it("CI must be green on the head and every template heading must be present", () => {

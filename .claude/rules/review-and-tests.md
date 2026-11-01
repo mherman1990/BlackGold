@@ -37,7 +37,11 @@ target rung.
 
 ## Merge discipline
 
-- Never merge while a round is running. The check refuses a head the bot has not commented on.
+- Never merge while a round is running. The check refuses a head the reviewer has not commented on, and a head
+  on which a review was requested after the reviewer's last comment. The one exception: a head whose only
+  difference from the reviewed commit is `docs/KNOWN_FINDINGS.md`, the ledger commit made after the last round.
+- After the third round's fixes are pushed, request one more review of the final head as verification. What it
+  raises is ledgered, not fixed, unless it is a P1 on the severity floor.
 - The head on disk is the head on the PR: zero unpushed commits, no modified tracked files.
 - Merge commits, not squash: round history must stay readable from `git log`. Review-fix commit subjects end
   with `(review round N)`.
