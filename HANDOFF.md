@@ -7,7 +7,7 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 1157 tests (unit 1090, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
+4. `npm ci && npm run check`. All of lint, typecheck, 1241 tests (unit 1090, policy 125, temporal 26), the slow-test gate, the mutation records, identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
 
 ## 2. Repository guard
 
@@ -17,10 +17,18 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 **Newest first (2026-11-01).**
 
-- **A1 is merged (PR #118, `b24bd44`) and the protocol below was exercised on it:** rounds 1-3 fixed, round 4
-  ledgered, ledger-only commit admitted by the check, merged by Claude Code under D-37. A1b fixes the three
-  ledgered findings: the mandatory set now covers compliance and the temporal read paths, a record deleted while
-  its source remains is refused, and only the PR author's `@codex review` counts as a request. Next is A2.
+- **A2 (this PR) is the owner's tooling (D-60).** `docs/owner-queue.yaml` is the source; `npm run owner-queue`
+  renders `docs/OWNER_QUEUE.md`, and `test/policy/owner-queue.test.ts` fails when the render is stale, when a
+  decision lacks a default, reply format or cost, when anything is `applied` without `decidedBy`/`decidedAt`,
+  or when a paste block runs a host `node` or an un-sudo'd `docker`. When the owner answers a decision, record
+  the line in `docs/DECISIONS.md`, set the item `applied` with who and when in the YAML, re-render, commit both.
+  Never set a decision `applied` on silence. The Pi wrappers `scripts/pi/*` are COPYed into the image
+  (`.dockerignore` un-ignores `scripts/pi`); the Pi installs them with one `sudo docker cp`, so a runbook line
+  is `bg <cmd>`, never the full `sudo docker exec ...`. `eval-store.sh`'s three refusals are tested; keep them.
+- **A1 (#118, `b24bd44`) and A1b (#119, `28f88b1`, merged by Matt) are in.** The protocol below was exercised
+  on both: #118 rounds 1-3 fixed, round 4 ledgered and fixed in #119; #119 rounds 1-2 fixed, round 3 clean. The
+  mandatory mutation set covers compliance and the temporal read paths; a record deleted or retargeted while its
+  source remains is refused; only the PR author's `@codex review` counts as a request. Next is B1.
 
 - **The review protocol is code now (D-59).** Before merging any PR: `npm run check` (it now includes
   `check:slow` and `check:mutations`), then `node scripts/check-review-state.ts --pr-json <file>` and paste its
@@ -218,7 +226,7 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
    Either is fine; having D-37 say one thing and the credential enforce the other is not, because it makes autonomy look broken when it is only misconfigured.
 2. **Make the GHCR package public, once, after the first image publishes**: github.com/users/mherman1990/packages/container/blackgold/settings -> Change visibility -> Public. A new GHCR package is private by default and umbrelOS pulls anonymously, so until this is done the Umbrel install fails with `unauthorized`. This is the only remaining step in the release chain that Claude Code cannot perform - the tag and the publish are handled by dispatching `release.yml` (D-38).
 3. Delete `claude/phase-00-foundation`, `claude/black-gold-trading-tool-n713ly` and `claude/phase-01-research-kernel`. Verified safe: each carries zero non-merge commits absent from `main`, and their only commits beyond it are orphan merge commits from the D-36 incident. Leaving them around is what makes the mis-merge easy to repeat.
-4. Run the two hardware checks in `docs/PHASE0_REQUIREMENTS_MATRIX.md`: pull or build the image on the Pi and on the Windows Docker host, run `health` for both roles, and run `scripts/pi-benchmark.sh` on the Pi. Record results in the matrix.
+4. Run the two hardware checks in `docs/PHASE0_REQUIREMENTS_MATRIX.md`: pull or build the image on the Pi and on the Windows Docker host, run `health` for both roles, and run `scripts/pi/pi-benchmark.sh` on the Pi. Record results in the matrix.
 5. Answer the standing open facts: D-12 (sleeve account), D-16 (backup destination), D-04 port check on the Pi.
 6. Provide the credentials the first live ingest needs: `BLACKGOLD_SEC_USER_AGENT_CONTACT` (an email), `BLACKGOLD_FRED_API_KEY`, `BLACKGOLD_ALPACA_KEY_ID` and `BLACKGOLD_ALPACA_SECRET_KEY` (paper keys work for data). They go into the Umbrel app environment or a local `.env`, never into git.
 7. ~~Confirm or overrule D-32~~ **Done 2026-09-08.** Matt confirmed incumbent priority with a one-sentence `Book-slot priority` row in `ALPHA_CHARTER.md` §8 (`13d637a`); it matches `candidates.ts`, so no code change was needed.
@@ -256,7 +264,7 @@ Do these in order. Steps 1 to 4 are reversible; step 5 is not.
 - Adding a live-trading code path, a broker credential, or a workplace data connector.
 - Copying identifiers, paths, ports, or adapters from any other application.
 - Signing a charter approval block, resolving a charter's open decisions, admitting a conditional universe member, opening a holdout, citing a run as promotion evidence, or accepting Claude Code's own results as investment evidence. Standing git autonomy (D-37) never reaches these: propose them, never perform them.
-- Installing on the Pi or running `scripts/pi-benchmark.sh`, which need Matt's hardware.
+- Installing on the Pi or running `scripts/pi/pi-benchmark.sh`, which need Matt's hardware.
 - Marking a safety requirement complete from inspection alone.
 
 ## 7. Known environment quirks

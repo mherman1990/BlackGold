@@ -259,6 +259,14 @@ sudo docker exec blackgold-trading_core_1 \
   --ishares IWM=/data/d57/iShares-Russell-2000-ETF_fund.xls
 ```
 
+**With the wrappers installed** (`docs/runbooks/umbrel-install-update-remove.md`, "Install the Pi wrappers"),
+all of the above is one line, which stages the files, picks the next free output number, runs the reconciler
+through `bg`, and prints what is left to curate:
+
+```bash
+d57-reconcile.sh vti.json vtv.json vug.json iShares-Russell-2000-ETF_fund.xls [curated.csv] [structural.json]
+```
+
 The charter path is relative to the image, which carries the signed charter. The outputs appear in `$D57` on
 the Pi. Keep a copy of the file you sign somewhere outside the app: uninstalling Black Gold deletes its data
 directory.

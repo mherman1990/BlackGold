@@ -15,3 +15,9 @@ Operator procedures for Black Gold. Phase 0 provides the local-development and c
 | Restricted-list add/remove and cooling period | 4 | Not yet written |
 | Promotion and downgrade | 7 | Not yet written |
 | Incident severity, containment, postmortem | 5 | Not yet written |
+
+**On the Pi, a new command is written `bg <cmd>`** (D-60): the wrappers in `scripts/pi/` ship inside the image and
+are installed once with the `docker cp` line in `umbrel-install-update-remove.md`, "Install the Pi wrappers".
+Older runbook lines keep the full `sudo docker exec blackgold-trading_core_1 node packages/core/dist/main.js ...`
+form, which `bg` abbreviates and which still works. The owner's weekly pastes are in `docs/OWNER_QUEUE.md`,
+generated from `docs/owner-queue.yaml` by `npm run owner-queue`.

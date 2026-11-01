@@ -91,7 +91,7 @@ BlackGold/
 │   ├── check-identity.ts              # cross-file identifier and version consistency
 │   ├── check-no-mutation-methods.ts   # policy test: read-only interfaces expose no mutation
 │   ├── backup.sh  restore.sh  integrity-check.sh
-│   └── pi-benchmark.sh                # RAM/CPU/temp/sqlite timing on the Pi
+│   └── pi/pi-benchmark.sh             # RAM/CPU/temp/sqlite timing on the Pi (shipped in the image with the other wrappers)
 └── test/
     ├── fixtures/                      # sanitized recordings, temporal fixtures, adversarial documents
     ├── policy/                        # CI gates: account isolation, live disabled, no secrets, identity

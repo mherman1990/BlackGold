@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Run a Black Gold core command inside the running app container on the Pi.
+#
+#   bg health
+#   bg shadow status --charter strategies/etf-trend-vol/charter.yaml
+#   bg experiment register --charter ... --snapshot ... --registered-by "$BLACKGOLD_SIGNER"
+#
+# Every command in the runbooks is written as `bg <cmd>` because two things have gone wrong when typed by hand
+# (HANDOFF.md section 3): the bare `node` command on the host ("Cannot find module"), and `docker` without `sudo`
+# (the umbrel user is refused the socket). Files the container reads or writes live under
+# ~/umbrel/app-data/blackgold-trading/data, which is /data inside it; name them by their /data path.
+#
+# Installed with the image: `mkdir -p ~/bg && sudo docker cp blackgold-trading_core_1:/app/scripts/pi/. ~/bg`
+# (the trailing `/.` copies the contents into ~/bg on every run, so a re-run after an update replaces the
+# wrappers instead of nesting them under ~/bg/pi), then add ~/bg to PATH.
+set -euo pipefail
+CONTAINER="${BG_CORE_CONTAINER:-blackgold-trading_core_1}"
+exec sudo docker exec -i "$CONTAINER" node packages/core/dist/main.js "$@"

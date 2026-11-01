@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Run a Black Gold broker-gateway command inside the running gateway container on the Pi.
+#
+#   bg-gateway health
+#   bg-gateway version
+#
+# The gateway holds no credential before the paper rung and offers only health|version|serve today; later rungs
+# add `credential-check` and `probe` here, never to the core container. See `bg` for why every command is a
+# wrapper.
+set -euo pipefail
+CONTAINER="${BG_GATEWAY_CONTAINER:-blackgold-trading_gateway_1}"
+exec sudo docker exec -i "$CONTAINER" node packages/broker-gateway/dist/main.js "$@"
