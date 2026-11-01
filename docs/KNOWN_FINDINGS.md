@@ -24,6 +24,6 @@ with a severity, a category and a target rung, and only if none is a P1 in a cat
 
 | PR | SHA | Reviewer | Finding | Severity | Category | Target rung | Status | Resolution |
 |---|---|---|---|---|---|---|---|---|
-| #118 | ec2254dbcf54ca368eddcbea1c4a9a59511d3174 | codex | Mutation mandatory set omits compliance/engine.ts, data/lag-rules.ts and other compliance and temporal guard modules | P1 | process | next-pr | open | |
-| #118 | ec2254dbcf54ca368eddcbea1c4a9a59511d3174 | codex | Deleting a mutation record YAML without changing its source is not detected by check-mutations | P1 | process | next-pr | open | |
-| #118 | ec2254dbcf54ca368eddcbea1c4a9a59511d3174 | codex | Review-request marker accepted from any commenter, not only the PR author | P2 | process | next-pr | open | |
+| #118 | ec2254dbcf54ca368eddcbea1c4a9a59511d3174 | codex | Mutation mandatory set omits compliance/engine.ts, data/lag-rules.ts and other compliance and temporal guard modules | P1 | process | next-pr | resolved | fixed in #119 |
+| #118 | ec2254dbcf54ca368eddcbea1c4a9a59511d3174 | codex | Deleting a mutation record YAML without changing its source is not detected by check-mutations | P1 | process | next-pr | resolved | fixed in #119 |
+| #118 | ec2254dbcf54ca368eddcbea1c4a9a59511d3174 | codex | Review-request marker accepted from any commenter, not only the PR author | P2 | process | next-pr | resolved | fixed in #119 |

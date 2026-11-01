@@ -35,16 +35,26 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 
-/** Files whose guards protect money, time, accounts, order lifecycle or fail-closed behaviour. */
+/**
+ * Files whose guards protect money, time, accounts, order lifecycle, compliance or fail-closed behaviour.
+ * Compliance and the temporal read paths (lag rules, point-in-time repository, series, calendars, universe
+ * snapshots) joined the set after PR #118's verification round found them missing.
+ */
 export const MANDATORY_PATTERNS: readonly RegExp[] = [
   /^packages\/core\/src\/risk\/.+\.ts$/,
   /^packages\/core\/src\/decision\/.+\.ts$/,
   /^packages\/core\/src\/execution\/.+\.ts$/,
   /^packages\/core\/src\/live\/.+\.ts$/,
   /^packages\/core\/src\/ledger\/.+\.ts$/,
+  /^packages\/core\/src\/compliance\/.+\.ts$/,
   /^packages\/core\/src\/research\/(nav|stats|aggregate|simulator)\.ts$/,
   /^packages\/core\/src\/strategy\/construct\.ts$/,
   /^packages\/core\/src\/data\/adapters\/corporate-actions[^/]*\.ts$/,
+  /^packages\/core\/src\/data\/(lag-rules|quality)\.ts$/,
+  /^packages\/core\/src\/data\/pit\/.+\.ts$/,
+  /^packages\/core\/src\/market\/.+\.ts$/,
+  /^packages\/core\/src\/calendar\/.+\.ts$/,
+  /^packages\/core\/src\/universe\/.+\.ts$/,
   /^packages\/core\/src\/config\/load\.ts$/,
   /^packages\/broker-gateway\/src\/.+\.ts$/,
 ];
@@ -57,8 +67,12 @@ export function isMandatory(file: string): boolean {
   return MANDATORY_PATTERNS.some((re) => re.test(file));
 }
 
-export function mandatoryChangedFiles(changed: readonly string[]): string[] {
-  return changed.filter(isMandatory);
+/**
+ * Changed files in the mandatory set that still exist. A source deleted together with its record leaves no
+ * guard to require (PR #119 round 2); a source deleted while its record remains is caught by `verifyRecord`.
+ */
+export function mandatoryChangedFiles(changed: readonly string[], exists: (file: string) => boolean = () => true): string[] {
+  return changed.filter((f) => isMandatory(f) && exists(f));
 }
 
 /**
@@ -224,6 +238,43 @@ export function vitestRunner(root: string, template?: string): Runner {
   };
 }
 
+/** A record as it existed on the base ref: its path and the source file it protected. */
+export type BaseRecord = { path: string; file: string };
+
+/**
+ * Source files that a record protected on the base ref and that no record protects now, while the file still
+ * exists. Deleting a record, or retargeting its `file` to another source, is deleting a guard; both are
+ * refused unless the source went with it (PR #118 verification round; PR #119 round 1). The comparison is by
+ * protected FILE, not by record path, so a renamed YAML that still names the same source is fine. Pure.
+ */
+export function deletedRecordProblems(baseRecords: readonly BaseRecord[], currentRecords: readonly { file: string }[], sourceExists: (file: string) => boolean): string[] {
+  const protectedNow = new Set(currentRecords.map((r) => r.file));
+  const out: string[] = [];
+  for (const r of baseRecords) {
+    if (protectedNow.has(r.file)) continue;
+    if (sourceExists(r.file)) out.push(`${r.path} protected ${r.file} on the base ref; no record protects it now and the file still exists. A guard is only removed together with the file it guards`);
+  }
+  return out;
+}
+
+/** The record inventory at the merge-base with `base`, or undefined when the base cannot be resolved. */
+export function baseRecordInventory(root: string, base: string, recordsDir: string): BaseRecord[] | undefined {
+  try {
+    const mergeBase = execFileSync("git", ["merge-base", base, "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+    const listing = spawnSync("git", ["ls-tree", "--name-only", mergeBase, `${recordsDir}/`], { cwd: root, encoding: "utf8" });
+    if (listing.status !== 0) return [];
+    const out: BaseRecord[] = [];
+    for (const path of listing.stdout.split("\n").map((s) => s.trim()).filter((p) => /\.ya?ml$/.test(p))) {
+      const raw = execFileSync("git", ["show", `${mergeBase}:${path}`], { cwd: root, encoding: "utf8" });
+      const parsed = parse(raw) as { file?: unknown };
+      if (typeof parsed.file === "string") out.push({ path, file: parsed.file });
+    }
+    return out;
+  } catch {
+    return undefined;
+  }
+}
+
 export function changedFilesAgainst(root: string, base: string): string[] | undefined {
   try {
     const mergeBase = execFileSync("git", ["merge-base", base, "HEAD"], { cwd: root, encoding: "utf8" }).trim();
@@ -255,11 +306,25 @@ function parseArgs(argv: readonly string[]): Args {
   return args;
 }
 
-export function main(argv: readonly string[], root: string, out: (line: string) => void, runnerOverride?: Runner): number {
+export function main(argv: readonly string[], root: string, out: (line: string) => void, runnerOverride?: Runner, inventoryOverride?: BaseRecord[]): number {
   const args = parseArgs(argv);
   const records = loadRecords(join(root, args.records));
   const byFile = new Map(records.map((r) => [r.file, r] as const));
   const problems: string[] = [];
+
+  // The guard-removal check runs in BOTH modes (PR #119 round 1): a record deleted or retargeted away from a
+  // source that still exists is refused whether the run is diff-scoped or --all.
+  const inventory = inventoryOverride ?? baseRecordInventory(root, args.base, args.records);
+  if (inventory === undefined) {
+    const msg = `mutation check: the record inventory at ${args.base} could not be read, so a removed guard cannot be detected`;
+    if (process.env["CI"]) {
+      out(`${msg}; in CI this is a failure`);
+      return 1;
+    }
+    out(`${msg}; continuing without that check`);
+  } else {
+    problems.push(...deletedRecordProblems(inventory, records, (file) => existsSync(join(root, file))));
+  }
 
   let toVerify: MutationRecord[];
   if (args.all) {
@@ -275,7 +340,7 @@ export function main(argv: readonly string[], root: string, out: (line: string) 
       out(`${msg}; skipping (run with --all to verify every record)`);
       return 0;
     }
-    const mandatory = mandatoryChangedFiles(changed);
+    const mandatory = mandatoryChangedFiles(changed, (f) => existsSync(join(root, f)));
     for (const f of mandatory) {
       if (!byFile.has(f)) problems.push(`${f} changed and sits in the mandatory set but has no record under ${args.records}/`);
     }

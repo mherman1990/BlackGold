@@ -15,7 +15,12 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 ## 3. Current position
 
-**Newest first (2026-10-31).**
+**Newest first (2026-11-01).**
+
+- **A1 is merged (PR #118, `b24bd44`) and the protocol below was exercised on it:** rounds 1-3 fixed, round 4
+  ledgered, ledger-only commit admitted by the check, merged by Claude Code under D-37. A1b fixes the three
+  ledgered findings: the mandatory set now covers compliance and the temporal read paths, a record deleted while
+  its source remains is refused, and only the PR author's `@codex review` counts as a request. Next is A2.
 
 - **The review protocol is code now (D-59).** Before merging any PR: `npm run check` (it now includes
   `check:slow` and `check:mutations`), then `node scripts/check-review-state.ts --pr-json <file>` and paste its

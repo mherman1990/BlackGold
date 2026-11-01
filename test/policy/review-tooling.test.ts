@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeReport, DEFAULT_SOFT_MS, DEFAULT_THRESHOLD_MS, main as slowMain } from "../../scripts/check-slow-tests.ts";
-import { applyMutation, countReport, isMandatory, loadRecords, main as mutationsMain, recordsToVerify, verifyRecord, type MutationRecord, type RunResult } from "../../scripts/check-mutations.ts";
+import { applyMutation, baseRecordInventory, countReport, deletedRecordProblems, isMandatory, loadRecords, main as mutationsMain, mandatoryChangedFiles, recordsToVerify, verifyRecord, type MutationRecord, type RunResult } from "../../scripts/check-mutations.ts";
 import { parse } from "yaml";
-import { evaluateReviewState, headReviewState, MAX_EXTERNAL_ROUNDS, parseRoundTable, REQUIRED_CHECKS, REQUIRED_HEADINGS, type GitFacts, type PrFacts, type ReviewStateInput } from "../../scripts/check-review-state.ts";
+import { evaluateReviewState, headReviewState, MAX_EXTERNAL_ROUNDS, newestReviewRequest, parseRoundTable, REQUIRED_CHECKS, REQUIRED_HEADINGS, type GitFacts, type PrFacts, type ReviewStateInput } from "../../scripts/check-review-state.ts";
 
 /**
  * The review and test guardrails (D-59) are code, and this file proves each one refuses what it is there to
@@ -89,12 +89,31 @@ describe("check-mutations", () => {
       "packages/core/src/data/adapters/corporate-actions-sign.ts",
       "packages/core/src/config/load.ts",
       "packages/broker-gateway/src/guards/hard-caps.ts",
+      "packages/core/src/compliance/engine.ts",
+      "packages/core/src/compliance/look-through.ts",
+      "packages/core/src/data/lag-rules.ts",
+      "packages/core/src/data/quality.ts",
+      "packages/core/src/data/pit/repository.ts",
+      "packages/core/src/market/series.ts",
+      "packages/core/src/calendar/nyse.ts",
+      "packages/core/src/universe/snapshots.ts",
     ]) {
       expect(isMandatory(f), f).toBe(true);
     }
     for (const f of ["packages/core/src/main.ts", "packages/core/src/status/render.ts", "packages/core/test/risk-orders.test.ts", "scripts/check-mutations.ts", "docs/STATE.md"]) {
       expect(isMandatory(f), f).toBe(false);
     }
+  });
+
+  it("a mandatory source deleted together with its record needs no record (PR #119 round 2)", () => {
+    const changed = ["packages/core/src/risk/gone.ts", "packages/core/src/risk/orders.ts", "docs/x.md"];
+    expect(mandatoryChangedFiles(changed, (f) => !f.endsWith("gone.ts"))).toEqual(["packages/core/src/risk/orders.ts"]);
+    expect(mandatoryChangedFiles(changed)).toEqual(["packages/core/src/risk/gone.ts", "packages/core/src/risk/orders.ts"]);
+  });
+
+  it("the README names every mandatory path group the patterns cover", () => {
+    const readme = readFileSync(join(ROOT, "test/mutations/README.md"), "utf8");
+    for (const needle of ["compliance", "lag-rules", "data/pit", "market", "calendar", "universe", "broker-gateway/src", "config/load.ts"]) expect(readme).toContain(needle);
   });
 
   it("applyMutation requires exactly one occurrence of `find`", () => {
@@ -173,8 +192,12 @@ describe("check-mutations", () => {
       writeFileSync(join(dir, "test/guard.test.ts"), "// placeholder\n");
       writeFileSync(join(dir, "test/mutations/guard.yaml"), "file: src/guard.ts\nmutations:\n  - name: strict\n    find: 'x > 10'\n    replace: 'x >= 10'\n    test: test/guard.test.ts\n");
       const catching = (): RunResult => (readFileSync(join(dir, "src/guard.ts"), "utf8").includes("x >= 10") ? { exitCode: 1, ranTests: 1, failedTests: 1 } : { exitCode: 0, ranTests: 1, failedTests: 0 });
-      expect(mutationsMain(["--all"], dir, quiet, catching)).toBe(0);
-      expect(mutationsMain(["--all"], dir, quiet, () => ({ exitCode: 0, ranTests: 1, failedTests: 0 }))).toBe(1);
+      expect(mutationsMain(["--all"], dir, quiet, catching, [])).toBe(0);
+      expect(mutationsMain(["--all"], dir, quiet, () => ({ exitCode: 0, ranTests: 1, failedTests: 0 }), [])).toBe(1);
+      // --all also runs the guard-removal check (PR #119 round 1): a base record for a still-existing source
+      // that no current record protects fails the run.
+      writeFileSync(join(dir, "src/other.ts"), "export const other = 1;\n");
+      expect(mutationsMain(["--all"], dir, quiet, catching, [{ path: "test/mutations/other.yaml", file: "src/other.ts" }])).toBe(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -191,6 +214,27 @@ describe("check-mutations", () => {
     expect(recordsToVerify([record], ["test/mutations/risk-orders.yaml"], root)).toHaveLength(1);
     expect(recordsToVerify([record], ["packages/core/test/risk-orders.test.ts"], root)).toHaveLength(1);
     expect(recordsToVerify([record], ["packages/core/src/main.ts", "docs/STATE.md"], root)).toHaveLength(0);
+  });
+
+  it("a guard removed by deleting or retargeting its record is refused while the source exists; a rename that keeps the source is fine", () => {
+    const base = [
+      { path: "test/mutations/a.yaml", file: "packages/core/src/risk/a.ts" },
+      { path: "test/mutations/b.yaml", file: "packages/core/src/risk/b.ts" },
+      { path: "test/mutations/c.yaml", file: "packages/core/src/risk/c.ts" },
+    ];
+    const exists = (f: string): boolean => f.endsWith("a.ts") || f.endsWith("b.ts");
+    // b.yaml deleted (b.ts exists -> refused); c.yaml deleted with c.ts (fine); a.yaml kept.
+    expect(deletedRecordProblems(base, [{ file: "packages/core/src/risk/a.ts" }], exists)).toEqual([expect.stringContaining("test/mutations/b.yaml protected packages/core/src/risk/b.ts")]);
+    // Retargeting a.yaml's `file` to b.ts leaves a.ts unprotected (PR #119 round 1).
+    expect(deletedRecordProblems(base, [{ file: "packages/core/src/risk/b.ts" }], exists)).toEqual([expect.stringContaining("test/mutations/a.yaml protected packages/core/src/risk/a.ts")]);
+    // Renaming the YAML while keeping the same source is not a removal.
+    expect(deletedRecordProblems(base, [{ file: "packages/core/src/risk/a.ts" }, { file: "packages/core/src/risk/b.ts" }], exists)).toEqual([]);
+  });
+
+  it("the base inventory of this repository lists the tracked record", () => {
+    const inv = baseRecordInventory(ROOT, "HEAD", "test/mutations");
+    expect(inv?.some((r) => r.path === "test/mutations/risk-orders.yaml" && r.file === "packages/core/src/risk/orders.ts")).toBe(true);
+    expect(baseRecordInventory(ROOT, "no-such-ref-xyz", "test/mutations")).toBeUndefined();
   });
 
   it("counts ran and failed assertions from a vitest JSON report, ignoring skipped ones", () => {
@@ -380,6 +424,16 @@ describe("check-review-state", () => {
     expect(evaluateReviewState(input({}, { policyFloor: { base: 47, head: 46 } }))).toEqual([expect.stringContaining("only rises")]);
     expect(evaluateReviewState(input({ baseRef: "claude/other" }))).toEqual([expect.stringContaining("not main")]);
     expect(evaluateReviewState(input({ isDraft: true }))).toEqual([expect.stringContaining("draft")]);
+  });
+
+  it("only the PR author's comments count as review requests", () => {
+    const comments = [
+      { createdAt: "2026-11-02T10:00:00Z", body: "@codex review", authorLogin: "mherman1990" },
+      { createdAt: "2026-11-02T12:00:00Z", body: "@codex review please", authorLogin: "someone-else" },
+      { createdAt: "2026-11-02T11:00:00Z", body: "unrelated", authorLogin: "mherman1990" },
+    ];
+    expect(newestReviewRequest(comments, "mherman1990", "@codex review")).toBe("2026-11-02T10:00:00Z");
+    expect(newestReviewRequest(comments, "nobody", "@codex review")).toBeUndefined();
   });
 
   it("parses the round table and ignores the template's empty row", () => {
