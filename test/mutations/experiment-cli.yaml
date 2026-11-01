@@ -1,0 +1,29 @@
+# B1 register guards (plan: test/mutations/b1-register-guards). Each guard protects the evidence record, so the
+# file is in the mandatory set and a surviving mutation would mean a guard that only looks like one.
+file: packages/core/src/research/experiment-cli.ts
+mutations:
+  - name: a signer naming an agent or a default is refused
+    find: "if (NOT_A_SIGNER.test(v))"
+    replace: "if (false && NOT_A_SIGNER.test(v))"
+    test: packages/core/test/experiment-cli.test.ts
+    testName: "refuses placeholder signers: blanks, roles, agents"
+  - name: a registration without a baked build commit is refused
+    find: "if (buildCommit === undefined) {"
+    replace: "if (buildCommit === null) {"
+    test: packages/core/test/experiment-cli.test.ts
+    testName: "refuses to register without a baked build commit"
+  - name: a charter other than the configured shadow charter cannot register as the clock anchor
+    find: "if (shadowHash !== loaded.charterHash && reason === null) {"
+    replace: "if (false && shadowHash !== loaded.charterHash && reason === null) {"
+    test: packages/core/test/experiment-cli.test.ts
+    testName: "refuses a charter other than the configured shadow charter"
+  - name: a non-sealing process cannot register without a written no-shadow-clock reason
+    find: "if (!seals) {\n    if (reason === null) {"
+    replace: "if (!seals) {\n    if (false && reason === null) {"
+    test: packages/core/test/experiment-cli.test.ts
+    testName: "refuses to register from a process that does not seal"
+  - name: --require-citable refuses any promotion-blocking code, not only two or more
+    find: "if (args.requireCitable === true && report.promotionBlockingCodes.length > 0) {"
+    replace: "if (args.requireCitable === true && report.promotionBlockingCodes.length > 1) {"
+    test: packages/core/test/experiment-cli.test.ts
+    testName: "--require-citable refuses a store with a single-source action"

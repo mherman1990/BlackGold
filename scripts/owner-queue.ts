@@ -57,8 +57,11 @@ export function commandSegments(line: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-/** Words that run the program that follows them, and `VAR=value` assignments: `env docker ps` runs docker. */
-const PROGRAM_WRAPPERS = new Set(["env", "command", "exec", "nohup", "nice", "time", "xargs", "builtin", "stdbuf", "timeout"]);
+/**
+ * Words that run the program that follows them, and `VAR=value` assignments: `env docker ps` runs docker. Shell
+ * control words are wrappers too (PR #120 round 3, ledgered): `if docker ps; then` runs docker.
+ */
+const PROGRAM_WRAPPERS = new Set(["env", "command", "exec", "nohup", "nice", "time", "xargs", "builtin", "stdbuf", "timeout", "if", "then", "else", "elif", "while", "until", "do", "for", "case", "in", "!", "{", "("]);
 
 /** The program a command segment invokes, seen through `env`, `command`, `exec`, assignments and the like. */
 export function invokedProgram(seg: string): string {

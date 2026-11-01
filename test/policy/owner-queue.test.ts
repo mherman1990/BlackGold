@@ -112,6 +112,14 @@ describe("owner-queue rules on planted items", () => {
     expect(invokedProgram("sudo docker ps")).toBe("sudo");
   });
 
+  it("a shell control clause does not hide the command it runs (PR #120 round 3, ledgered and fixed here)", () => {
+    for (const block of ["sudo true; if docker ps; then echo x; fi", "sudo true; while ! docker ps; do sleep 1; done", "for c in a b; do docker rm $c; done", "sudo true; { node packages/core/dist/main.js health; }", "sudo true; ( docker ps )"]) {
+      expect(validateQueue(queueWith([{ kind: "command", block }])).join("\n"), block).toMatch(/host `node`|without sudo/);
+    }
+    expect(invokedProgram("if docker ps")).toBe("docker");
+    expect(invokedProgram("then sudo docker ps")).toBe("sudo");
+  });
+
   it("a heredoc fed to a shell is commands, not content", () => {
     const shell = "sudo bash <<'EOF'\ncd /app && node packages/core/dist/main.js health\nEOF";
     expect(validateQueue(queueWith([{ kind: "command", block: shell }]))).toEqual([expect.stringContaining("host `node`")]);

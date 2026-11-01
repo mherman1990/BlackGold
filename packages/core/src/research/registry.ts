@@ -292,11 +292,15 @@ export class ExperimentRegistry {
     this.clock = opts.clock ?? Date.now;
   }
 
-  /** Validate and freeze a definition. Throws before writing anything when any rule fails. */
-  register(
+  /**
+   * Every registration rule, evaluated without writing: the parsed definition, its hash, the labels as they
+   * would be stored and the parent resolution. `register` runs exactly this inside its transaction, so a
+   * `--dry-run` that passes here fails later only on a race with another registration.
+   */
+  preflight(
     input: ExperimentDefinitionInput,
     opts: { registeredBy: string; parentExperimentId?: string; supersedesReason?: string; labels?: readonly string[] },
-  ): ExperimentRecord {
+  ): { definition: ExperimentDefinition; definitionHash: string; labels: string[]; promotionEvidenceAllowed: boolean; parent: ExperimentRecord | undefined } {
     const parsed = ExperimentDefinitionSchema.safeParse(input);
     if (!parsed.success) {
       throw new InvalidExperimentDefinitionError(parsed.error.issues.map((i) => `${i.path.map(String).join(".")}: ${i.message}`));
@@ -306,30 +310,42 @@ export class ExperimentRegistry {
     if (opts.registeredBy.length === 0) throw new TypeError("registeredBy is required");
     for (const s of def.data.snapshots) this.pit.snapshot(s.snapshot_id); // throws UnknownSnapshotError
 
-    return this.db.transaction(() => {
-      const parent = opts.parentExperimentId === undefined ? undefined : this.get(opts.parentExperimentId);
-      if (!parent) {
-        const viewed = (
-          this.db
-            .prepare("SELECT experiment_id, definition_json FROM experiments WHERE results_viewed_at IS NOT NULL ORDER BY experiment_id")
-            .all() as { experiment_id: string; definition_json: string }[]
-        ).filter((r) => (JSON.parse(r.definition_json) as { charter: { strategy_id: string } }).charter.strategy_id === def.charter.strategy_id);
-        if (viewed.length > 0) throw new ParentRequiredError(def.charter.strategy_id, viewed.map((v) => v.experiment_id));
-      } else if (parent.holdoutOpenedAt !== null) {
-        const parentEnd = parent.definition.boundaries.holdout.end;
-        const declaresLater = def.boundaries.holdout.start > parentEnd;
-        if (!declaresLater && !def.boundaries.holdout.opened) throw new HoldoutInheritanceError(parent.experimentId);
-      }
+    const parent = opts.parentExperimentId === undefined ? undefined : this.get(opts.parentExperimentId);
+    if (!parent) {
+      const viewed = (
+        this.db
+          .prepare("SELECT experiment_id, definition_json FROM experiments WHERE results_viewed_at IS NOT NULL ORDER BY experiment_id")
+          .all() as { experiment_id: string; definition_json: string }[]
+      ).filter((r) => (JSON.parse(r.definition_json) as { charter: { strategy_id: string } }).charter.strategy_id === def.charter.strategy_id);
+      if (viewed.length > 0) throw new ParentRequiredError(def.charter.strategy_id, viewed.map((v) => v.experiment_id));
+    } else if (parent.holdoutOpenedAt !== null) {
+      const parentEnd = parent.definition.boundaries.holdout.end;
+      const declaresLater = def.boundaries.holdout.start > parentEnd;
+      if (!declaresLater && !def.boundaries.holdout.opened) throw new HoldoutInheritanceError(parent.experimentId);
+    }
 
-      const labels = new Set<string>(opts.labels ?? []);
-      if (def.data.processing_delay_ms === 0) labels.add("OPTIMISTIC_DELAY");
-      const labelList = [...labels].sort();
+    const labels = new Set<string>(opts.labels ?? []);
+    if (def.data.processing_delay_ms === 0) labels.add("OPTIMISTIC_DELAY");
+    const labelList = [...labels].sort();
+    const blocked = blocksPromotionEvidence(labelList);
+    return { definition: def, definitionHash: definitionHash(def), labels: labelList, promotionEvidenceAllowed: blocked.length === 0, parent };
+  }
+
+  /** Validate and freeze a definition. Throws before writing anything when any rule fails. */
+  register(
+    input: ExperimentDefinitionInput,
+    opts: { registeredBy: string; parentExperimentId?: string; supersedesReason?: string; labels?: readonly string[] },
+  ): ExperimentRecord {
+    return this.db.transaction(() => {
+      const pf = this.preflight(input, opts);
+      const def = pf.definition;
+      const labelList = pf.labels;
       const blocked = blocksPromotionEvidence(labelList);
       const registeredAt = nowUtc(this.clock);
       const year = registeredAt.slice(0, 4);
       const n = (this.db.prepare("SELECT count(*) AS n FROM experiments WHERE experiment_id LIKE ?").get(`EXP-${year}-%`) as { n: number }).n;
       const experimentId = `EXP-${year}-${String(n + 1).padStart(4, "0")}`;
-      const hash = definitionHash(def);
+      const hash = pf.definitionHash;
       this.db
         .prepare(
           `INSERT INTO experiments (experiment_id, registered_at, registered_by, parent_experiment_id, supersedes_reason, definition_json,

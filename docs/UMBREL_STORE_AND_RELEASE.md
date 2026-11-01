@@ -106,7 +106,7 @@ Single authority: root `package.json` `version`. CI `identity-check` fails unles
 | Workflow | Trigger | Does | Publishes |
 |---|---|---|---|
 | `ci.yml` | PR and push to `claude/**` | lint, typecheck, unit + policy tests, identity check, secret scan, manifest YAML schema check, `docker buildx build --platform linux/amd64,linux/arm64` with `--output type=cacheonly` or load-only | Nothing |
-| `release.yml` | Push of tag `v*` on a commit reachable from `main` | Re-run all CI checks, build multi-arch image, push `ghcr.io/mherman1990/blackgold:<version>` and `:sha-<12hex>`, generate SBOM, scan image, write digest to job summary | GHCR image |
+| `release.yml` | Push of tag `v*` on a commit reachable from `main` | Re-run all CI checks, build multi-arch image, push `ghcr.io/mherman1990/blackgold:<version>` and `:sha-<40 hex>` (the same sha is baked in as `BLACKGOLD_BUILD_COMMIT`), generate SBOM, scan image, write digest to job summary | GHCR image |
 | `release-verify.yml` | Manual `workflow_dispatch` after release | `docker buildx imagetools inspect` to confirm both architectures, compare manifest digest to compose, run a disposable install smoke test on amd64 | Nothing |
 
 `release.yml` must not run on PRs, on non-`v*` tags, or on tags not reachable from `main`. A test in CI asserts the trigger filter.

@@ -169,10 +169,13 @@ jobs:
           provenance: true
           sbom: true
           # sha- tag uses the resolved commit, not github.sha: on the dispatch path those differ, and
-          # labelling the image with the dispatch ref would misname what is inside it.
+          # labelling the image with the dispatch ref would misname what is inside it. The baked build
+          # commit is the same resolved sha: it is what a registered experiment freezes as code.commit.
           tags: |
             ghcr.io/mherman1990/blackgold:${{ needs.guard.outputs.version }}
             ghcr.io/mherman1990/blackgold:sha-${{ needs.guard.outputs.sha }}
+          build-args: |
+            BLACKGOLD_BUILD_COMMIT=${{ needs.guard.outputs.sha }}
       - name: record digest and verify both architectures
         run: |
           set -euo pipefail

@@ -43,6 +43,13 @@ export function assertSealsProspectiveDecisions(mode: Mode): void {
   if (!sealsProspectiveDecisions(mode)) throw new DecisionModeError(mode);
 }
 
+/**
+ * A registration label meaning "not the prospective clock's anchor" (plan B1, OD-10). The owner writes it with
+ * `experiment register --no-shadow-clock <reason>` for a registration that must never start or continue the
+ * 26/52-week clock (an evaluation-store child, a rehearsal); the shadow job's rung-1 gate skips such rows.
+ */
+export const NO_SHADOW_CLOCK_LABEL = "NO_SHADOW_CLOCK";
+
 /** One target book line: an entity's target weight as a fraction of NAV, as a decimal string. Never a dollar. */
 export type DecisionTargetWeight = { entityId: string; weight: string };
 

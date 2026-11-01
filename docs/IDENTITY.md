@@ -37,6 +37,7 @@ Every persistent identifier Black Gold uses across GitHub, GHCR, umbrelOS, Docke
 | Secrets | files under `${APP_DATA_DIR}/secrets/` mounted read-only into the gateway only (Phase 6); no `exports.sh` needed for a single app | Accepted | compose, runbooks |
 | Sleeve account role | `blackgold_sleeve` | Accepted | config schema, gateway allowlist |
 | Config env prefix | `BLACKGOLD_` | Accepted | all services |
+| Build provenance | `BLACKGOLD_BUILD_COMMIT`: the 40-hex commit the image was built from, a Dockerfile `ARG` set by CI (`release.yml`: the guard's resolved sha; `ci.yml`: `github.sha`), surfaced by `health` as `buildCommit`, frozen as `code.commit` at experiment registration; never set by hand, never admitted to `secrets.env` | Accepted | image, CI |
 | Authorization artifact | `LIVE_AUTHORIZATION.yaml` (gitignored, owner-created) | Accepted | gateway, core |
 | Release tag pattern | `v[0-9]+.[0-9]+.[0-9]+` | Accepted | release workflow trigger |
 | Version authority | `package.json` at repo root | Accepted | version-consistency CI check |

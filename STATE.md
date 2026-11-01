@@ -2,12 +2,23 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-11-01 by Claude Code. **The plan toward live trading is approved; A1 (review guardrails as
-code, PR #118) is merged at `b24bd44` and A1b (its three ledgered findings, PR #119) at `28f88b1`, merged by
-Matt. A2 (the owner queue and the Pi wrappers, D-60) is the PR that carries this line; `main` is otherwise where
-the 2026-10-18 entry below left it.**
+**Last updated:** 2026-11-01 by Claude Code. **The plan toward live trading is approved; A1 (PR #118, `b24bd44`),
+A1b (PR #119, `28f88b1`) and A2 (PR #120, `dd74992`) are merged, the last two by Matt. B1 (the `experiment`
+CLI) is the PR that carries this line; `main` is otherwise where the 2026-10-18 entry below left it.**
 
-- **A2 (this PR):** `docs/owner-queue.yaml` is the source and `docs/OWNER_QUEUE.md` the rendered weekly queue
+- **B1 (this PR): the owner's `experiment` CLI.** `experiment register|list|show|mark-viewed|open-holdout` in
+  `packages/core/src/main.ts`, built on `research/experiment-cli.ts`. `register` freezes the signed charter, the
+  image's baked `BLACKGOLD_BUILD_COMMIT` (new Dockerfile ARG/ENV, set by `ci.yml` and `release.yml`, printed by
+  `health` as `buildCommit`), the snapshot ids and a registration-time coverage report whose promotion-blocking
+  codes become labels. Guards: a typed signer (placeholders refused; no default, no environment fallback), an
+  unregistrable charter, an uncovered universe member, a mismatched snapshot dataset, `--require-citable` against
+  any promotion-blocking data, and the shadow-clock guard: a registration starts the 26/52-week clock only from
+  a sealing process (SHADOW with the configured charter); anything else is refused unless `--no-shadow-clock
+  <reason>`, which labels the row `NO_SHADOW_CLOCK` so the shadow job never counts it. `--dry-run` runs every
+  check including the registry's new `preflight` and writes nothing. `shadow status` now prints
+  `registeredExperiments`. Tested end to end: a CLI registration makes the next weekly decision seal. The
+  registration itself stays the owner's act (`docs/runbooks/register-experiment.md`). No release: B2 cuts 0.1.15.
+- **A2 (#120):** `docs/owner-queue.yaml` is the source and `docs/OWNER_QUEUE.md` the rendered weekly queue
   (`npm run owner-queue`; a policy test fails when the render is stale). Sitting 1 holds the decisions DN-0 to
   DN-4, DN-8, DN-15, DN-16 and D-40/52/53, the GitHub hygiene and the downloads, all doable now; its command
   and sign blocks are blocked on release 0.1.15. `scripts/pi/{bg,bg-gateway,pi-update.sh,d57-reconcile.sh,eval-store.sh,stale-branches.sh}`
@@ -27,9 +38,10 @@ the 2026-10-18 entry below left it.**
   `test/policy/POLICY_FLOOR`, the extended PR template, `.claude/rules/review-and-tests.md`. `npm run check`
   runs the slow-test gate and the mutation records. A1b (#119) widened the mandatory mutation set to the
   compliance and temporal guards and made a deleted or retargeted record a refusal.
-- **Next PRs, in order:** B1 (`experiment` CLI), B2 (SHADOW enablement release 0.1.15 with `/data/policy`,
-  `policy sign`, `corporate-actions sign`, `docs/DECLARED_RUNG`). The first owner sitting is the one after 0.1.15
-  publishes; the decision items in `docs/OWNER_QUEUE.md` can be answered any time before.
+- **Next PRs, in order:** B2 (SHADOW enablement release 0.1.15 with `/data/policy`, `policy sign`,
+  `corporate-actions sign`, `docs/DECLARED_RUNG`), then B3 (`shadow evidence`), B4 (notifier). The first owner
+  sitting is the one after 0.1.15 publishes; the decision items in `docs/OWNER_QUEUE.md` can be answered any
+  time before.
 - **Branching:** the session branch is reset to `origin/main` after each merge and carries one PR at a time
   (DN-0 in the queue asks whether to keep that or move to `claude/phase-XX-short-name` names).
 

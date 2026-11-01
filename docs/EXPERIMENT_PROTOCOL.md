@@ -39,7 +39,7 @@ Model IDs are stored in the registration record only. Runtime code reads them fr
 ```yaml
 experiment_id: EXP-2026-0007
 registered_at_utc: 2026-11-03T14:12:09Z
-registered_by: owner
+registered_by: Matt Herman                # the owner's name as typed on the line; roles and agents are refused
 parent_experiment_id: EXP-2026-0004      # null for a fresh hypothesis; required if results of a prior run were viewed
 supersedes_reason: "Widened liquidity filter after viewing EXP-2026-0004 validation results"
 
@@ -123,6 +123,37 @@ pass_fail:
 
 tax_scenarios: [pre_tax, taxable_short_long_split, tax_deferred]
 ```
+
+### 2.2 How the CLI builds the definition from the charter
+
+`experiment register` (`packages/core/src/research/experiment-cli.ts`, `buildExperimentDefinition`) derives the
+frozen definition from the signed `charter.yaml` by a fixed mapping. The mapping is part of what
+`definition_hash` covers, so it is written here and never changed in place: a different mapping is a new
+mapping version, and registrations made under different mappings are not comparable.
+
+| Definition field | Source | Note |
+|---|---|---|
+| `charter.*` | `strategy_id`, `charter_version`, the charter hash (`loadCharterFile`), `approval.approval_ref` | the hash covers the signed approval block |
+| `code.repo`, `code.commit` | `mherman1990/BlackGold`; the image's `BLACKGOLD_BUILD_COMMIT` | never a flag; a local build cannot register |
+| `data.snapshots` | `--snapshot dataset=id`, sorted by dataset | each must exist and match its dataset |
+| `data.coverage_report_id` | the registration-time coverage report, scoped to the `prices_daily` snapshot | `--coverage-report <path>` writes the report; its `promotionBlockingCodes` become labels |
+| `data.processing_delay_ms` | the bars source's configured processing delay (`defaultProcessingDelayMs`) | 15 min for Tiingo; zero would label `OPTIMISTIC_DELAY` |
+| `versions.*` | `component_versions` | 1:1 |
+| `arms` | `arms` | 1:1 |
+| `search_space` | one array per dimension of `enumerateGrid` (distinct values, declaration order); `full_grid`; `trial_count` = the grid size | the Cartesian product is `enumerateGrid`; N for the deflated Sharpe |
+| `boundaries.train` / `validation` | `boundaries.design` / `boundaries.recent` | the recent window is quasi-forward, reported separately |
+| `boundaries.walk_forward`, `boundaries.holdout` | 1:1; `holdout.opened: false` | |
+| `metrics` | `pass_fail.primary_metric`; secondary `max_drawdown_ratio_vs_primary_benchmark`, `grid_sign_agreement` | |
+| `costs.base` / `adverse` | the charter tiers' `commission_bps`, `half_spread_bps.default`, `slippage_bps`, `delay_bars` | per-symbol half spreads and `market_impact_bps` stay in the charter; the stress tier is reached through `stress_multipliers` |
+| `costs.stress_multipliers`, `delay_sensitivity_bars`, `missing_data_rates` | 1:1 | |
+| `benchmarks` | `primary`; `exposure_matched: {equity: primary, cash}` when the charter flag is true; `secondary` | |
+| `pass_fail` | a rendered primary condition (metric, threshold, bootstrap block and confidence); robustness conditions = drawdown ratio, grid sign agreement, then `F1..Fn` verbatim; `minimum_independent_decisions` | |
+| `tax_scenarios` | 1:1 | |
+| `model` | omitted (`runtime_llm_in_signal: false`) | |
+
+Labels at registration: `--labels`, plus the coverage report's promotion-blocking codes (`UNVERIFIED_SINGLE_SOURCE`
+on a store with single-source corporate actions), plus `NO_SHADOW_CLOCK` when `--no-shadow-clock <reason>` says
+the registration is not the prospective clock's anchor (the shadow job never counts such a row).
 
 ## 3. The viewed-results rule
 

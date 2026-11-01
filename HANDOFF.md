@@ -7,7 +7,7 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 1241 tests (unit 1090, policy 125, temporal 26), the slow-test gate, the mutation records, identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
+4. `npm ci && npm run check`. All of lint, typecheck, 1267 tests (unit 1108, policy 133, temporal 26), the slow-test gate, the mutation records, identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
 
 ## 2. Repository guard
 
@@ -17,7 +17,15 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 **Newest first (2026-11-01).**
 
-- **A2 (this PR) is the owner's tooling (D-60).** `docs/owner-queue.yaml` is the source; `npm run owner-queue`
+- **B1 (this PR) is the `experiment` CLI; the registration stays the owner's.** Build the line, run `--dry-run`,
+  stop (`docs/runbooks/register-experiment.md`). The charter -> definition mapping is normative in
+  `docs/EXPERIMENT_PROTOCOL.md` section 2.2 and is covered by `definition_hash`: never change it in place. The
+  shadow-clock guard means a registration from a non-sealing process is refused; that is the guard, not a bug.
+  `code.commit` is the image's `BLACKGOLD_BUILD_COMMIT`; a local build has none and cannot register. The
+  config read lives in `config/load.ts` (eslint forbids `process.env` elsewhere), so that file and
+  `decision/*.ts` carry mutation records whenever touched. `research/experiment-cli.ts` joined the mandatory
+  mutation set. Test signers must be real-looking names: `validateSigner` refuses `test`, `owner`, `Claude`.
+- **A2 (#120) is the owner's tooling (D-60).** `docs/owner-queue.yaml` is the source; `npm run owner-queue`
   renders `docs/OWNER_QUEUE.md`, and `test/policy/owner-queue.test.ts` fails when the render is stale, when a
   decision lacks a default, reply format or cost, when anything is `applied` without `decidedBy`/`decidedAt`,
   or when a paste block runs a host `node` or an un-sudo'd `docker`. When the owner answers a decision, record
@@ -234,7 +242,7 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 ## 5. When the charter is approved and data is ingested
 
-**Both preconditions in this heading are now met** (charter signed at 0.2.0 on 2026-09-12; Tiingo bars ingested and refreshed nightly), so this procedure is live rather than hypothetical.
+**Both preconditions in this heading are now met** (charter signed at 0.3.0 on 2026-10-05, D-56; Tiingo bars ingested and refreshed nightly), so this procedure is live rather than hypothetical.
 
 **One addition it predates, and the ordering matters more than it looks.** A run reading Tiingo's automated corporate actions is stamped `UNVERIFIED_SINGLE_SOURCE` and can never be promotion evidence. If the result is meant to be citable, ingest the reconciled ≥2-source actions **before step 2**, not merely before registration. `createSnapshot` freezes `max(observations.id)` (`data/pit/repository.ts`), `asOf` scoped to a snapshot filters `id <= maxObservationId`, and a trial may only cite a snapshot the experiment registered (`research/registry.ts`, `FrozenInputMismatchError`). So a snapshot taken at step 2 and *then* topped up with reconciled actions still excludes them: the registered experiment goes on reading the single-source rows and stays uncitable, and the only remedy is a replacement experiment. Reconcile, then snapshot. Registering on single-source actions is not wrong — it is simply not citable, and registration is one-way.
 
@@ -242,17 +250,33 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 **The latent double-count that curation would have armed is FIXED (2026-09-21).** `computeFeatures` used to push every returned corporate-action row into `TotalReturnSeries.build` while `loadExecutionSeries` deduped, so a dividend present from both the reconciled file and the Tiingo feed would have counted twice in momentum/trend/volatility and once in execution. The dedupe now lives in one shared place — `dedupeCorporateActionRows` in `market/types.ts` — and both readers call it; a new consumer of `corporate_action.<kind>` rows must go through it too, or it reintroduces the bug. Label accumulation stays over every row, before the dedupe, so a superseded single-source row still taints the run. Covered by a feature-path regression test mirroring the execution-path one and by direct unit tests of the preference order with amounts that differ (the series-level tests use identical amounts, where arithmetic cannot reveal which row won); the fix and the preference branch were both mutation-checked. Nothing blocks the curation on the code side now.
 
-Do these in order. Steps 1 to 4 are reversible; step 5 is not.
+**The owner decided the store question on 2026-10-31** (STATE.md): the Pi's research store anchors the clock
+(a non-citable registration, by construction), and the citable child is registered later on the evaluation
+store built by `eval-store.sh`. The charter is 0.3.0, signed 2026-10-05 (D-56).
 
-1. `git fetch origin main`; confirm Discovery, Phase 0, Phase 1 and Phase 2 are merged.
-2. Ingest the universe (`ingest` per source), then `snapshot create --dataset prices_daily --description ...`. Nothing downstream may read outside a snapshot id.
-3. `research coverage --path strategies/etf-trend-vol/charter.yaml --from 2007-06-01 --to <today>`. Read it before computing anything. Thin coverage on any member is a reason to stop, not a footnote.
-4. `charter show` must report `registrable: true`. If it does not, stop: the reasons it prints are the work. (D-32 — the book-slot priority rule `assertRegistrable` does not check — was owner-confirmed on 2026-09-08 via the `ALPHA_CHARTER.md` §8 `Book-slot priority` row, so that precondition is satisfied. If a future charter *version* reopens the entry-vs-hold ambiguity, re-confirm it before registering.)
-5. **Register the experiment before any result is computed** — once step 4 is satisfied (`registrable: true`; D-32 confirmed 2026-09-08). `ExperimentRegistry.register` with the charter hash, the code commit, the snapshot ids and the coverage report id. The registration freezes the definition; after it, viewing a result is logged once and any change to hypothesis, rules, grid, boundaries, metrics or costs is a new experiment with a parent.
-6. Run the design segment and its walk-forward schedule (`splitPlan`), every cost, delay and missing-data tier (`enumerateTiers`), and all 72 grid members (`enumerateGrid`). Write **every** evaluated cell to the trial ledger before displaying any of them: the ledger is the multiple-testing denominator, and a cell evaluated off-ledger corrupts it.
+Do these in order. Steps 1 to 4 are reversible; step 5 is not. On the Pi every line is `bg <cmd>`; the full
+procedure with every refusal is `docs/runbooks/register-experiment.md`.
+
+1. The compose must seal: `BLACKGOLD_MODE: SHADOW` with `BLACKGOLD_SHADOW_CHARTER` (release 0.1.15). `bg health`
+   must print a 40-hex `buildCommit`: that commit is frozen as `code.commit`, and every later trial must carry it.
+2. `bg snapshot create --dataset prices_daily --description "shadow clock start"`. Nothing downstream may read outside a snapshot id.
+3. `bg experiment register --charter strategies/etf-trend-vol/charter.yaml --snapshot prices_daily=<id> --registered-by "$BLACKGOLD_SIGNER" --dry-run`.
+   It runs every check (registrable charter, snapshot, coverage with no uncovered member, the shadow-clock guard,
+   the registry's own preflight) and writes nothing. Read the coverage section and `shadowClock.startsClock: true`
+   before going on. Thin coverage on any member is a reason to stop, not a footnote.
+4. `charter show` reports `registrable: true` (D-32 was owner-confirmed on 2026-09-08 via the `ALPHA_CHARTER.md`
+   §8 `Book-slot priority` row; if a future charter *version* reopens the entry-vs-hold ambiguity, re-confirm it
+   before registering).
+5. **The owner registers**, with the same line without `--dry-run`. Claude Code's part ends at step 3. The
+   registration freezes the definition (`docs/EXPERIMENT_PROTOCOL.md` section 2.2 is the mapping); after it,
+   viewing a result is logged once (`experiment mark-viewed`) and any change to hypothesis, rules, grid,
+   boundaries, metrics or costs is a new experiment with `--parent`. `bg shadow status` then shows
+   `registeredExperiments: 1`; the next Friday seals.
+6. Run the design segment and its walk-forward schedule (`splitPlan`), every cost, delay and missing-data tier (`enumerateTiers`), and all 72 grid members (`enumerateGrid`), on the image that registered. Write **every** evaluated cell to the trial ledger before displaying any of them: the ledger is the multiple-testing denominator, and a cell evaluated off-ledger corrupts it.
 7. Build the report (`buildResultReport`) and check the leakage audit is clean. Evaluate the falsifiers (`evaluateFalsifiers`).
-8. **Stop there.** Do not open the holdout. It opens once, only after Matt has reviewed the design and walk-forward results and written down a reason, through `ExperimentRegistry.openHoldout`. `holdoutSplit` refuses without a stated open and a CI gate keeps the evaluation plan out of the holdout window.
+8. **Stop there.** Do not open the holdout. It opens once, only after Matt has reviewed the design and walk-forward results, marked them viewed, and written down a reason, through `bg experiment open-holdout`. `holdoutSplit` refuses without a stated open and a CI gate keeps the evaluation plan out of the holdout window.
 9. A failing result is a legitimate and expected outcome. Record it with the same permanence as a pass; do not adjust a parameter in response. A changed parameter is a new charter version starting at DRAFT.
+10. The evaluation-store child: `eval-store.sh` prints the line (`--require-citable --no-shadow-clock "..."`), which refuses any promotion-blocking data and labels the row `NO_SHADOW_CLOCK` so it never anchors the clock.
 
 ## 6. Things that must never happen in any session
 

@@ -56,6 +56,8 @@ export const MANDATORY_PATTERNS: readonly RegExp[] = [
   /^packages\/core\/src\/calendar\/.+\.ts$/,
   /^packages\/core\/src\/universe\/.+\.ts$/,
   /^packages\/core\/src\/config\/load\.ts$/,
+  // The owner's registration path: every guard here protects the evidence record (B1).
+  /^packages\/core\/src\/research\/experiment-cli\.ts$/,
   /^packages\/broker-gateway\/src\/.+\.ts$/,
 ];
 

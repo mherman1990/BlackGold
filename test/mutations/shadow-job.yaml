@@ -1,0 +1,7 @@
+file: packages/core/src/decision/shadow-job.ts
+mutations:
+  - name: a NO_SHADOW_CLOCK registration must never start sealing (the rung-1 gate filters the label)
+    find: '`%"${NO_SHADOW_CLOCK_LABEL}"%`'
+    replace: '`%"NEVER_A_LABEL"%`'
+    test: packages/core/test/shadow-job.test.ts
+    testName: "never starts sealing on a registration labelled NO_SHADOW_CLOCK"

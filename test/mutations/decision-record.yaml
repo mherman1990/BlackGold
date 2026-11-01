@@ -1,0 +1,7 @@
+file: packages/core/src/decision/decision-record.ts
+mutations:
+  - name: the no-clock label is the documented string the owner's --no-shadow-clock writes and the gate filters
+    find: 'export const NO_SHADOW_CLOCK_LABEL = "NO_SHADOW_CLOCK";'
+    replace: 'export const NO_SHADOW_CLOCK_LABEL = "NO_SHADOW_CLOCK_X";'
+    test: packages/core/test/shadow-job.test.ts
+    testName: "never starts sealing on a registration labelled NO_SHADOW_CLOCK"

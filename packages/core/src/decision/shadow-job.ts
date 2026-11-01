@@ -10,7 +10,7 @@ import { EntityMap } from "../market/entity-map.ts";
 import { loadCharterFile, type Charter } from "../strategy/charter.ts";
 import { weeklyDecisionSessions } from "../research/backtest.ts";
 import { entityMapResolver, storedLookThroughResolver } from "../compliance/theme-membership.ts";
-import { sealsProspectiveDecisions, type ProspectiveDecisionRecord } from "./decision-record.ts";
+import { NO_SHADOW_CLOCK_LABEL, sealsProspectiveDecisions, type ProspectiveDecisionRecord } from "./decision-record.ts";
 import { appendDecisionRecord, DecisionAlreadySealedError } from "./decision-record.ts";
 import { EMPTY_SHADOW_BOOK, shadowDecisionRecords, type ShadowBookState, type SymbolIdentity } from "./shadow-decision.ts";
 import { shadowFillRecords } from "./shadow-fills.ts";
@@ -154,9 +154,27 @@ export function shadowStatusForNextDecision(
   db: Db,
   calendar: ExchangeCalendar,
   args: { charterHash: string; decisionOffsetMinutes: number; now: UtcInstant },
-): { nextDecision: { decisionAt: UtcInstant; session: IsoDate } } & ReturnType<typeof shadowHaltStatus> {
+): { nextDecision: { decisionAt: UtcInstant; session: IsoDate }; registeredExperiments: number } & ReturnType<typeof shadowHaltStatus> {
   const nextDecision = upcomingShadowDecision(db, calendar, args);
-  return { nextDecision, ...shadowHaltStatus(db, args.charterHash, nextDecision.decisionAt, nextDecision.session) };
+  return {
+    nextDecision,
+    // Zero means the next decision will SKIP, not seal: the week is lost to the clock. Visible before Friday.
+    registeredExperiments: clockRegistrations(db, args.charterHash, nextDecision.decisionAt),
+    ...shadowHaltStatus(db, args.charterHash, nextDecision.decisionAt, nextDecision.session),
+  };
+}
+
+/**
+ * The rung-1 gate's count: experiments registered for this charter hash at or before `at` that anchor the
+ * prospective clock. A row labelled {@link NO_SHADOW_CLOCK_LABEL} (an evaluation-store child, a rehearsal) is
+ * a registration but not a clock anchor, so it never starts sealing.
+ */
+export function clockRegistrations(db: Db, charterHash: string, at: UtcInstant): number {
+  return (
+    db
+      .prepare("SELECT COUNT(*) AS n FROM experiments WHERE json_extract(definition_json, '$.charter.charter_hash') = ? AND registered_at <= ? AND labels_json NOT LIKE ?")
+      .get(charterHash, at, `%"${NO_SHADOW_CLOCK_LABEL}"%`) as { n: number }
+  ).n;
 }
 
 /** The sleeve arm whose replayed book a decision starts from. */
@@ -271,15 +289,10 @@ export function registerShadowDecisionJob(scheduler: Scheduler, deps: { config: 
       // experiment. The registration must exist AT the decision instant, not merely by the time the delayed
       // job runs (Codex P1, round 5) - a registration landing between close+offset and the run would otherwise
       // retroactively manufacture a prospective record timestamped before rung 1 began. No qualifying
-      // registration means no sealing - the job skips, visibly.
-      // (Whether sealing should additionally wait for the owner's ACTIVE acceptance - the section 17 reading -
-      // is the open clock-start question in docs/analysis/2026-09-21-rung5-decision-packet.md; tightening this
-      // gate to that reading is one line once the owner decides. This gate only ever fails closed vs. none.)
-      const registeredExperiments = (
-        ctx.db
-          .prepare("SELECT COUNT(*) AS n FROM experiments WHERE json_extract(definition_json, '$.charter.charter_hash') = ? AND registered_at <= ?")
-          .get(loaded.charterHash, decisionAt) as { n: number }
-      ).n;
+      // registration means no sealing - the job skips, visibly. The clock counts from registration, not from
+      // the owner's ACTIVE acceptance: OD-10, resolved in charter 0.3.0 (D-56). A registration labelled
+      // NO_SHADOW_CLOCK is not an anchor and does not count (`clockRegistrations`).
+      const registeredExperiments = clockRegistrations(ctx.db, loaded.charterHash, decisionAt);
       if (registeredExperiments === 0) {
         ctx.ledger.append(
           SHADOW_DECISION_SKIPPED,
