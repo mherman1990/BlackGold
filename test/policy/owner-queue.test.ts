@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadQueue, renderQueue, validateQueue, type Queue, type QueueItem } from "../../scripts/owner-queue.ts";
+import { invokedProgram, loadQueue, renderQueue, validateQueue, type Queue, type QueueItem } from "../../scripts/owner-queue.ts";
 
 /**
  * D-60 as code: the owner queue is valid, current, and cannot apply a default on the owner's behalf.
@@ -101,6 +101,15 @@ describe("owner-queue rules on planted items", () => {
       expect(problems.join("\n"), block).toMatch(/host `node`|without sudo/);
     }
     expect(validateQueue(queueWith([{ kind: "command", block: "bg health | sudo tee /tmp/h.json" }]))).toEqual([]);
+  });
+
+  it("docker or node reached through env, command, exec, an assignment or a path is still seen (PR #120 round 1)", () => {
+    for (const block of ["cd /tmp && env docker ps", "cd /tmp && exec docker ps", "cd /tmp && X=1 docker ps", "cd /tmp && command node packages/core/dist/main.js health", "cd /tmp && /usr/bin/docker ps", "cd /tmp && env -i nice -n 5 docker ps", "cd /tmp && timeout 5 node x.js"]) {
+      const problems = validateQueue(queueWith([{ kind: "command", block }]));
+      expect(problems.join("\n"), block).toMatch(/host `node`|without sudo/);
+    }
+    expect(invokedProgram("env -i X=1 nice -n 5 /usr/bin/docker ps")).toBe("docker");
+    expect(invokedProgram("sudo docker ps")).toBe("sudo");
   });
 
   it("a heredoc fed to a shell is commands, not content", () => {

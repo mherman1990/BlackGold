@@ -12,8 +12,8 @@
 # It never ingests anything and never signs anything. Signing is `bg corporate-actions sign` (B2), the owner's act.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ "$#" -lt 4 ]; then
-  echo "usage: d57-reconcile.sh <vti.json> <vtv.json> <vug.json> <iwm.xls> [curated.csv] [structural.json]" >&2
+if [ "$#" -lt 4 ] || [ "$#" -gt 6 ]; then
+  echo "usage: d57-reconcile.sh <vti.json> <vtv.json> <vug.json> <iwm.xls> [curated.csv] [structural.json]  (got $# arguments)" >&2
   exit 2
 fi
 APP_DATA="${BG_APP_DATA:-$HOME/umbrel/app-data/blackgold-trading/data}"

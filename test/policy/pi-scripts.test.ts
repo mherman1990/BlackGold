@@ -80,6 +80,14 @@ describe("scripts/pi", () => {
     }
   });
 
+  it("d57-reconcile.sh takes four to six inputs and refuses any other count before touching anything (PR #120 round 1)", () => {
+    for (const n of [3, 7]) {
+      const r = spawnSync("bash", [join(PI, "d57-reconcile.sh"), ...Array.from({ length: n }, (_, i) => `f${i}.json`)], { encoding: "utf8" });
+      expect(r.status, `${n} args`).toBe(2);
+      expect(r.stderr, `${n} args`).toContain("usage:");
+    }
+  });
+
   it("pi-update.sh records health even when health reports ok=false (exit 1)", () => {
     const dir = mkdtempSync(join(tmpdir(), "bg-update-"));
     try {
@@ -130,6 +138,21 @@ describe("scripts/pi", () => {
         expect(ancestor.out).toContain("contains the research data directory");
         const sibling = run([join(dir, "app-data", "blackgold-trading", "data-eval"), join(dir, "signed.json"), "--dry-run"], { BG_RESEARCH_DIR: r, BG_IMAGE: "img" });
         expect(sibling.status).toBe(0);
+      });
+    });
+
+    it("a target that already exists and is not empty (an earlier attempt could leave observations behind; PR #120 round 1)", () => {
+      withTmp((dir) => {
+        const r0 = research(dir);
+        writeFileSync(join(dir, "signed.json"), "{}");
+        mkdirSync(join(dir, "eval-used"));
+        writeFileSync(join(dir, "eval-used", "blackgold.sqlite"), "");
+        const used = run([join(dir, "eval-used"), join(dir, "signed.json"), "--dry-run"], { BG_RESEARCH_DIR: r0, BG_IMAGE: "img" });
+        expect(used.status).toBe(3);
+        expect(used.out).toContain("not empty");
+        mkdirSync(join(dir, "eval-empty"));
+        const empty = run([join(dir, "eval-empty"), join(dir, "signed.json"), "--dry-run"], { BG_RESEARCH_DIR: r0, BG_IMAGE: "img" });
+        expect(empty.status).toBe(0);
       });
     });
 

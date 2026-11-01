@@ -45,12 +45,28 @@ export function commandSegments(line: string): string[] {
     .filter((s) => s.length > 0);
 }
 
+/** Words that run the program that follows them, and `VAR=value` assignments: `env docker ps` runs docker. */
+const PROGRAM_WRAPPERS = new Set(["env", "command", "exec", "nohup", "nice", "time", "xargs", "builtin", "stdbuf", "timeout"]);
+
+/** The program a command segment invokes, seen through `env`, `command`, `exec`, assignments and the like. */
+export function invokedProgram(seg: string): string {
+  const words = seg.split(/\s+/);
+  let i = 0;
+  while (i < words.length) {
+    const w = words[i] ?? "";
+    // assignments, wrapper words, their flags and bare numeric arguments (`nice -n 5`, `timeout 30`)
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) || PROGRAM_WRAPPERS.has(w) || w.startsWith("-") || /^\d+[smhd]?$/.test(w)) i += 1;
+    else break;
+  }
+  return (words[i] ?? "").replace(/^.*\//, "");
+}
+
 function runsHostNode(seg: string): boolean {
-  return /^node\s/.test(seg) || (/node packages\//.test(seg) && !/docker exec/.test(seg));
+  return invokedProgram(seg) === "node" || (/node packages\//.test(seg) && !/docker exec/.test(seg));
 }
 
 function runsBareDocker(seg: string): boolean {
-  return /^docker\s/.test(seg);
+  return invokedProgram(seg) === "docker";
 }
 
 export type Kind = (typeof KINDS)[number];

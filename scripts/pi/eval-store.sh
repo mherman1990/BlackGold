@@ -14,7 +14,10 @@
 #      shell environment only, and only the two the bars pull needs, by name (value-less -e under sudo -E), so no
 #      key appears on a command line or in the sudo log;
 #   3. this script never runs `ingest tiingo-actions`: the evaluation store takes exactly one signed reconciled
-#      file, ingested BEFORE the snapshot so the registered experiment can read it.
+#      file, ingested BEFORE the snapshot so the registered experiment can read it;
+#   4. the target must be new or empty: a directory that already holds a store may carry observations from an
+#      earlier attempt (Tiingo actions included), and nothing in it would be citable. Point a rerun at a fresh
+#      directory.
 #
 # Order: migrate -> ingest universe (bars only) -> ingest corporate-actions (the signed file) -> snapshot ->
 # coverage -> charter show. It prints the `experiment register` line last and does not run it: registration is
@@ -49,6 +52,10 @@ esac
 case "$RESEARCH_DIR/" in
   "$EVAL_DIR/"*) echo "refused: $EVAL_DIR contains the research data directory $RESEARCH_DIR and would be chowned and mounted whole; use a sibling such as $(dirname "$RESEARCH_DIR")/data-eval" >&2; exit 3;;
 esac
+if [ -e "$EVAL_DIR" ] && { [ ! -d "$EVAL_DIR" ] || [ -n "$(sudo ls -A "$EVAL_DIR" 2>/dev/null || ls -A "$EVAL_DIR")" ]; }; then
+  echo "refused: $EVAL_DIR exists and is not empty; the evaluation store must be built into a new or empty directory (D-57(b)), so an earlier attempt cannot leave observations behind. Use a fresh directory." >&2
+  exit 3
+fi
 [ -f "$SIGNED" ] || { echo "missing signed file: $SIGNED" >&2; exit 2; }
 if [ -z "$DRY" ]; then
   [ -n "${BLACKGOLD_TIINGO_API_KEY:-}" ] || { echo "export BLACKGOLD_TIINGO_API_KEY in this shell first (never into a file under the app)" >&2; exit 2; }
