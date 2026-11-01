@@ -67,8 +67,12 @@ export function isMandatory(file: string): boolean {
   return MANDATORY_PATTERNS.some((re) => re.test(file));
 }
 
-export function mandatoryChangedFiles(changed: readonly string[]): string[] {
-  return changed.filter(isMandatory);
+/**
+ * Changed files in the mandatory set that still exist. A source deleted together with its record leaves no
+ * guard to require (PR #119 round 2); a source deleted while its record remains is caught by `verifyRecord`.
+ */
+export function mandatoryChangedFiles(changed: readonly string[], exists: (file: string) => boolean = () => true): string[] {
+  return changed.filter((f) => isMandatory(f) && exists(f));
 }
 
 /**
@@ -336,7 +340,7 @@ export function main(argv: readonly string[], root: string, out: (line: string) 
       out(`${msg}; skipping (run with --all to verify every record)`);
       return 0;
     }
-    const mandatory = mandatoryChangedFiles(changed);
+    const mandatory = mandatoryChangedFiles(changed, (f) => existsSync(join(root, f)));
     for (const f of mandatory) {
       if (!byFile.has(f)) problems.push(`${f} changed and sits in the mandatory set but has no record under ${args.records}/`);
     }

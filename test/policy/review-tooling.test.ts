@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeReport, DEFAULT_SOFT_MS, DEFAULT_THRESHOLD_MS, main as slowMain } from "../../scripts/check-slow-tests.ts";
-import { applyMutation, baseRecordInventory, countReport, deletedRecordProblems, isMandatory, loadRecords, main as mutationsMain, recordsToVerify, verifyRecord, type MutationRecord, type RunResult } from "../../scripts/check-mutations.ts";
+import { applyMutation, baseRecordInventory, countReport, deletedRecordProblems, isMandatory, loadRecords, main as mutationsMain, mandatoryChangedFiles, recordsToVerify, verifyRecord, type MutationRecord, type RunResult } from "../../scripts/check-mutations.ts";
 import { parse } from "yaml";
 import { evaluateReviewState, headReviewState, MAX_EXTERNAL_ROUNDS, newestReviewRequest, parseRoundTable, REQUIRED_CHECKS, REQUIRED_HEADINGS, type GitFacts, type PrFacts, type ReviewStateInput } from "../../scripts/check-review-state.ts";
 
@@ -103,6 +103,17 @@ describe("check-mutations", () => {
     for (const f of ["packages/core/src/main.ts", "packages/core/src/status/render.ts", "packages/core/test/risk-orders.test.ts", "scripts/check-mutations.ts", "docs/STATE.md"]) {
       expect(isMandatory(f), f).toBe(false);
     }
+  });
+
+  it("a mandatory source deleted together with its record needs no record (PR #119 round 2)", () => {
+    const changed = ["packages/core/src/risk/gone.ts", "packages/core/src/risk/orders.ts", "docs/x.md"];
+    expect(mandatoryChangedFiles(changed, (f) => !f.endsWith("gone.ts"))).toEqual(["packages/core/src/risk/orders.ts"]);
+    expect(mandatoryChangedFiles(changed)).toEqual(["packages/core/src/risk/gone.ts", "packages/core/src/risk/orders.ts"]);
+  });
+
+  it("the README names every mandatory path group the patterns cover", () => {
+    const readme = readFileSync(join(ROOT, "test/mutations/README.md"), "utf8");
+    for (const needle of ["compliance", "lag-rules", "data/pit", "market", "calendar", "universe", "broker-gateway/src", "config/load.ts"]) expect(readme).toContain(needle);
   });
 
   it("applyMutation requires exactly one occurrence of `find`", () => {
