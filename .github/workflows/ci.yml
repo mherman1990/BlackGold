@@ -29,6 +29,10 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test
+      - name: slow-test gate (no test over 5 s; reads .vitest/report.json)
+        run: npm run check:slow
+      - name: mutation records for changed financial files must go red
+        run: npm run check:mutations
       - run: npm run check:identity
       - run: npm run check:secrets
       - name: gitleaks (full history)

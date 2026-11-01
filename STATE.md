@@ -2,7 +2,25 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-10-18 by Claude Code. **0.1.14 is published and pinned:**
+**Last updated:** 2026-10-31 by Claude Code. **The plan toward live trading is approved and its first PR (A1, review
+guardrails as code) is built; `main` is otherwise where the 2026-10-18 entry below left it.**
+
+- **Four owner decisions on 2026-10-31**, each the recommended option: register the 0.3.0 experiment ASAP on
+  the Pi research store to start the 26/52-week clock, with the citable child experiment on the evaluation store
+  later; Alpaca paper then **Alpaca live** for `LIVE_MANUAL`, Schwab deferred (amends D-12/D-25; recorded with
+  the gate-amendment PR as D-61/D-62); a **three-round review budget** (D-59); a **weekly owner sitting** driven by
+  a generated `docs/OWNER_QUEUE.md` (D-60).
+- **A1 (this PR):** `scripts/check-review-state.ts`, `scripts/check-slow-tests.ts`, `scripts/check-mutations.ts`
+  with `test/mutations/`, `docs/KNOWN_FINDINGS.md`, `test/policy/{known-findings,policy-count-floor,review-tooling}.test.ts`,
+  `test/policy/POLICY_FLOOR` (75), the extended PR template, `.claude/rules/review-and-tests.md`. `npm run check`
+  now runs the slow-test gate and the mutation records. No financial code changed.
+- **Next PRs, in order:** A2 (owner queue generator + Pi wrappers in the image), B1 (`experiment` CLI), B2
+  (SHADOW enablement release 0.1.15 with `/data/policy`, `policy sign`, `corporate-actions sign`,
+  `docs/DECLARED_RUNG`). The first owner sitting is the one after 0.1.15 publishes.
+- **Branching:** this PR rides the session branch; later PRs use `claude/phase-XX-short-name` per CLAUDE.md
+  (plan decision DN-0, pending the owner's one-line confirmation).
+
+**Prior header (2026-10-18).** **0.1.14 is published and pinned:**
 `ghcr.io/mherman1990/blackgold:0.1.14@sha256:e0974f33e8d689384a314ba14bc944d6a2ddb2d1e179079288c968ec87fa24a0`.
 
 - **Built by** release run #17 from `b3127d5` (PR #116); `v0.1.14` is the workflow's own tag.

@@ -30,6 +30,7 @@ LIVE_AUTHORIZATION.*.yaml
 
 # Node / TypeScript
 node_modules/
+.vitest/
 dist/
 build/
 coverage/

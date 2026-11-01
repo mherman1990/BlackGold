@@ -17,7 +17,10 @@
     "test:policy": "vitest run --project policy",
     "check:identity": "node scripts/check-identity.ts",
     "check:secrets": "node scripts/check-secrets.ts",
-    "check": "npm run lint && npm run typecheck && npm run test && npm run check:identity && npm run check:secrets"
+    "check:slow": "node scripts/check-slow-tests.ts",
+    "check:mutations": "node scripts/check-mutations.ts",
+    "check:review": "node scripts/check-review-state.ts",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run check:slow && npm run check:mutations && npm run check:identity && npm run check:secrets"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

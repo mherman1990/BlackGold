@@ -15,7 +15,24 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 ## 3. Current position
 
-**Newest first (2026-10-18).**
+**Newest first (2026-10-31).**
+
+- **The review protocol is code now (D-59).** Before merging any PR: `npm run check` (it now includes
+  `check:slow` and `check:mutations`), then `node scripts/check-review-state.ts --pr-json <file>` and paste its
+  output into the PR body. In a cloud session without `gh`, build the JSON from the GitHub MCP tools; the shape
+  is `--print-shape`. Three external rounds, then stop: a finding blocks only if P1 on the severity floor;
+  everything else is a row in `docs/KNOWN_FINDINGS.md` with a target rung. Never merge a head the reviewer bot
+  has not commented on. Any changed file in `scripts/check-mutations.ts`'s mandatory set needs a record under
+  `test/mutations/` that CI verifies red; write the record, not a sentence. No test over 10 s (hard gate), aim
+  for 5 s (warned). On its first full run the gate found `research-evaluate.test.ts`'s two slowest cases at
+  6.3 s and 5.2 s under CPU load; they are under the hard limit and above the soft target, and sizing their
+  fixture down is a follow-up, not this PR's work.
+- **The plan** is in the session plan file and summarised in `STATE.md`'s header: A2 owner tooling, then B1
+  `experiment` CLI, then B2 the SHADOW release 0.1.15, which is what the first owner sitting needs. The owner's
+  four decisions of 2026-10-31 are binding; D-61/D-62 (registration actor, Alpaca live) are drafted with the C1
+  gate-amendment PR, never before the owner's lines for DN-2 and DN-4 exist.
+
+**Prior (2026-10-18).**
 
 - **0.1.14 is published and pinned** (`0.1.14@sha256:e0974f33…24a0`; release run #17 from `b3127d5`; both
   architectures; anonymously pullable). Run `release-verify.yml` with `0.1.14` once the pin is on `main`, because

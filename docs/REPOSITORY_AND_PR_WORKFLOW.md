@@ -45,6 +45,21 @@ Alternative: Matt authorizes Claude Code to push that bootstrap commit to `main`
 
 ## Authority matrix
 
+**Superseded by D-37 (2026-09-07) and D-59 (2026-10-31); kept for the record.** Under D-37 Claude Code has
+standing authority for the whole git and GitHub mechanic, including merging its own PRs to `main`, and under
+D-38 it releases by dispatching `release.yml`. The owner acts that no autonomy reaches are listed in `CLAUDE.md`
+("What standing authorization never covers"). The current authority matrix:
+
+| Action | Who may do it | Authorization needed |
+|---|---|---|
+| Local commits, push, open PR, mark ready, merge to `main`, retarget, delete merged branches | Claude Code | Standing (D-37); `npm run check` green and `scripts/check-review-state.ts` passing before merge (D-59) |
+| Create `v*` tag and publish the GHCR image | `release.yml` dispatched with the bare version (D-38) | The bump PR merged to `main` |
+| Install or update the Umbrel app, run hardware checks | Matt on the Pi | Release verified per `docs/UMBREL_STORE_AND_RELEASE.md` |
+| Sign a charter, policy or corporate-actions file; register an experiment; open the holdout; cite a run; enable a mode; introduce a credential | Matt only | Never delegated |
+| Branch protection, GitHub App installation, repository secrets, ref deletion | Matt in the GitHub UI | Separately authorized because it changes permissions |
+
+The original matrix, as written on 2026-09-06:
+
 | Action | Who may do it | Authorization needed |
 |---|---|---|
 | Local commits on a phase branch | Claude Code | Implementation authorization for that phase |
@@ -75,8 +90,16 @@ The template goes in `.github/pull_request_template.md` in Phase 0.
 
 ## Review
 
-- Owner review is mandatory. CI must be green.
-- If the Claude GitHub App is installed later (separate authorization), request a focused review with `@claude review this PR` and, for gateway/order/credential changes, the configured security review. Agent review supplements tests and owner approval; it never replaces them.
+- CI must be green, including the slow-test gate and the mutation records (D-59).
+- At most three external review rounds per PR. After that only a P1 finding on the severity floor blocks; every
+  other open finding is a row in `docs/KNOWN_FINDINGS.md` with a target rung. `scripts/check-review-state.ts`
+  refuses a merge with unpushed commits, a head the reviewer has not commented on, a review reply citing a sha
+  not on the PR, or a missing template section. The full protocol is `.claude/rules/review-and-tests.md`.
+- Owner review is welcome on any PR and is required for none, under D-37. The owner's acts are the ones listed
+  in `CLAUDE.md` as never delegated, and the ruleset on `main` enforces checks, not approvals (plan decision
+  DN-15, pending the owner's GitHub settings).
+- Agent review (an external reviewer bot, or a Claude Code review subagent labelled `self`) supplements tests; it
+  never replaces them, and a self-review never counts as an external round.
 
 ## Release
 
