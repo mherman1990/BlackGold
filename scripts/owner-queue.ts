@@ -31,7 +31,19 @@ export const COMMAND_LINE_PREFIXES = ["bg ", "bg-gateway ", "sudo ", "scp ", "ex
  * Lines only the owner may paste (CLAUDE.md, "What standing authorization never covers"; D-60 item 4). A block
  * containing one must be a `sign` item tagged `ownerOnly: true`; a `command` item may not carry it.
  */
-export const OWNER_ONLY_PATTERNS: readonly RegExp[] = [/\bexperiment (register|open-holdout|mark-viewed)\b/, /\bpolicy sign\b/, /\bcorporate-actions sign\b/, /\bshadow rearm\b/, /gateway-secrets/, /secrets\.env/, /live-authorization/i];
+export const OWNER_ONLY_PATTERNS: readonly RegExp[] = [
+  /\bexperiment (register|open-holdout|mark-viewed)\b/,
+  /\bpolicy sign\b/,
+  /\bcorporate-actions sign\b/,
+  /\bshadow rearm\b/,
+  /gateway-secrets/,
+  /secrets\.env/,
+  /live-authorization/i,
+  // a mode flip (D-60 item 4): the compose mode, the declared rung, or any live/paper mode word in a paste
+  /BLACKGOLD_MODE/,
+  /DECLARED_RUNG/,
+  /\b(LIVE_MANUAL|LIVE_AUTO|PAPER|SHADOW)\b/,
+];
 /** `decidedBy` may not read as Claude Code, silence or a default: a default is never applied on the owner's behalf. */
 const NOT_A_DECIDER = /\b(claude|silence|silent|default|auto|unanswered)\b/i;
 /** A heredoc whose consumer executes the body (`sudo bash <<'EOF'`): its lines are commands, not content. */

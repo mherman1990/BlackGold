@@ -119,8 +119,8 @@ describe("owner-queue rules on planted items", () => {
     expect(validateQueue(queueWith([{ kind: "command", block: sh }]))).toEqual([expect.stringContaining("without sudo")]);
   });
 
-  it("an owner-only act may not sit in a command item", () => {
-    for (const line of ["bg experiment register --charter x", "bg policy sign --dir /data/policy --file risk.yaml", "bg corporate-actions sign --file x", "bg shadow rearm --to NORMAL", "sudo tee ~/umbrel/app-data/blackgold-trading/gateway-secrets/gateway.env", "echo X | sudo tee -a ~/umbrel/app-data/blackgold-trading/secrets/secrets.env"]) {
+  it("an owner-only act, a mode flip included, may not sit in a command item", () => {
+    for (const line of ["bg experiment register --charter x", "bg policy sign --dir /data/policy --file risk.yaml", "bg corporate-actions sign --file x", "bg shadow rearm --to NORMAL", "sudo tee ~/umbrel/app-data/blackgold-trading/gateway-secrets/gateway.env", "echo X | sudo tee -a ~/umbrel/app-data/blackgold-trading/secrets/secrets.env", "export BLACKGOLD_MODE=PAPER", "sudo sed -i 's/RESEARCH/SHADOW/' ~/umbrel/app-data/blackgold-trading/docker-compose.yml", "echo PAPER | sudo tee docs/DECLARED_RUNG", "sudo docker exec -e BLACKGOLD_MODE=LIVE_MANUAL c true"]) {
       expect(validateQueue(queueWith([{ kind: "command", block: line }])), line).toEqual([expect.stringContaining("owner-only act")]);
       expect(validateQueue(queueWith([{ kind: "sign", ownerOnly: true, block: line }])), line).toEqual([]);
     }
