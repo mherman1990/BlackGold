@@ -35,16 +35,26 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 
-/** Files whose guards protect money, time, accounts, order lifecycle or fail-closed behaviour. */
+/**
+ * Files whose guards protect money, time, accounts, order lifecycle, compliance or fail-closed behaviour.
+ * Compliance and the temporal read paths (lag rules, point-in-time repository, series, calendars, universe
+ * snapshots) joined the set after PR #118's verification round found them missing.
+ */
 export const MANDATORY_PATTERNS: readonly RegExp[] = [
   /^packages\/core\/src\/risk\/.+\.ts$/,
   /^packages\/core\/src\/decision\/.+\.ts$/,
   /^packages\/core\/src\/execution\/.+\.ts$/,
   /^packages\/core\/src\/live\/.+\.ts$/,
   /^packages\/core\/src\/ledger\/.+\.ts$/,
+  /^packages\/core\/src\/compliance\/.+\.ts$/,
   /^packages\/core\/src\/research\/(nav|stats|aggregate|simulator)\.ts$/,
   /^packages\/core\/src\/strategy\/construct\.ts$/,
   /^packages\/core\/src\/data\/adapters\/corporate-actions[^/]*\.ts$/,
+  /^packages\/core\/src\/data\/(lag-rules|quality)\.ts$/,
+  /^packages\/core\/src\/data\/pit\/.+\.ts$/,
+  /^packages\/core\/src\/market\/.+\.ts$/,
+  /^packages\/core\/src\/calendar\/.+\.ts$/,
+  /^packages\/core\/src\/universe\/.+\.ts$/,
   /^packages\/core\/src\/config\/load\.ts$/,
   /^packages\/broker-gateway\/src\/.+\.ts$/,
 ];
@@ -224,6 +234,41 @@ export function vitestRunner(root: string, template?: string): Runner {
   };
 }
 
+/** A record as it existed on the base ref: its path and the source file it protected. */
+export type BaseRecord = { path: string; file: string };
+
+/**
+ * Records that existed on the base ref and are gone from the working tree while the source file they
+ * protected still exists. Deleting a record is deleting a guard; it is refused unless the source went with it
+ * (PR #118 verification round). Pure.
+ */
+export function deletedRecordProblems(baseRecords: readonly BaseRecord[], currentRecordPaths: ReadonlySet<string>, sourceExists: (file: string) => boolean): string[] {
+  const out: string[] = [];
+  for (const r of baseRecords) {
+    if (currentRecordPaths.has(r.path)) continue;
+    if (sourceExists(r.file)) out.push(`${r.path} was deleted but its source ${r.file} still exists; a record is only removed together with the file it guards`);
+  }
+  return out;
+}
+
+/** The record inventory at the merge-base with `base`, or undefined when the base cannot be resolved. */
+export function baseRecordInventory(root: string, base: string, recordsDir: string): BaseRecord[] | undefined {
+  try {
+    const mergeBase = execFileSync("git", ["merge-base", base, "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+    const listing = spawnSync("git", ["ls-tree", "--name-only", mergeBase, `${recordsDir}/`], { cwd: root, encoding: "utf8" });
+    if (listing.status !== 0) return [];
+    const out: BaseRecord[] = [];
+    for (const path of listing.stdout.split("\n").map((s) => s.trim()).filter((p) => /\.ya?ml$/.test(p))) {
+      const raw = execFileSync("git", ["show", `${mergeBase}:${path}`], { cwd: root, encoding: "utf8" });
+      const parsed = parse(raw) as { file?: unknown };
+      if (typeof parsed.file === "string") out.push({ path, file: parsed.file });
+    }
+    return out;
+  } catch {
+    return undefined;
+  }
+}
+
 export function changedFilesAgainst(root: string, base: string): string[] | undefined {
   try {
     const mergeBase = execFileSync("git", ["merge-base", base, "HEAD"], { cwd: root, encoding: "utf8" }).trim();
@@ -279,6 +324,13 @@ export function main(argv: readonly string[], root: string, out: (line: string) 
     for (const f of mandatory) {
       if (!byFile.has(f)) problems.push(`${f} changed and sits in the mandatory set but has no record under ${args.records}/`);
     }
+    const inventory = baseRecordInventory(root, args.base, args.records);
+    if (inventory === undefined) {
+      out(`mutation check: the record inventory at ${args.base} could not be read`);
+      return 1;
+    }
+    const currentPaths = new Set(records.map((r) => (r.source.startsWith(root + "/") ? r.source.slice(root.length + 1) : r.source)));
+    problems.push(...deletedRecordProblems(inventory, currentPaths, (file) => existsSync(join(root, file))));
     toVerify = recordsToVerify(records, changed, root);
     out(`mutation check: ${changed.length} changed file(s) against ${args.base}, ${mandatory.length} in the mandatory set, ${toVerify.length} record(s) to verify (source, record or guarding test changed)`);
   }

@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeReport, DEFAULT_SOFT_MS, DEFAULT_THRESHOLD_MS, main as slowMain } from "../../scripts/check-slow-tests.ts";
-import { applyMutation, countReport, isMandatory, loadRecords, main as mutationsMain, recordsToVerify, verifyRecord, type MutationRecord, type RunResult } from "../../scripts/check-mutations.ts";
+import { applyMutation, baseRecordInventory, countReport, deletedRecordProblems, isMandatory, loadRecords, main as mutationsMain, recordsToVerify, verifyRecord, type MutationRecord, type RunResult } from "../../scripts/check-mutations.ts";
 import { parse } from "yaml";
-import { evaluateReviewState, headReviewState, MAX_EXTERNAL_ROUNDS, parseRoundTable, REQUIRED_CHECKS, REQUIRED_HEADINGS, type GitFacts, type PrFacts, type ReviewStateInput } from "../../scripts/check-review-state.ts";
+import { evaluateReviewState, headReviewState, MAX_EXTERNAL_ROUNDS, newestReviewRequest, parseRoundTable, REQUIRED_CHECKS, REQUIRED_HEADINGS, type GitFacts, type PrFacts, type ReviewStateInput } from "../../scripts/check-review-state.ts";
 
 /**
  * The review and test guardrails (D-59) are code, and this file proves each one refuses what it is there to
@@ -89,6 +89,14 @@ describe("check-mutations", () => {
       "packages/core/src/data/adapters/corporate-actions-sign.ts",
       "packages/core/src/config/load.ts",
       "packages/broker-gateway/src/guards/hard-caps.ts",
+      "packages/core/src/compliance/engine.ts",
+      "packages/core/src/compliance/look-through.ts",
+      "packages/core/src/data/lag-rules.ts",
+      "packages/core/src/data/quality.ts",
+      "packages/core/src/data/pit/repository.ts",
+      "packages/core/src/market/series.ts",
+      "packages/core/src/calendar/nyse.ts",
+      "packages/core/src/universe/snapshots.ts",
     ]) {
       expect(isMandatory(f), f).toBe(true);
     }
@@ -191,6 +199,24 @@ describe("check-mutations", () => {
     expect(recordsToVerify([record], ["test/mutations/risk-orders.yaml"], root)).toHaveLength(1);
     expect(recordsToVerify([record], ["packages/core/test/risk-orders.test.ts"], root)).toHaveLength(1);
     expect(recordsToVerify([record], ["packages/core/src/main.ts", "docs/STATE.md"], root)).toHaveLength(0);
+  });
+
+  it("a deleted record whose source still exists is refused; one deleted with its source is not", () => {
+    const base = [
+      { path: "test/mutations/a.yaml", file: "packages/core/src/risk/a.ts" },
+      { path: "test/mutations/b.yaml", file: "packages/core/src/risk/b.ts" },
+      { path: "test/mutations/c.yaml", file: "packages/core/src/risk/c.ts" },
+    ];
+    const current = new Set(["test/mutations/a.yaml"]);
+    const exists = (f: string): boolean => f.endsWith("b.ts");
+    expect(deletedRecordProblems(base, current, exists)).toEqual([expect.stringContaining("test/mutations/b.yaml was deleted")]);
+    expect(deletedRecordProblems(base, new Set(base.map((r) => r.path)), exists)).toEqual([]);
+  });
+
+  it("the base inventory of this repository lists the tracked record", () => {
+    const inv = baseRecordInventory(ROOT, "HEAD", "test/mutations");
+    expect(inv?.some((r) => r.path === "test/mutations/risk-orders.yaml" && r.file === "packages/core/src/risk/orders.ts")).toBe(true);
+    expect(baseRecordInventory(ROOT, "no-such-ref-xyz", "test/mutations")).toBeUndefined();
   });
 
   it("counts ran and failed assertions from a vitest JSON report, ignoring skipped ones", () => {
@@ -380,6 +406,16 @@ describe("check-review-state", () => {
     expect(evaluateReviewState(input({}, { policyFloor: { base: 47, head: 46 } }))).toEqual([expect.stringContaining("only rises")]);
     expect(evaluateReviewState(input({ baseRef: "claude/other" }))).toEqual([expect.stringContaining("not main")]);
     expect(evaluateReviewState(input({ isDraft: true }))).toEqual([expect.stringContaining("draft")]);
+  });
+
+  it("only the PR author's comments count as review requests", () => {
+    const comments = [
+      { createdAt: "2026-11-02T10:00:00Z", body: "@codex review", authorLogin: "mherman1990" },
+      { createdAt: "2026-11-02T12:00:00Z", body: "@codex review please", authorLogin: "someone-else" },
+      { createdAt: "2026-11-02T11:00:00Z", body: "unrelated", authorLogin: "mherman1990" },
+    ];
+    expect(newestReviewRequest(comments, "mherman1990", "@codex review")).toBe("2026-11-02T10:00:00Z");
+    expect(newestReviewRequest(comments, "nobody", "@codex review")).toBeUndefined();
   });
 
   it("parses the round table and ignores the template's empty row", () => {

@@ -74,12 +74,28 @@ export type PrFacts = {
   /** ISO instant the head commit was committed. */
   headCommittedAt: string;
   /**
-   * ISO instant of the newest review REQUEST by the PR author (an `@codex review` comment by default). A
-   * request newer than the newest reviewer comment on the head means a round is in flight on an unchanged
-   * head, which the commit sha alone cannot show (Codex P1, round 3).
+   * ISO instant of the newest review REQUEST by the PR author (an `@codex review` comment by default; only
+   * the author's comments count, see `newestReviewRequest`). A request newer than the newest reviewer comment
+   * on the head means a round is in flight on an unchanged head, which the commit sha alone cannot show
+   * (Codex P1, round 3).
    */
   reviewRequestedAt?: string;
 };
+
+export type IssueComment = { createdAt: string; body?: string; authorLogin?: string };
+
+/**
+ * The newest review request on the PR: a comment BY THE PR AUTHOR containing the marker. Any other commenter
+ * writing the marker is not a request and cannot hold the merge (PR #118 verification round). Pure.
+ */
+export function newestReviewRequest(comments: readonly IssueComment[], authorLogin: string, marker: string): string | undefined {
+  const times = comments
+    .filter((c) => c.authorLogin === authorLogin && (c.body ?? "").includes(marker))
+    .map((c) => c.createdAt)
+    .filter((t) => Number.isFinite(Date.parse(t)))
+    .sort((a, b) => Date.parse(a) - Date.parse(b));
+  return times.at(-1);
+}
 
 export type GitFacts = {
   localHeadSha: string;
@@ -354,13 +370,14 @@ export const DEFAULT_REVIEW_REQUEST_MARKER = "@codex review";
 
 function prFactsFromGh(root: string, number: number, reviewerLogins: readonly string[], requestMarker: string): PrFacts {
   const view = JSON.parse(
-    execFileSync("gh", ["pr", "view", String(number), "--json", "number,headRefOid,baseRefName,isDraft,body,statusCheckRollup,commits"], { cwd: root, encoding: "utf8" }),
+    execFileSync("gh", ["pr", "view", String(number), "--json", "number,headRefOid,baseRefName,isDraft,body,statusCheckRollup,commits,author"], { cwd: root, encoding: "utf8" }),
   ) as {
     number: number;
     headRefOid: string;
     baseRefName: string;
     isDraft: boolean;
     body: string;
+    author?: { login?: string };
     statusCheckRollup?: { name?: string; context?: string; conclusion?: string | null; state?: string }[];
     commits?: { oid: string; committedDate: string }[];
   };
@@ -382,9 +399,18 @@ function prFactsFromGh(root: string, number: number, reviewerLogins: readonly st
     body?: string;
     user?: { login?: string; type?: string };
   }[];
-  const requests = issueComments.filter((c) => !isBot(c.user) && (c.body ?? "").includes(requestMarker)).map((c) => c.created_at);
+  const authorLogin = view.author?.login ?? "";
+  const newestRequest = newestReviewRequest(
+    issueComments.map((c) => {
+      const out: IssueComment = { createdAt: c.created_at };
+      if (c.body !== undefined) out.body = c.body;
+      if (c.user?.login !== undefined) out.authorLogin = c.user.login;
+      return out;
+    }),
+    authorLogin,
+    requestMarker,
+  );
   const head = view.commits?.find((c) => c.oid === view.headRefOid);
-  const newestRequest = requests.sort().at(-1);
   return {
     ...(newestRequest !== undefined ? { reviewRequestedAt: newestRequest } : {}),
     number: view.number,

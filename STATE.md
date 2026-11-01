@@ -2,8 +2,14 @@
 
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
-**Last updated:** 2026-10-31 by Claude Code. **The plan toward live trading is approved and its first PR (A1, review
-guardrails as code) is built; `main` is otherwise where the 2026-10-18 entry below left it.**
+**Last updated:** 2026-11-01 by Claude Code. **The plan toward live trading is approved; A1 (review guardrails as
+code, PR #118) is merged to `main` at `b24bd44`; A1b (the three findings its verification round ledgered) is the
+PR that carries this line; `main` is otherwise where the 2026-10-18 entry below left it.**
+
+- **How #118 went under its own rules (D-59):** three external rounds found 13 real findings on the guardrails
+  themselves, all fixed; the fourth, verification-only round found three more (mandatory-set coverage, deleted
+  records, request-marker authorship), ledgered with target `next-pr` and fixed in A1b. The pre-merge check
+  passed on the ledger-only head. The budget held: no round five.
 
 - **Four owner decisions on 2026-10-31**, each the recommended option: register the 0.3.0 experiment ASAP on
   the Pi research store to start the 26/52-week clock, with the citable child experiment on the evaluation store
