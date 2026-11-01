@@ -26,4 +26,5 @@ mutations:
     find: "if (args.requireCitable === true && report.promotionBlockingCodes.length > 0) {"
     replace: "if (args.requireCitable === true && report.promotionBlockingCodes.length > 1) {"
     test: packages/core/test/experiment-cli.test.ts
-    testName: "--require-citable refuses a store with a single-source action"
+    # The filter may not start with "--": vitest reads that as an option, and the baseline then runs no test.
+    testName: "refuses a store with a single-source action; without it"
