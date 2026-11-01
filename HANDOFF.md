@@ -7,7 +7,7 @@ How a fresh Claude Code session resumes Black Gold safely.
 1. Run `git status`, `git branch --show-current`, `git remote -v`, `git worktree list`, `git log --oneline -5`. Confirm the remote is `mherman1990/BlackGold` and you are not on `main`.
 2. Read `CLAUDE.md`, `STATE.md`, this file, `docs/DECISIONS.md`, and `PLAN.md`, in that order.
 3. Run `/context` and confirm `CLAUDE.md` and `.claude/rules/*` are listed under memory files.
-4. `npm ci && npm run check`. All of lint, typecheck, 1157 tests (unit 1090, policy 41, temporal 26), identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
+4. `npm ci && npm run check`. All of lint, typecheck, 1229 tests (unit 1090, policy 113, temporal 26), the slow-test gate, the mutation records, identity check, and secret scan must pass before you change anything. A future charter version starts at DRAFT, and while it does the strategy-charter tripwire ("now accepts the tracked charter") fails by design until Matt signs it; never "fix" the tripwire. If the count differs, trust the run and fix this line — it has been stale three times.
 
 ## 2. Repository guard
 
@@ -17,10 +17,18 @@ If the checkout is anything other than `mherman1990/BlackGold`, stop. Do not cre
 
 **Newest first (2026-11-01).**
 
-- **A1 is merged (PR #118, `b24bd44`) and the protocol below was exercised on it:** rounds 1-3 fixed, round 4
-  ledgered, ledger-only commit admitted by the check, merged by Claude Code under D-37. A1b fixes the three
-  ledgered findings: the mandatory set now covers compliance and the temporal read paths, a record deleted while
-  its source remains is refused, and only the PR author's `@codex review` counts as a request. Next is A2.
+- **A2 (this PR) is the owner's tooling (D-60).** `docs/owner-queue.yaml` is the source; `npm run owner-queue`
+  renders `docs/OWNER_QUEUE.md`, and `test/policy/owner-queue.test.ts` fails when the render is stale, when a
+  decision lacks a default, reply format or cost, when anything is `applied` without `decidedBy`/`decidedAt`,
+  or when a paste block runs a host `node` or an un-sudo'd `docker`. When the owner answers a decision, record
+  the line in `docs/DECISIONS.md`, set the item `applied` with who and when in the YAML, re-render, commit both.
+  Never set a decision `applied` on silence. The Pi wrappers `scripts/pi/*` are COPYed into the image
+  (`.dockerignore` un-ignores `scripts/pi`); the Pi installs them with one `sudo docker cp`, so a runbook line
+  is `bg <cmd>`, never the full `sudo docker exec ...`. `eval-store.sh`'s three refusals are tested; keep them.
+- **A1 (#118, `b24bd44`) and A1b (#119, `28f88b1`, merged by Matt) are in.** The protocol below was exercised
+  on both: #118 rounds 1-3 fixed, round 4 ledgered and fixed in #119; #119 rounds 1-2 fixed, round 3 clean. The
+  mandatory mutation set covers compliance and the temporal read paths; a record deleted or retargeted while its
+  source remains is refused; only the PR author's `@codex review` counts as a request. Next is B1.
 
 - **The review protocol is code now (D-59).** Before merging any PR: `npm run check` (it now includes
   `check:slow` and `check:mutations`), then `node scripts/check-review-state.ts --pr-json <file>` and paste its

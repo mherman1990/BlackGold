@@ -14,11 +14,37 @@ The store is added by URL. Nothing below may be done until `docs/UMBREL_STORE_AN
 3. Open the app; the status page shows mode, `liveCapable: false`, database integrity, ledger chain, and next session.
 4. Run `scripts/pi-benchmark.sh` on the Pi and compare with `docs/RESOURCE_BUDGET.md`.
 
+## Install the Pi wrappers (once per Pi, after the first release that ships them)
+
+Every Pi command in these runbooks and in `docs/OWNER_QUEUE.md` is written as `bg <command>` (D-60). `bg` is
+`sudo docker exec -i blackgold-trading_core_1 node packages/core/dist/main.js "$@"`, so the two things that fail
+when typed by hand, a host `node` and a `docker` without `sudo`, cannot happen. The image carries the wrappers
+under `/app/scripts/pi`; one copy installs them and no checkout is needed on the Pi:
+
+```bash
+sudo docker cp blackgold-trading_core_1:/app/scripts/pi ~/bg
+sudo chown -R "$USER" ~/bg
+echo 'export PATH="$HOME/bg:$PATH"' >> ~/.profile
+export PATH="$HOME/bg:$PATH"
+bg health
+```
+
+| Wrapper | Does |
+|---|---|
+| `bg <cmd>` | runs a core CLI command inside the running core container |
+| `bg-gateway <cmd>` | the same for the broker gateway |
+| `pi-update.sh before` / `after` | backup and health around an umbrelOS update (the "Update" section) |
+| `d57-reconcile.sh` | `first-ingestion.md` Step 2b, "Building the file", as one line |
+| `eval-store.sh` | builds the separate evaluation store (D-57(b)) and stops before registration |
+| `stale-branches.sh` | run on your own machine: prints the one `git push --delete` line for merged `claude/*` branches |
+
+Re-run the `docker cp` after an update that changes the wrappers; the release notes say when.
+
 ## Update
 
-1. Take a backup (`docs/runbooks/backup-and-restore.md`).
+1. `pi-update.sh before` (a verified backup and a health record; `docs/runbooks/backup-and-restore.md` is what it runs).
 2. Refresh the community store in umbrelOS; update Black Gold.
-3. Verify health. Data under `${APP_DATA_DIR}/data` must be unchanged; the migration log in the health output lists applied migrations.
+3. `pi-update.sh after`. Data under `${APP_DATA_DIR}/data` must be unchanged; the migration log in the health output lists applied migrations, and the script prints what changed between the two health records.
 
 ## Provide research-data credentials and run the first ingest on the Pi
 

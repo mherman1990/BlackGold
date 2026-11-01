@@ -3,28 +3,35 @@
 Authoritative snapshot of where Black Gold is. Update at every phase boundary and whenever the authoritative branch or approval status changes.
 
 **Last updated:** 2026-11-01 by Claude Code. **The plan toward live trading is approved; A1 (review guardrails as
-code, PR #118) is merged to `main` at `b24bd44`; A1b (the three findings its verification round ledgered) is the
-PR that carries this line; `main` is otherwise where the 2026-10-18 entry below left it.**
+code, PR #118) is merged at `b24bd44` and A1b (its three ledgered findings, PR #119) at `28f88b1`, merged by
+Matt. A2 (the owner queue and the Pi wrappers, D-60) is the PR that carries this line; `main` is otherwise where
+the 2026-10-18 entry below left it.**
 
-- **How #118 went under its own rules (D-59):** three external rounds found 13 real findings on the guardrails
-  themselves, all fixed; the fourth, verification-only round found three more (mandatory-set coverage, deleted
-  records, request-marker authorship), ledgered with target `next-pr` and fixed in A1b. The pre-merge check
-  passed on the ledger-only head. The budget held: no round five.
+- **A2 (this PR):** `docs/owner-queue.yaml` is the source and `docs/OWNER_QUEUE.md` the rendered weekly queue
+  (`npm run owner-queue`; a policy test fails when the render is stale). Sitting 1 holds the decisions DN-0 to
+  DN-4, DN-8, DN-15, DN-16 and D-40/52/53, the GitHub hygiene and the downloads, all doable now; its command
+  and sign blocks are blocked on release 0.1.15. `scripts/pi/{bg,bg-gateway,pi-update.sh,d57-reconcile.sh,eval-store.sh,stale-branches.sh}`
+  ship inside the image from the next release, so one `sudo docker cp` installs them. `scripts/github/ruleset.json`
+  is the branch ruleset for DN-15. No financial code changed.
+- **How #118 and #119 went under their own rules (D-59):** #118 took three external rounds (13 real findings
+  fixed) plus a verification round whose three findings were ledgered and fixed in #119; #119 took three rounds
+  (1 P1 + 3 P2, all fixed; round 3 clean). The pre-merge check passed on both heads. The budget held both times.
 
 - **Four owner decisions on 2026-10-31**, each the recommended option: register the 0.3.0 experiment ASAP on
   the Pi research store to start the 26/52-week clock, with the citable child experiment on the evaluation store
   later; Alpaca paper then **Alpaca live** for `LIVE_MANUAL`, Schwab deferred (amends D-12/D-25; recorded with
   the gate-amendment PR as D-61/D-62); a **three-round review budget** (D-59); a **weekly owner sitting** driven by
   a generated `docs/OWNER_QUEUE.md` (D-60).
-- **A1 (this PR):** `scripts/check-review-state.ts`, `scripts/check-slow-tests.ts`, `scripts/check-mutations.ts`
+- **A1 (#118):** `scripts/check-review-state.ts`, `scripts/check-slow-tests.ts`, `scripts/check-mutations.ts`
   with `test/mutations/`, `docs/KNOWN_FINDINGS.md`, `test/policy/{known-findings,policy-count-floor,review-tooling}.test.ts`,
-  `test/policy/POLICY_FLOOR` (75), the extended PR template, `.claude/rules/review-and-tests.md`. `npm run check`
-  now runs the slow-test gate and the mutation records. No financial code changed.
-- **Next PRs, in order:** A2 (owner queue generator + Pi wrappers in the image), B1 (`experiment` CLI), B2
-  (SHADOW enablement release 0.1.15 with `/data/policy`, `policy sign`, `corporate-actions sign`,
-  `docs/DECLARED_RUNG`). The first owner sitting is the one after 0.1.15 publishes.
-- **Branching:** this PR rides the session branch; later PRs use `claude/phase-XX-short-name` per CLAUDE.md
-  (plan decision DN-0, pending the owner's one-line confirmation).
+  `test/policy/POLICY_FLOOR`, the extended PR template, `.claude/rules/review-and-tests.md`. `npm run check`
+  runs the slow-test gate and the mutation records. A1b (#119) widened the mandatory mutation set to the
+  compliance and temporal guards and made a deleted or retargeted record a refusal.
+- **Next PRs, in order:** B1 (`experiment` CLI), B2 (SHADOW enablement release 0.1.15 with `/data/policy`,
+  `policy sign`, `corporate-actions sign`, `docs/DECLARED_RUNG`). The first owner sitting is the one after 0.1.15
+  publishes; the decision items in `docs/OWNER_QUEUE.md` can be answered any time before.
+- **Branching:** the session branch is reset to `origin/main` after each merge and carries one PR at a time
+  (DN-0 in the queue asks whether to keep that or move to `claude/phase-XX-short-name` names).
 
 **Prior header (2026-10-18).** **0.1.14 is published and pinned:**
 `ghcr.io/mherman1990/blackgold:0.1.14@sha256:e0974f33e8d689384a314ba14bc944d6a2ddb2d1e179079288c968ec87fa24a0`.

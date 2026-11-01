@@ -1,0 +1,308 @@
+# The owner queue (D-60). Source of truth for docs/OWNER_QUEUE.md; render with `npm run owner-queue`.
+# One sitting a week. Each decision carries a recommended default, a reply format and the cost of deciding
+# wrong; a default is proposed again the next week if unanswered and is never applied by Claude Code.
+# Command blocks are pastes for the Pi: `bg` and the scripts come from the image (`sudo docker cp
+# blackgold-trading_core_1:/app/scripts/pi ~/bg`). Items blocked on a PR or release need nothing yet.
+version: 1
+updated: 2026-11-01
+intro: |
+  The plan toward live trading (approved 2026-10-31) puts the 26/52-week prospective clock on the critical path.
+  Sitting 1 starts it. Everything Claude Code can build without you keeps shipping between sittings; what is
+  listed here is only what is yours. Reply to decisions as one line each, in the reply format shown, in chat or in
+  a PR comment; Claude Code records them in docs/DECISIONS.md verbatim.
+sittings:
+  - id: sitting-1
+    title: "Sitting 1: decisions, GitHub hygiene, downloads, and the clock start"
+    when: "The Sunday after release 0.1.15 publishes (target 2026-11-08). The decision and GitHub items can be done any time before."
+    minutes: 70
+    items:
+      - id: dn-0
+        kind: decision
+        title: Branching for later PRs
+        status: pending
+        question: >-
+          CLAUDE.md asks for one bounded phase per PR on claude/phase-XX-short-name from a fresh origin/main. The
+          cloud session is bound to one branch name, which it resets to origin/main after each merge and reuses for
+          the next PR. Keep that (same name, reset after every merge, a new PR each time) or require per-slice names?
+        recommendedDefault: >-
+          Keep the session branch, reset to origin/main after each merge, one PR per slice. It satisfies the
+          substance of the rule (fresh base, one bounded PR) without a per-session permission.
+        replyFormat: "DN-0: session-branch | per-slice"
+        costIfWrong: Low; either works, the choice only changes branch names in the PR list.
+      - id: dn-1
+        kind: decision
+        title: Who registers the experiment, and where the clock anchors (D-61)
+        status: pending
+        question: >-
+          `experiment register` starts the 26/52-week clock (OD-10) and is one-way. Who types it, and does the
+          research-store registration anchor the clock while the later evaluation-store child (citable) carries a
+          clock_anchor label instead of restarting it?
+        recommendedDefault: >-
+          You, always; Claude Code builds and dry-runs the line. The research store (the only store the shadow job
+          reads) anchors the clock; the evaluation-store child carries `clock_anchor:<research id>:<definitionHash>`
+          and the identical charter hash. A cross-store --parent is impossible: the registry resolves parents in
+          its own database.
+        replyFormat: "DN-1: accept | <alternative in one line>"
+        costIfWrong: A later dispute over which date the 52 weeks count from; settle it before the first seal.
+      - id: dn-2
+        kind: decision
+        title: Alpaca paper, then Alpaca live; Schwab deferred (D-62, amends D-12 and D-25)
+        status: pending
+        question: >-
+          Amend D-12 (sleeve = a dedicated taxable Alpaca brokerage account) and D-25 (Alpaca live is planned for
+          LIVE_MANUAL; one adapter whose only paper/live difference is the configured base URL, so ladder section
+          6's rung-4 reset for a new adapter does not apply)? Schwab becomes a later decision.
+        recommendedDefault: Accept as drafted; the live host enters code only in the explicitly approved live-stage PR.
+        replyFormat: "DN-2: accept | keep Schwab"
+        costIfWrong: Reversing later means a second adapter, a second capability register, and a rung-4 re-entry.
+      - id: dn-3
+        kind: decision
+        title: Flip the shipped compose to SHADOW and register before the real compliance content exists
+        status: pending
+        question: >-
+          Release 0.1.15 sets BLACKGOLD_MODE SHADOW and reads policy files from /data/policy. If you register before
+          your signed restricted-list.yaml and theme-membership.yaml are in place, B1 seals every week with new risk
+          blocked (a sealed record, not a missing one) until the signed files land and one `bg shadow rearm --to
+          NORMAL` clears the halt (D-54 b). Start the clock that way?
+        recommendedDefault: Yes. Section 17 counts missing records and hard-rule violations; a blocked-new-risk record is neither.
+        replyFormat: "DN-3: yes | wait for policy content"
+        costIfWrong: Weeks of clock if you wait; weeks of shadow that exercise no new risk if you do not. Both recoverable.
+      - id: dn-4
+        kind: decision
+        title: Amend the permanent CI gate for the paper host (D-63)
+        status: pending
+        question: >-
+          test/policy/live-disabled.test.ts forbids paper-api.alpaca.markets everywhere. The gate-amendment PR
+          (no network code) would allow it in exactly one gateway egress module, keep api.alpaca.markets and
+          broker-api forbidden until the live-stage PR, and raise the policy floor. Approve that amendment?
+        recommendedDefault: Approve; it is the test plus capability-register rows, reviewed on its own.
+        replyFormat: "DN-4: approve | hold"
+        costIfWrong: Low; the amendment is one file and reversible.
+      - id: dn-8
+        kind: decision
+        title: Over-cap orders are refused, never sliced; the two USD caps (D-55 conflicts 2, 3, 5)
+        status: pending
+        question: >-
+          Slicing an over-cap order across sessions is a 0.4.0 charter and a clock reset. Refuse instead, and set the
+          two sleeve-size caps in /data/policy/risk.yaml (maxOrderNotionalUsd, maxOrderQuantity) as sleeve
+          parameters outside the charter? Shadow stays scale-free; turnover is gross as risk.yaml 0.2.0 says.
+        recommendedDefault: >-
+          Refuse, never slice. Proposal for the caps: maxOrderNotionalUsd = 25 percent of the intended sleeve
+          size, maxOrderQuantity = that divided by 5.00; you enter the number on the Pi, never in chat.
+        replyFormat: "DN-8: refuse | slice (new charter); caps: <set on the Pi>"
+        costIfWrong: Slicing after registration resets up to a year of clock.
+      - id: dn-15
+        kind: decision
+        title: GitHub ruleset without a required approval; retire CODEOWNERS
+        status: pending
+        question: >-
+          D-37 lets Claude Code merge its own PRs; CODEOWNERS and the workflow doc still said owner approval. The
+          ruleset in scripts/github/ruleset.json requires a PR, both CI jobs, resolved review threads, and blocks
+          force-push, with zero required approvals. Import it as is?
+        recommendedDefault: Yes; you keep tag and ref deletion, and every merge still needs green CI and a passed check-review-state.
+        replyFormat: "DN-15: import | require 1 approval"
+        costIfWrong: Low; a ruleset is edited in the UI in a minute.
+      - id: dn-16
+        kind: decision
+        title: Confirm D-54 readings (b) and (c); D-51 closed by the signed 0.3.0
+        status: pending
+        question: >-
+          (b) one owner re-arm after your signed policy files replace the placeholders; (c) the uniform
+          HOLD_ONLY-after-one-session break mapping, with no per-kind table before registration. And D-51 stands as
+          registered in 0.3.0 (Sharpe difference primary, F2 co-gate).
+        recommendedDefault: Accept all three as built.
+        replyFormat: "DN-16: accept | <change in one line>"
+        costIfWrong: A per-kind mapping adopted after registration is a policy change inside the prospective record.
+      - id: d-40-52-53
+        kind: decision
+        title: Accept, amend or reject D-40, D-52 and D-53
+        status: pending
+        question: >-
+          D-40 (Granary owns the household layer), D-52 (secrets.env fallback, already live code) and D-53 (the
+          shadow track decomposition) have been Proposed for weeks.
+        recommendedDefault: Accept all three as written.
+        replyFormat: "D-40: accept; D-52: accept; D-53: accept"
+        costIfWrong: Low; each is reversible and none touches money.
+      - id: gh-settings
+        kind: github
+        title: Default branch, ruleset, stale branches
+        status: pending
+        ownerOnly: true
+        steps:
+          - "GitHub -> Settings -> General -> Default branch: set `main` (if not already)."
+          - "GitHub -> Settings -> Rules -> Rulesets -> New ruleset -> Import a ruleset -> upload scripts/github/ruleset.json (after DN-15)."
+          - "On your machine, in a BlackGold checkout: `scripts/pi/stale-branches.sh` prints one `git push origin --delete ...` line for the fully merged claude/* branches; paste it (or run with --delete)."
+      - id: downloads
+        kind: data
+        title: Download the iShares IWM workbook and the three Vanguard distribution files
+        status: pending
+        steps:
+          - "iShares Russell 2000 ETF page -> \"Detailed Holdings and Analytics\" -> saves as iShares-Russell-2000-ETF_fund.xls."
+          - "Open and save each as JSON, naming the fund in the file name: https://advisors.vanguard.com/investments/products/api/funds/0970/pricing/distributions (VTI), .../0966/... (VTV), .../0967/... (VUG)."
+          - "Keep them with your other Black Gold files; d57-reconcile.sh stages them on the Pi in sitting 2."
+      - id: install-wrappers
+        kind: command
+        title: Install the Pi wrappers from the image and set your signer name
+        status: blocked
+        blockedBy: release 0.1.15 (PR B2) installed on the Pi
+        block: |
+          sudo docker cp blackgold-trading_core_1:/app/scripts/pi ~/bg
+          sudo chown -R "$USER" ~/bg
+          echo 'export PATH="$HOME/bg:$PATH"' >> ~/.profile
+          echo 'export BLACKGOLD_SIGNER="Matt Herman"' >> ~/.profile
+          export PATH="$HOME/bg:$PATH"
+          export BLACKGOLD_SIGNER="Matt Herman"
+          bg health
+      - id: update-0115
+        kind: command
+        title: Back up, then update the Pi to 0.1.15
+        status: blocked
+        blockedBy: release 0.1.15 (PR B2) published and pinned
+        block: |
+          pi-update.sh before
+          # umbrelOS: App Store -> Community App Stores -> Black Gold -> refresh -> Update
+          pi-update.sh after
+      - id: policy-sign
+        kind: sign
+        title: Create /data/policy, set the two USD caps, sign risk.yaml (and the compliance files if their content is ready)
+        status: blocked
+        ownerOnly: true
+        blockedBy: release 0.1.15 (PR B2), which ships `policy init|verify|sign`
+        block: |
+          bg policy init --dir /data/policy
+          bg policy verify --dir /data/policy
+          # set maxOrderNotionalUsd and maxOrderQuantity for your sleeve (DN-8), then sign:
+          bg policy sign --dir /data/policy --file risk.yaml --signer "$BLACKGOLD_SIGNER" --set orderLimits.maxOrderNotionalUsd=<usd> --set orderLimits.maxOrderQuantity=<shares>
+          bg policy verify --dir /data/policy
+      - id: register
+        kind: sign
+        title: Snapshot, dry-run, then register charter 0.3.0 (starts the clock)
+        status: blocked
+        ownerOnly: true
+        blockedBy: PR B1 (`experiment` CLI) in release 0.1.15, and DN-1, DN-3, DN-8, DN-16 answered
+        block: |
+          bg snapshot create --dataset prices_daily --description "shadow clock start"
+          # copy the snapshot id from the output into the next two lines
+          bg experiment register --charter strategies/etf-trend-vol/charter.yaml --snapshot prices_daily=<id> --registered-by "$BLACKGOLD_SIGNER" --dry-run
+          bg experiment register --charter strategies/etf-trend-vol/charter.yaml --snapshot prices_daily=<id> --registered-by "$BLACKGOLD_SIGNER"
+          bg shadow status --charter strategies/etf-trend-vol/charter.yaml
+  - id: sitting-2
+    title: "Sitting 2: policy files, the paper account, notifications, first reconcile pass"
+    when: "The Sunday after sitting 1 (target 2026-11-15), after release 0.1.16."
+    minutes: 60
+    items:
+      - id: dn-5
+        kind: decision
+        title: The sleeve identifier for PAPER, and a separate paper account
+        status: pending
+        question: >-
+          How do core and the gateway receive the same sleeve identifier without either inferring it, and may the
+          market-data Alpaca key double as the paper trading key?
+        recommendedDefault: >-
+          The sha256 of a DEDICATED Alpaca paper account id, written once by you into /data/policy/sleeve.yaml and
+          signed with `bg policy sign`; both containers read it from the shared /data mount. A separate paper
+          account and keys; the market-data key never trades.
+        replyFormat: "DN-5: accept | <alternative>"
+        costIfWrong: A key that both reads data and trades sits in core, against the credential boundary.
+      - id: dn-6
+        kind: decision
+        title: Core to gateway transport and authentication (D-64)
+        status: pending
+        question: How does core hand a signed OrderIntent to the gateway and read its book back?
+        recommendedDefault: >-
+          HTTP inside the compose network with no published port; an HMAC-SHA256 envelope over the canonical intent
+          keyed by BLACKGOLD_GATEWAY_HMAC_KEY, which you place in both secrets files; mode and halt state in the
+          envelope, the gateway failing closed to the more restrictive. Stated plainly: both containers share uid
+          1000 and /data, so the HMAC proves origin and integrity, not a privilege boundary.
+        replyFormat: "DN-6: accept | <alternative>"
+        costIfWrong: Reworking the seam after the paper rung starts means a new gateway version (ladder section 6).
+      - id: dn-7
+        kind: decision
+        title: ntfy delivery, public topic or self-hosted
+        status: pending
+        question: Where do missed-run, incident and pending-re-arm notifications go?
+        recommendedDefault: >-
+          Public ntfy.sh with a random 32-character topic held in secrets.env as BLACKGOLD_NTFY_TOPIC_URL; bodies
+          are redacted and never carry a dollar figure; revisit before PAPER.
+        replyFormat: "DN-7: ntfy.sh | self-hosted <url>"
+        costIfWrong: Low; the topic URL is one line in secrets.env either way.
+      - id: dn-9
+        kind: decision
+        title: Protection for paper entries under a charter with no price stop (D-65)
+        status: pending
+        question: >-
+          Alpaca brackets need a take-profit and a stop; charter 0.3.0 has no stop. Declare NONE_BY_CHARTER on every
+          intent, bound to the charter hash, with a new OPEN_NO_PROTECTION_REQUIRED order state reachable only on that
+          declaration? Any charter declaring a stop keeps PROTECTION_PENDING mandatory.
+        recommendedDefault: Yes; never a locally emulated stop called PROTECTED.
+        replyFormat: "DN-9: accept | <alternative>"
+        costIfWrong: A filled entry sits in PROTECTION_PENDING forever, or protection is faked on the Pi.
+      - id: dn-10
+        kind: decision
+        title: Order-time quote source and freshness
+        status: pending
+        question: Which quote feeds the order caps and the spread check, and how old may it be?
+        recommendedDefault: >-
+          data.alpaca.markets latest quote (IEX, already an allowlisted host), maxQuoteAgeMs 60000, limit = ask for
+          buys and bid for sells, with a dated capability-register row.
+        replyFormat: "DN-10: accept | <alternative>"
+        costIfWrong: Low; a config value plus a register row.
+      - id: dn-11
+        kind: decision
+        title: Bounded probes against the paper account while the Pi is at rung 2
+        status: pending
+        question: >-
+          May the gateway run far-from-market limit-then-cancel probes (duplicate client_order_id semantics, rate
+          limits, websocket, fill rule) on the paper account during SHADOW, as rung-4-style capability probes?
+        recommendedDefault: Yes; no intent is formed from a decision, and the recordings become the adapter's fixtures.
+        replyFormat: "DN-11: yes | no"
+        costIfWrong: The adapter ships on hand-built fixtures until the probes run.
+      - id: dn-12
+        kind: decision
+        title: Claude Code drafts the ~190 curated corporate-action rows for your audit and signature
+        status: pending
+        question: >-
+          Under D-57(a), may Claude Code draft the curated CSV rows (VTI/VTV/VUG before 2016-12, QQQ) from SEC EDGAR
+          N-CSR/N-30D tables and your QQQ download, each citing its document, for you to audit and sign?
+        recommendedDefault: >-
+          Yes, with you auditing every reconciler disagreement/oneSided/setAside row, every structural row and a 10
+          percent sample of the rest; the reconciler cross-checks every row against Tiingo; you sign.
+        replyFormat: "DN-12: yes | I curate"
+        costIfWrong: Your hours, or a row copied from the wrong document; the audit rule is the guard.
+      - id: compliance-sign
+        kind: sign
+        title: Sign restricted-list.yaml and theme-membership.yaml, then the one re-arm (D-54 b)
+        status: blocked
+        ownerOnly: true
+        blockedBy: your real compliance content, and release 0.1.15
+        block: |
+          # edit /data/policy/restricted-list.yaml and theme-membership.yaml with your content first
+          bg policy sign --dir /data/policy --file restricted-list.yaml --signer "$BLACKGOLD_SIGNER"
+          bg policy sign --dir /data/policy --file theme-membership.yaml --signer "$BLACKGOLD_SIGNER"
+          bg policy verify --dir /data/policy
+          bg shadow status --charter strategies/etf-trend-vol/charter.yaml
+          # paste the exact rearm line `bg shadow status` prints, which ends in --to NORMAL
+      - id: paper-keys
+        kind: sign
+        title: Create the dedicated Alpaca paper account and place its keys where only the gateway reads them
+        status: blocked
+        ownerOnly: true
+        blockedBy: PR C2 (gateway foundations) in release 0.1.16, and DN-5, DN-6
+        block: |
+          sudo mkdir -p ~/umbrel/app-data/blackgold-trading/gateway-secrets
+          sudo tee ~/umbrel/app-data/blackgold-trading/gateway-secrets/gateway.env >/dev/null <<'EOF'
+          BLACKGOLD_ALPACA_PAPER_KEY_ID=<paper key id>
+          BLACKGOLD_ALPACA_PAPER_SECRET_KEY=<paper secret>
+          BLACKGOLD_GATEWAY_HMAC_KEY=<32 random bytes, hex>
+          EOF
+          sudo chown -R 1000:1000 ~/umbrel/app-data/blackgold-trading/gateway-secrets
+          echo 'BLACKGOLD_GATEWAY_HMAC_KEY=<the same hex>' | sudo tee -a ~/umbrel/app-data/blackgold-trading/secrets/secrets.env >/dev/null
+          # umbrelOS: restart Black Gold, then:
+          bg-gateway credential-check
+      - id: reconcile-first-pass
+        kind: command
+        title: First reconcile pass against the research store
+        status: blocked
+        blockedBy: the downloads from sitting 1 and release 0.1.15
+        block: |
+          d57-reconcile.sh vti.json vtv.json vug.json iShares-Russell-2000-ETF_fund.xls

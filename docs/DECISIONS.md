@@ -1722,8 +1722,9 @@ could be weakened without the floor noticing.
 
 ## D-60 Owner cadence: a weekly sitting driven by a generated queue
 
-**Status:** Accepted 2026-10-31 by Matt ("weekly digest + sitting"). The generator and the Pi wrappers are the
-next PR; this entry records the decision they implement.
+**Status:** Accepted 2026-10-31 by Matt ("weekly digest + sitting"). Implemented by the A2 PR (2026-11-01):
+`scripts/owner-queue.ts` renders `docs/OWNER_QUEUE.md` from `docs/owner-queue.yaml`, `test/policy/owner-queue.test.ts`
+holds the rules below as code, and the Pi wrappers under `scripts/pi/` ship inside the image.
 
 **Why.** Every act that moves Black Gold up its ladder and that Claude Code may not perform (sign, register, re-arm,
 place a credential, update the Pi, decide) has been requested ad hoc in chat, each with its own long Pi command
